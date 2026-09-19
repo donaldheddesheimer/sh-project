@@ -82,7 +82,15 @@ function EpisodeCard({ episode }: { episode: Episode }) {
       <Flow episode={episode} />
       {last && <p className="episode-last">{last.message}</p>}
       {episode.status === 'monitoring' && (
-        <div className="run-bar">
+        <div
+          className="run-bar"
+          role="progressbar"
+          aria-label="Monitor window"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(episode.monitor_s)}
+          aria-valuenow={Math.round(Math.min(episode.monitor_progress_s, episode.monitor_s))}
+          aria-valuetext={`${duration(episode.monitor_progress_s)} of ${duration(episode.monitor_s)} simulated`}
+        >
           <span style={{ width: `${Math.min(100, (100 * episode.monitor_progress_s) / episode.monitor_s)}%` }} />
         </div>
       )}
@@ -181,12 +189,20 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
 
   useEffect(() => {
     let cancelled = false
-    api
-      .demo()
-      .then((next) => !cancelled && setInfo(next))
-      .catch(() => undefined) // the backend may still be starting; the next episode update retries
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // Retry like App's network loader: with no episode yet nothing else triggers a fetch, so a request that
+    // loses the startup race would leave the script list empty and Run disabled until a reload.
+    const load = () =>
+      api
+        .demo()
+        .then((next) => !cancelled && setInfo(next))
+        .catch(() => {
+          if (!cancelled) timer = setTimeout(load, 1500)
+        })
+    load()
     return () => {
       cancelled = true
+      clearTimeout(timer)
     }
   }, [episode?.id, episode?.status, refreshes])
 

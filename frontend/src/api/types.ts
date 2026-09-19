@@ -269,7 +269,8 @@ export interface Implementation {
   policies: Record<string, string> // intersection -> program id now running
   corridor: boolean
   diverted: number
-  ems_dispatch_ids: string[]
+  ems_dispatch_ids: string[] // responders dispatched with the plan
+  ems_en_route_ids: string[] // responders already on the way at the snapshot; the monitor times them too
   notes: string[]
 }
 

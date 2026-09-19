@@ -157,6 +157,9 @@ class EpisodeService:
         await self._city.reset()  # the reset hook aborts the working episode and arms a new one
         if script.speed:
             await self._city.set_speed(script.speed)
+        # A finished episode pauses the city (EPISODE_PAUSE_ON_FINISH) and a reset keeps it paused, so without
+        # this the script arms but its crashes never come: simulation time would not advance. Run means run.
+        await self._city.set_running(True)
         return self._working
 
     async def shutdown(self) -> None:

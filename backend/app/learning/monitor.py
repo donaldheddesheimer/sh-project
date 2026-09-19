@@ -27,6 +27,7 @@ class _Window:
     on_progress: Callable[[float], None]
     on_done: Callable[[LiveRecord], Awaitable[None]]
     arrivals: dict[str, float | None] = field(default_factory=dict)  # responder -> response time (None: not yet)
+    origin: float = 0.0  # responders are timed from here or from their dispatch, whichever is later
 
 
 class LiveMonitor:
@@ -44,8 +45,15 @@ class LiveMonitor:
         on_progress: Callable[[float], None],
         on_done: Callable[[LiveRecord], Awaitable[None]],
     ) -> None:
-        """Watch the live city from the moment ``implementation`` went live for ``monitor_s`` simulated seconds."""
+        """Watch the live city from the moment ``implementation`` went live for ``monitor_s`` simulated seconds.
+
+        Timed responders are the ones the branches timed: the plan's own dispatches plus those already on the way
+        when the snapshot was taken. A branch measures from its window start (the snapshot) or from the dispatch,
+        whichever is later, so the live side uses the same origin: a responder dispatched with the plan is timed
+        from the apply, one that was already running from the snapshot.
+        """
         started = implementation.implemented_at
+        timed = [*implementation.ems_dispatch_ids, *implementation.ems_en_route_ids]
         record = LiveRecord(
             run_id=implementation.run_id,
             incident_ids=implementation.incident_ids,
@@ -53,9 +61,10 @@ class LiveMonitor:
             ended_at=started,
             monitor_s=monitor_s,
             pre=[s for s in self._ring if s.t <= started],
-            ems_dispatch_ids=implementation.ems_dispatch_ids,
+            ems_timed_ids=timed,
         )
-        window = _Window(record, on_progress, on_done, {d: None for d in implementation.ems_dispatch_ids})
+        origin = implementation.snapshot_sim_time if implementation.snapshot_sim_time is not None else started
+        window = _Window(record, on_progress, on_done, {d: None for d in timed}, origin)
         self._windows[key] = window
 
     def stop(self, key: str, reason: str) -> LiveRecord | None:
@@ -84,7 +93,7 @@ class LiveMonitor:
             record.ended_at = sample.t
             for ev in state.emergency_vehicles:
                 if ev.id in window.arrivals and ev.arrived_at is not None:
-                    window.arrivals[ev.id] = ev.arrived_at - ev.dispatched_at
+                    window.arrivals[ev.id] = ev.arrived_at - max(window.origin, ev.dispatched_at)
             elapsed = sample.t - record.started_at
             window.on_progress(elapsed)
             if elapsed >= record.monitor_s:

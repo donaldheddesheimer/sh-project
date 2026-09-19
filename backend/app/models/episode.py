@@ -62,7 +62,10 @@ class Implementation(BaseModel):
     policies: dict[str, str] = Field(default_factory=dict, description="Intersection -> program id now running")
     corridor: bool = False
     diverted: int = 0
-    ems_dispatch_ids: list[str] = Field(default_factory=list)
+    ems_dispatch_ids: list[str] = Field(default_factory=list, description="Responders dispatched with the plan")
+    ems_en_route_ids: list[str] = Field(
+        default_factory=list, description="Responders already on the way at the snapshot; the branches timed them too"
+    )
     notes: list[str] = Field(default_factory=list)
 
 
@@ -77,7 +80,7 @@ class LiveRecord(BaseModel):
     pre: list[LiveSample] = Field(default_factory=list, description="Live samples before the plan went live")
     post: list[LiveSample] = Field(default_factory=list, description="Live samples while the plan was in force")
     ems_response_s: float | None = Field(None, description="Realised response time; None if a responder never arrived")
-    ems_dispatch_ids: list[str] = Field(default_factory=list)
+    ems_timed_ids: list[str] = Field(default_factory=list, description="Responders this window timed")
     complete: bool = True
     abort_reason: str | None = None
 

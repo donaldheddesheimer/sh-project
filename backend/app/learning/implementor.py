@@ -43,6 +43,7 @@ class Implementor:
         self._validator = validator
         self._standing: list[CandidatePlan] = []  # in the order they went live
         self._busy: set[str] = set()
+        self._stale: set[str] = set()  # runs whose city was reset away under them
         self._tasks: set[asyncio.Task] = set()
         self.listeners: list[ImplementationListener] = []
         scenarios.standing_source = self.standing_plans
@@ -58,6 +59,8 @@ class Implementor:
         run = self._scenarios.get(run_id)  # KeyError: unknown run
         if run.status is not ScenarioStatus.COMPLETED or run.recommendation is None:
             raise Conflict(f"{run.id} is {run.status.value}; only a completed analysis can be implemented")
+        if run.id in self._stale:
+            raise Conflict(f"{run.id} predates a reset; its plan describes a city that is gone")
         if run.implementation is not None or run.id in self._busy:
             raise Conflict(f"{run.id} was already implemented")
         chosen = next((c for c in run.candidates if c.id == run.recommendation.candidate_id), None)
@@ -73,6 +76,15 @@ class Implementor:
         return await asyncio.shield(task)
 
     async def _apply(self, run, chosen, by: str) -> Implementation:
+        # The whole apply runs under the city's live-change lock, so it cannot interleave with a reset: either it
+        # finishes first (and the reboot then drops both the live plan and the standing registry), or it starts
+        # after the new simulation is up and is refused below, because its snapshot describes the old city.
+        async with self._city.live_change_lock:
+            return await self._apply_locked(run, chosen, by)
+
+    async def _apply_locked(self, run, chosen, by: str) -> Implementation:
+        if run.id in self._stale:
+            raise Conflict(f"{run.id} predates a reset; its plan describes a city that is gone")
         incidents = []
         for incident_id in run.incident_ids or [run.incident_id]:
             incident = await self._city.smart_city.get_incident(incident_id)
@@ -89,17 +101,31 @@ class Implementor:
         )
         # the probe every branch dispatched: one per incident without a responder already on the way
         stations = self._city.scenario.ems_stations
-        en_route = {ev.destination_segment for ev in self._city.state.emergency_vehicles if ev.status is EmergencyStatus.EN_ROUTE}
+        responders = self._city.state.emergency_vehicles
+        en_route = {ev.destination_segment for ev in responders if ev.status is EmergencyStatus.EN_ROUTE}
         probes = (
             [probe_for_incident(i, stations[0].edge) for i in incidents if i.location.segment_id not in en_route]
             if run.ems_probe and stations
+            else []
+        )
+        # Responders the branches timed besides their probes: the ones already on the way when the snapshot was
+        # taken. The monitor has to time them too, or a manual dispatch leaves the live EMS column empty.
+        snapshot_at = run.snapshot_sim_time
+        already_running = (
+            [
+                ev.id
+                for ev in responders
+                if ev.dispatched_at <= snapshot_at and (ev.arrived_at is None or ev.arrived_at >= snapshot_at)
+            ]
+            if snapshot_at is not None
             else []
         )
         network, validator = self._city.network, self._validator
 
         def apply(sim: TrafficSimulation) -> tuple[float, dict[str, str], int, list[str]]:
             # one command on the live thread: validation, dispatch and install happen between the same two steps
-            programs = {iid: sim.get_signal_program(iid) for iid in network.intersections}
+            # (unsignalized junctions have no program: Oakland has many, the grid none)
+            programs = {iid: sim.get_signal_program(iid) for iid, info in network.intersections.items() if info.tls_id}
             if findings := validation_findings(plan, programs, network, validator):
                 raise PlanRejected("; ".join(findings))
             dispatched = [
@@ -124,6 +150,7 @@ class Implementor:
             corridor=plan.corridor is not None,
             diverted=diverted,
             ems_dispatch_ids=dispatch_ids,
+            ems_en_route_ids=already_running,
         )
         if plan.policies or plan.corridor or plan.reroutes:
             self._standing.append(plan)
@@ -138,7 +165,10 @@ class Implementor:
         return implementation
 
     async def _on_reset(self) -> None:
+        # Called with the city's live-change lock held, so no apply is in flight here.
         self._standing.clear()  # a reboot restores the base programs and drops corridors and diversions
+        # every run in the history branched from the city being replaced; older ones are gone from it anyway
+        self._stale = {run.id for run in self._scenarios.runs()}
 
 
 def _describe(impl: Implementation) -> str:

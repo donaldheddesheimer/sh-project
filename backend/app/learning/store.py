@@ -32,7 +32,6 @@ W_COUNT = 0.1  # as many incidents at once
 MIN_SIMILARITY = 0.3  # less alike than this is not worth recalling
 RECALL_LIMIT = 3
 PLAYBOOK_LIMIT = 20
-LANE_NAMES = {0: "right lane", 1: "left lane"}
 _FRONT_MATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 _EPISODE_FILE = re.compile(r"EP-(\d+)\.md$")
 
@@ -53,12 +52,22 @@ def incident_features(incident: Incident, network: RoadNetwork) -> IncidentFeatu
     )
 
 
+def lane_name(lane: int, total_lanes: int | None) -> str:
+    """'right lane', 'left lane' or 'lane 2'. Only the outermost lanes have a name, and which index is the left
+    one depends on how wide the road is: on a 3-lane road lane 1 is an interior lane, not the left one."""
+    if lane == 0:
+        return "right lane"
+    if total_lanes and lane == total_lanes - 1:
+        return "left lane"
+    return f"lane {lane + 1}"
+
+
 def describe(f: IncidentFeatures) -> str:
     """'collision major, Main St EB, right lane blocked'"""
     if f.total_lanes and len(f.blocked_lanes) >= f.total_lanes:
         blocked = "all lanes"
     else:
-        blocked = ", ".join(LANE_NAMES.get(lane, f"lane {lane + 1}") for lane in f.blocked_lanes) or "no lane"
+        blocked = ", ".join(lane_name(lane, f.total_lanes) for lane in f.blocked_lanes) or "no lane"
     return f"{f.type} {f.severity}, {f.street} {f.direction}, {blocked} blocked"
 
 

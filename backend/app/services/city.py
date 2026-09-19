@@ -114,6 +114,9 @@ class CityService:
         # Hooks for the learning services: called after an incident is logged, and before the simulation reboots.
         self.incident_listeners: list[IncidentListener] = []
         self.reset_listeners: list[ResetListener] = []
+        # Held for a whole reset (listeners and reboot), and by the implementor for a whole apply, so a plan is
+        # never installed on a simulation that is about to be, or has just been, replaced.
+        self.live_change_lock = asyncio.Lock()
 
     # ------------------------------------------------------------ lifecycle
 
@@ -213,14 +216,15 @@ class CityService:
         await self._runner.set_speed(multiplier)
 
     async def reset(self) -> None:
-        self.events.add(EventLevel.INFO, "Resetting simulation to a clean network", self._sim_time())
-        self._ems_status.clear()
-        for listener in self.reset_listeners:
-            try:
-                await listener()
-            except Exception:  # noqa: BLE001 - a broken listener must not block the reset
-                log.exception("reset listener failed")
-        await self._runner.reset()
+        async with self.live_change_lock:  # wait for an apply in flight, and keep the next one out until we reboot
+            self.events.add(EventLevel.INFO, "Resetting simulation to a clean network", self._sim_time())
+            self._ems_status.clear()
+            for listener in self.reset_listeners:
+                try:
+                    await listener()
+                except Exception:  # noqa: BLE001 - a broken listener must not block the reset
+                    log.exception("reset listener failed")
+            await self._runner.reset()
 
     def _collision_args(
         self, segment_id: str | None, lanes: list[int] | None, position_fraction: float | None, severity: Severity | None

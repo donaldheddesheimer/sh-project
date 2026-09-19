@@ -153,13 +153,13 @@ Built but not yet run end to end, so the timings below are estimates. Use the
 
 1. For a cold run, clear the memory: the panel's **clear**, or `DELETE /api/memory`.
 2. Pick **Crash ahead** and click **Run** (`POST /api/demo/start {"script": "crash-ahead"}`).
-   The city resets and the episode is `armed`.
+   The city resets, resumes if the previous episode paused it, and the episode is `armed`.
 3. The crash happens at sim 420 s (about 30 s later at 4×). About 4 simulated seconds
    after that, INC-0001 is detected and the episode goes `detected → analyzing`. The
    analysis streams into Response plans as in the walkthrough above.
 4. The agent applies its recommendation. The ops log lists the new signal programs and the
    EMS probe it dispatched, and the recommendation footer reads "Applied to live signals".
-   The episode goes `monitoring`, with a progress bar over 600 simulated seconds.
+   The episode goes `monitoring`, with an accessible progress bar over 600 simulated seconds.
 5. `reviewing → completed`: the panel shows the lesson (verdict, summary, next time) and
    the scorecard's delay numbers, `memory/episodes/EP-0001.md` is written, and the live sim
    pauses.
@@ -290,16 +290,19 @@ and is monitored and reviewed: doing nothing can be the right answer.
   without applying, the episode service does (`coordinator`). With `AGENT_MAY_IMPLEMENT=false`
   neither does: the episode waits in `analyzing` until an operator clicks **Apply to live
   signals**.
-- **After it is applied.** The plan joins the standing responses until a reset. Because the
-  live sim kept running during analysis, the plan goes live later than the branches
-  started; that gap is the staleness.
+- **After it is applied.** The plan joins the standing responses until a reset. Apply and
+  reset are serialized: a reset clears the standing registry and makes every earlier run
+  ineligible for a later apply. Because the live sim kept running during analysis, the plan
+  goes live later than the branches started; that gap is the staleness.
 
 **Monitor** (`learning/monitor.py`). A frame observer samples the live city every 5
 simulated seconds, all the time, and keeps 30 minutes, so the unmanaged period between
 detection and implementation is already on record. Each sample holds network delay, max
 queue, throughput, speed, vehicles, and halted vehicles and speed on the crash segments.
-After implementation the window also records each probe's realised response time: the last
-arrival, unknown while any responder has not arrived.
+After implementation the window records the realised response time for both probes dispatched
+with the plan and responders that were already en route at the snapshot. It uses the same
+timing origin as the branches and reports the last arrival, unknown while any timed responder
+has not arrived.
 
 The window lasts `EPISODE_MONITOR_S`, else the script's `monitor_s`, else the run's horizon
 (600 s in every shipped script, so predicted and realised windows match). It counts
@@ -346,8 +349,9 @@ cannot overrule it. The raw samples are condensed into the scorecard and discard
 **Memory** (`learning/store.py`). Each completed episode becomes
 `memory/episodes/EP-NNNN.md`: a JSON front-matter block holding the whole `Experience` (so
 nothing needs a YAML dependency) and a readable body, so people can read and diff it.
-Episode ids continue from the highest one in memory, so files survive restarts. Illustrative
-shape, placeholders instead of numbers:
+Readable incident descriptions derive the leftmost lane from the road's total lane count;
+interior lanes are kept numeric. Episode ids continue from the highest one in memory, so
+files survive restarts. Illustrative shape, placeholders instead of numbers:
 
 ```
 ---
@@ -454,8 +458,8 @@ reviewer, so no NIM key is needed except for step 7.
   the same script runs with `EPISODE_ANALYST=nemotron`.
 - [x] **8. Recall and injection**, plus the mock acting on lessons. *Done when:* a second
   episode's run lists the first episode under `recalled`.
-- [x] **9. Frontend.** The Autonomous agent panel, **Apply to live signals**, the types in
-  sync, and the advisory wording.
+- [x] **9. Frontend.** The Autonomous agent panel, **Apply to live signals**, accessible
+  monitor progress, startup retry for the script list, types in sync, and advisory wording.
 - [x] **10. Docs and the safety rule** (this README, `CLAUDE.md`, `docs/architecture.md`, the
   MCP spec, the UI).
 - [ ] **Measure the learning.** Same script cold (empty memory) and warm, plus
@@ -649,9 +653,9 @@ docs/
 | POST | `/api/scenarios/run` | start Analyze Response: `{"incident_id"?, "incident_ids"?, "horizon_s": 600, "ems_probe": true}` → `ScenarioRun` (202; 409 if no active incident or a run is open). `incident_ids` analyzes several crashes together |
 | GET | `/api/scenarios` | recent runs (newest first, last 10) |
 | GET | `/api/scenarios/{id}` | one run with candidates, metrics, timelines, the recommendation, and `implementation` once applied |
-| POST | `/api/scenarios/{id}/implement` | operator path: apply the run's recommendation to the live sim (same code as the agent's) → `Implementation`. 404 unknown run; 409 not completed, already applied or an incident cleared; 400 rejected by the validator on the live programs |
+| POST | `/api/scenarios/{id}/implement` | operator path: apply the run's recommendation to the live sim (same code as the agent's) → `Implementation`. 404 unknown run; 409 not completed, already applied, predating a reset or an incident cleared; 400 rejected by the validator on the live programs |
 | GET | `/api/demo` | demo scripts, the armed script, the analyst, the latest episode, memory stats |
-| POST | `/api/demo/start` | `{"script": "crash-ahead"}`: reset the city and arm the script → the `armed` `Episode` (202) |
+| POST | `/api/demo/start` | `{"script": "crash-ahead"}`: reset and resume the city, then arm the script → the `armed` `Episode` (202) |
 | POST | `/api/demo/stop` | disarm: no more scripted crashes or autonomous response; aborts the working episode |
 | GET | `/api/episodes`, `/api/episodes/{id}` | recent episodes (newest first, last 20), one episode |
 | GET, DELETE | `/api/memory` | remembered episodes and the playbook; DELETE forgets them (a cold run) |

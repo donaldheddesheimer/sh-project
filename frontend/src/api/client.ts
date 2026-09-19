@@ -1,4 +1,14 @@
-import type { NetworkGeometry } from './types'
+import type { NetworkGeometry, ScenarioRun, ScenarioRunRequest } from './types'
+
+/** A non-2xx response; `message` is the server's `detail` when it sent one. */
+export class ApiError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
 
 async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
@@ -13,7 +23,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
     } catch {
       // non-JSON error body
     }
-    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+    throw new ApiError(typeof detail === 'string' ? detail : JSON.stringify(detail), response.status)
   }
   return response.json() as Promise<T>
 }
@@ -27,6 +37,9 @@ export const api = {
   injectCollision: () => request('POST', '/api/incidents/inject', { type: 'collision' }),
   clearIncident: (id: string) => request('POST', `/api/incidents/${encodeURIComponent(id)}/clear`),
   dispatchEmergency: () => request('POST', '/api/emergency/dispatch', {}),
+  runScenario: (req: ScenarioRunRequest = {}) => request<ScenarioRun>('POST', '/api/scenarios/run', req),
+  getScenario: (id: string) => request<ScenarioRun>('GET', `/api/scenarios/${encodeURIComponent(id)}`),
+  listScenarios: () => request<ScenarioRun[]>('GET', '/api/scenarios'),
 }
 
 export function streamUrl(): string {

@@ -1,6 +1,7 @@
 import type { RoadSegmentState, TrafficMetrics } from '../api/types'
 import type { MetricSample } from '../hooks/useCityStream'
 import { compact, duration, mph } from '../lib/format'
+import { Section } from './Section'
 import { Sparkline } from './Sparkline'
 
 interface Props {
@@ -94,8 +95,7 @@ export function MetricsPanel({ metrics, history, reference, segments }: Props) {
     : []
 
   return (
-    <section className="panel-section">
-      <h2 className="section-title">Network performance</h2>
+    <Section title="Network performance" icon="gauge" meta={metrics ? 'live' : undefined}>
       <div className="tiles">
         {tiles.map((t) => (
           <div className="tile" key={t.label}>
@@ -112,6 +112,6 @@ export function MetricsPanel({ metrics, history, reference, segments }: Props) {
         ))}
         {!metrics && <div className="empty">Waiting for simulation…</div>}
       </div>
-    </section>
+    </Section>
   )
 }

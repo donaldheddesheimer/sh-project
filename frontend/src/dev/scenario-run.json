@@ -1,0 +1,1421 @@
+{
+  "id": "SCN-0001",
+  "incident_id": "INC-0001",
+  "status": "completed",
+  "agent": "mock",
+  "created_at": "2026-09-19T16:11:05Z",
+  "completed_at": "2026-09-19T16:11:08.200000Z",
+  "snapshot_sim_time": 420.0,
+  "horizon_s": 600.0,
+  "ems_probe": true,
+  "candidates": [
+    {
+      "id": "baseline",
+      "name": "Baseline",
+      "description": "Continue current signal timing unchanged.",
+      "policies": [],
+      "corridor": null,
+      "reroutes": [],
+      "status": "completed",
+      "metrics": {
+        "sim_time": 1020.0,
+        "window_s": 600.0,
+        "mean_vehicle_delay": 96.4,
+        "max_queue_length": 41,
+        "max_queue_segment": "A2_B2",
+        "throughput": 2712.0,
+        "mean_speed": 5.08,
+        "emergency_vehicle_eta": 262.5,
+        "vehicles_in_network": 301,
+        "vehicles_waiting_to_enter": 4
+      },
+      "timeline": [
+        {
+          "t": 450.0,
+          "delay": 79.5,
+          "queue": 22,
+          "throughput": 2759.0,
+          "speed": 5.37,
+          "vehicles": 265
+        },
+        {
+          "t": 480.0,
+          "delay": 82.4,
+          "queue": 22,
+          "throughput": 2770.0,
+          "speed": 5.23,
+          "vehicles": 270
+        },
+        {
+          "t": 510.0,
+          "delay": 85.9,
+          "queue": 27,
+          "throughput": 2738.0,
+          "speed": 4.87,
+          "vehicles": 274
+        },
+        {
+          "t": 540.0,
+          "delay": 93.9,
+          "queue": 29,
+          "throughput": 2685.0,
+          "speed": 4.81,
+          "vehicles": 278
+        },
+        {
+          "t": 570.0,
+          "delay": 98.5,
+          "queue": 29,
+          "throughput": 2653.0,
+          "speed": 5.14,
+          "vehicles": 281
+        },
+        {
+          "t": 600.0,
+          "delay": 98.1,
+          "queue": 33,
+          "throughput": 2666.0,
+          "speed": 5.38,
+          "vehicles": 283
+        },
+        {
+          "t": 630.0,
+          "delay": 101.2,
+          "queue": 32,
+          "throughput": 2713.0,
+          "speed": 5.18,
+          "vehicles": 286
+        },
+        {
+          "t": 660.0,
+          "delay": 107.4,
+          "queue": 33,
+          "throughput": 2760.0,
+          "speed": 4.83,
+          "vehicles": 287
+        },
+        {
+          "t": 690.0,
+          "delay": 108.3,
+          "queue": 36,
+          "throughput": 2770.0,
+          "speed": 4.85,
+          "vehicles": 289
+        },
+        {
+          "t": 720.0,
+          "delay": 106.8,
+          "queue": 35,
+          "throughput": 2737.0,
+          "speed": 5.21,
+          "vehicles": 291
+        },
+        {
+          "t": 750.0,
+          "delay": 110.4,
+          "queue": 37,
+          "throughput": 2685.0,
+          "speed": 5.38,
+          "vehicles": 292
+        },
+        {
+          "t": 780.0,
+          "delay": 114.6,
+          "queue": 38,
+          "throughput": 2653.0,
+          "speed": 5.11,
+          "vehicles": 293
+        },
+        {
+          "t": 810.0,
+          "delay": 113.0,
+          "queue": 36,
+          "throughput": 2666.0,
+          "speed": 4.8,
+          "vehicles": 294
+        },
+        {
+          "t": 840.0,
+          "delay": 111.9,
+          "queue": 39,
+          "throughput": 2714.0,
+          "speed": 4.9,
+          "vehicles": 295
+        },
+        {
+          "t": 870.0,
+          "delay": 116.1,
+          "queue": 39,
+          "throughput": 2760.0,
+          "speed": 5.26,
+          "vehicles": 295
+        },
+        {
+          "t": 900.0,
+          "delay": 118.1,
+          "queue": 38,
+          "throughput": 2770.0,
+          "speed": 5.36,
+          "vehicles": 296
+        },
+        {
+          "t": 930.0,
+          "delay": 115.1,
+          "queue": 41,
+          "throughput": 2736.0,
+          "speed": 5.05,
+          "vehicles": 296
+        },
+        {
+          "t": 960.0,
+          "delay": 115.3,
+          "queue": 39,
+          "throughput": 2684.0,
+          "speed": 4.78,
+          "vehicles": 297
+        },
+        {
+          "t": 990.0,
+          "delay": 119.5,
+          "queue": 39,
+          "throughput": 2653.0,
+          "speed": 4.95,
+          "vehicles": 297
+        },
+        {
+          "t": 1020.0,
+          "delay": 119.3,
+          "queue": 41,
+          "throughput": 2667.0,
+          "speed": 5.31,
+          "vehicles": 298
+        }
+      ],
+      "violations": [],
+      "notes": [],
+      "wall_time_s": 0.84
+    },
+    {
+      "id": "flush-downstream",
+      "name": "Extend EB green at C2",
+      "description": "Give the incident approach 15s more green downstream to discharge vehicles past the scene.",
+      "policies": [
+        {
+          "intersection_id": "C2",
+          "phase_durations": {
+            "0": 55.0,
+            "3": 25.0
+          },
+          "offset_s": null,
+          "reason": "discharge traffic past the incident"
+        }
+      ],
+      "corridor": null,
+      "reroutes": [],
+      "status": "completed",
+      "metrics": {
+        "sim_time": 1020.0,
+        "window_s": 600.0,
+        "mean_vehicle_delay": 88.1,
+        "max_queue_length": 37,
+        "max_queue_segment": "A2_B2",
+        "throughput": 2791.0,
+        "mean_speed": 5.41,
+        "emergency_vehicle_eta": 250.0,
+        "vehicles_in_network": 301,
+        "vehicles_waiting_to_enter": 4
+      },
+      "timeline": [
+        {
+          "t": 450.0,
+          "delay": 79.2,
+          "queue": 22,
+          "throughput": 2838.0,
+          "speed": 5.7,
+          "vehicles": 265
+        },
+        {
+          "t": 480.0,
+          "delay": 81.5,
+          "queue": 21,
+          "throughput": 2849.0,
+          "speed": 5.56,
+          "vehicles": 270
+        },
+        {
+          "t": 510.0,
+          "delay": 84.2,
+          "queue": 26,
+          "throughput": 2817.0,
+          "speed": 5.2,
+          "vehicles": 274
+        },
+        {
+          "t": 540.0,
+          "delay": 91.3,
+          "queue": 27,
+          "throughput": 2764.0,
+          "speed": 5.14,
+          "vehicles": 278
+        },
+        {
+          "t": 570.0,
+          "delay": 95.1,
+          "queue": 27,
+          "throughput": 2732.0,
+          "speed": 5.47,
+          "vehicles": 281
+        },
+        {
+          "t": 600.0,
+          "delay": 93.8,
+          "queue": 31,
+          "throughput": 2745.0,
+          "speed": 5.71,
+          "vehicles": 283
+        },
+        {
+          "t": 630.0,
+          "delay": 96.1,
+          "queue": 30,
+          "throughput": 2792.0,
+          "speed": 5.51,
+          "vehicles": 286
+        },
+        {
+          "t": 660.0,
+          "delay": 101.6,
+          "queue": 31,
+          "throughput": 2839.0,
+          "speed": 5.16,
+          "vehicles": 287
+        },
+        {
+          "t": 690.0,
+          "delay": 101.9,
+          "queue": 34,
+          "throughput": 2849.0,
+          "speed": 5.18,
+          "vehicles": 289
+        },
+        {
+          "t": 720.0,
+          "delay": 99.8,
+          "queue": 31,
+          "throughput": 2816.0,
+          "speed": 5.54,
+          "vehicles": 291
+        },
+        {
+          "t": 750.0,
+          "delay": 102.9,
+          "queue": 34,
+          "throughput": 2764.0,
+          "speed": 5.71,
+          "vehicles": 292
+        },
+        {
+          "t": 780.0,
+          "delay": 106.7,
+          "queue": 35,
+          "throughput": 2732.0,
+          "speed": 5.44,
+          "vehicles": 293
+        },
+        {
+          "t": 810.0,
+          "delay": 104.8,
+          "queue": 33,
+          "throughput": 2745.0,
+          "speed": 5.13,
+          "vehicles": 294
+        },
+        {
+          "t": 840.0,
+          "delay": 103.3,
+          "queue": 36,
+          "throughput": 2793.0,
+          "speed": 5.23,
+          "vehicles": 295
+        },
+        {
+          "t": 870.0,
+          "delay": 107.2,
+          "queue": 35,
+          "throughput": 2839.0,
+          "speed": 5.59,
+          "vehicles": 295
+        },
+        {
+          "t": 900.0,
+          "delay": 109.0,
+          "queue": 34,
+          "throughput": 2849.0,
+          "speed": 5.69,
+          "vehicles": 296
+        },
+        {
+          "t": 930.0,
+          "delay": 105.8,
+          "queue": 37,
+          "throughput": 2815.0,
+          "speed": 5.38,
+          "vehicles": 296
+        },
+        {
+          "t": 960.0,
+          "delay": 105.9,
+          "queue": 35,
+          "throughput": 2763.0,
+          "speed": 5.11,
+          "vehicles": 297
+        },
+        {
+          "t": 990.0,
+          "delay": 109.9,
+          "queue": 35,
+          "throughput": 2732.0,
+          "speed": 5.28,
+          "vehicles": 297
+        },
+        {
+          "t": 1020.0,
+          "delay": 109.6,
+          "queue": 37,
+          "throughput": 2746.0,
+          "speed": 5.64,
+          "vehicles": 298
+        }
+      ],
+      "violations": [],
+      "notes": [],
+      "wall_time_s": 0.86
+    },
+    {
+      "id": "meter-upstream",
+      "name": "Meter EB inflow at B2",
+      "description": "Move 15s of EB green to the cross street upstream so the queue stays off the intersection and cross traffic keeps moving.",
+      "policies": [
+        {
+          "intersection_id": "B2",
+          "phase_durations": {
+            "0": 55.0,
+            "3": 25.0
+          },
+          "offset_s": null,
+          "reason": "meter inflow toward the blocked link"
+        }
+      ],
+      "corridor": null,
+      "reroutes": [],
+      "status": "completed",
+      "metrics": {
+        "sim_time": 1020.0,
+        "window_s": 600.0,
+        "mean_vehicle_delay": 79.3,
+        "max_queue_length": 30,
+        "max_queue_segment": "W2_A2",
+        "throughput": 2834.0,
+        "mean_speed": 5.93,
+        "emergency_vehicle_eta": 255.5,
+        "vehicles_in_network": 301,
+        "vehicles_waiting_to_enter": 4
+      },
+      "timeline": [
+        {
+          "t": 450.0,
+          "delay": 78.9,
+          "queue": 21,
+          "throughput": 2881.0,
+          "speed": 6.22,
+          "vehicles": 265
+        },
+        {
+          "t": 480.0,
+          "delay": 80.5,
+          "queue": 20,
+          "throughput": 2892.0,
+          "speed": 6.08,
+          "vehicles": 270
+        },
+        {
+          "t": 510.0,
+          "delay": 82.4,
+          "queue": 23,
+          "throughput": 2860.0,
+          "speed": 5.72,
+          "vehicles": 274
+        },
+        {
+          "t": 540.0,
+          "delay": 88.6,
+          "queue": 24,
+          "throughput": 2807.0,
+          "speed": 5.66,
+          "vehicles": 278
+        },
+        {
+          "t": 570.0,
+          "delay": 91.4,
+          "queue": 23,
+          "throughput": 2775.0,
+          "speed": 5.99,
+          "vehicles": 281
+        },
+        {
+          "t": 600.0,
+          "delay": 89.3,
+          "queue": 27,
+          "throughput": 2788.0,
+          "speed": 6.23,
+          "vehicles": 283
+        },
+        {
+          "t": 630.0,
+          "delay": 90.7,
+          "queue": 25,
+          "throughput": 2835.0,
+          "speed": 6.03,
+          "vehicles": 286
+        },
+        {
+          "t": 660.0,
+          "delay": 95.4,
+          "queue": 26,
+          "throughput": 2882.0,
+          "speed": 5.68,
+          "vehicles": 287
+        },
+        {
+          "t": 690.0,
+          "delay": 95.1,
+          "queue": 28,
+          "throughput": 2892.0,
+          "speed": 5.7,
+          "vehicles": 289
+        },
+        {
+          "t": 720.0,
+          "delay": 92.4,
+          "queue": 26,
+          "throughput": 2859.0,
+          "speed": 6.06,
+          "vehicles": 291
+        },
+        {
+          "t": 750.0,
+          "delay": 95.0,
+          "queue": 28,
+          "throughput": 2807.0,
+          "speed": 6.23,
+          "vehicles": 292
+        },
+        {
+          "t": 780.0,
+          "delay": 98.4,
+          "queue": 29,
+          "throughput": 2775.0,
+          "speed": 5.96,
+          "vehicles": 293
+        },
+        {
+          "t": 810.0,
+          "delay": 96.0,
+          "queue": 27,
+          "throughput": 2788.0,
+          "speed": 5.65,
+          "vehicles": 294
+        },
+        {
+          "t": 840.0,
+          "delay": 94.2,
+          "queue": 30,
+          "throughput": 2836.0,
+          "speed": 5.75,
+          "vehicles": 295
+        },
+        {
+          "t": 870.0,
+          "delay": 97.9,
+          "queue": 29,
+          "throughput": 2882.0,
+          "speed": 6.11,
+          "vehicles": 295
+        },
+        {
+          "t": 900.0,
+          "delay": 99.5,
+          "queue": 28,
+          "throughput": 2892.0,
+          "speed": 6.21,
+          "vehicles": 296
+        },
+        {
+          "t": 930.0,
+          "delay": 96.0,
+          "queue": 31,
+          "throughput": 2858.0,
+          "speed": 5.9,
+          "vehicles": 296
+        },
+        {
+          "t": 960.0,
+          "delay": 95.9,
+          "queue": 28,
+          "throughput": 2806.0,
+          "speed": 5.63,
+          "vehicles": 297
+        },
+        {
+          "t": 990.0,
+          "delay": 99.8,
+          "queue": 29,
+          "throughput": 2775.0,
+          "speed": 5.8,
+          "vehicles": 297
+        },
+        {
+          "t": 1020.0,
+          "delay": 99.4,
+          "queue": 31,
+          "throughput": 2789.0,
+          "speed": 6.16,
+          "vehicles": 298
+        }
+      ],
+      "violations": [],
+      "notes": [],
+      "wall_time_s": 0.88
+    },
+    {
+      "id": "relieve-cross-street",
+      "name": "Favour cross street at B2",
+      "description": "Stronger metering: shift 25s to the cross street at the upstream intersection.",
+      "policies": [
+        {
+          "intersection_id": "B2",
+          "phase_durations": {
+            "0": 65.0,
+            "3": 15.0
+          },
+          "offset_s": null,
+          "reason": "protect cross-street flow from spillback"
+        }
+      ],
+      "corridor": null,
+      "reroutes": [],
+      "status": "completed",
+      "metrics": {
+        "sim_time": 1020.0,
+        "window_s": 600.0,
+        "mean_vehicle_delay": 83.0,
+        "max_queue_length": 26,
+        "max_queue_segment": "W2_A2",
+        "throughput": 2806.0,
+        "mean_speed": 5.71,
+        "emergency_vehicle_eta": 268.0,
+        "vehicles_in_network": 301,
+        "vehicles_waiting_to_enter": 4
+      },
+      "timeline": [
+        {
+          "t": 450.0,
+          "delay": 79.0,
+          "queue": 20,
+          "throughput": 2853.0,
+          "speed": 6.0,
+          "vehicles": 265
+        },
+        {
+          "t": 480.0,
+          "delay": 80.9,
+          "queue": 19,
+          "throughput": 2864.0,
+          "speed": 5.86,
+          "vehicles": 270
+        },
+        {
+          "t": 510.0,
+          "delay": 83.1,
+          "queue": 22,
+          "throughput": 2832.0,
+          "speed": 5.5,
+          "vehicles": 274
+        },
+        {
+          "t": 540.0,
+          "delay": 89.8,
+          "queue": 22,
+          "throughput": 2779.0,
+          "speed": 5.44,
+          "vehicles": 278
+        },
+        {
+          "t": 570.0,
+          "delay": 93.0,
+          "queue": 21,
+          "throughput": 2747.0,
+          "speed": 5.77,
+          "vehicles": 281
+        },
+        {
+          "t": 600.0,
+          "delay": 91.2,
+          "queue": 24,
+          "throughput": 2760.0,
+          "speed": 6.01,
+          "vehicles": 283
+        },
+        {
+          "t": 630.0,
+          "delay": 93.0,
+          "queue": 23,
+          "throughput": 2807.0,
+          "speed": 5.81,
+          "vehicles": 286
+        },
+        {
+          "t": 660.0,
+          "delay": 98.0,
+          "queue": 23,
+          "throughput": 2854.0,
+          "speed": 5.46,
+          "vehicles": 287
+        },
+        {
+          "t": 690.0,
+          "delay": 98.0,
+          "queue": 25,
+          "throughput": 2864.0,
+          "speed": 5.48,
+          "vehicles": 289
+        },
+        {
+          "t": 720.0,
+          "delay": 95.5,
+          "queue": 23,
+          "throughput": 2831.0,
+          "speed": 5.84,
+          "vehicles": 291
+        },
+        {
+          "t": 750.0,
+          "delay": 98.4,
+          "queue": 25,
+          "throughput": 2779.0,
+          "speed": 6.01,
+          "vehicles": 292
+        },
+        {
+          "t": 780.0,
+          "delay": 101.9,
+          "queue": 26,
+          "throughput": 2747.0,
+          "speed": 5.74,
+          "vehicles": 293
+        },
+        {
+          "t": 810.0,
+          "delay": 99.7,
+          "queue": 23,
+          "throughput": 2760.0,
+          "speed": 5.43,
+          "vehicles": 294
+        },
+        {
+          "t": 840.0,
+          "delay": 98.1,
+          "queue": 26,
+          "throughput": 2808.0,
+          "speed": 5.53,
+          "vehicles": 295
+        },
+        {
+          "t": 870.0,
+          "delay": 101.8,
+          "queue": 25,
+          "throughput": 2854.0,
+          "speed": 5.89,
+          "vehicles": 295
+        },
+        {
+          "t": 900.0,
+          "delay": 103.5,
+          "queue": 24,
+          "throughput": 2864.0,
+          "speed": 5.99,
+          "vehicles": 296
+        },
+        {
+          "t": 930.0,
+          "delay": 100.2,
+          "queue": 27,
+          "throughput": 2830.0,
+          "speed": 5.68,
+          "vehicles": 296
+        },
+        {
+          "t": 960.0,
+          "delay": 100.1,
+          "queue": 25,
+          "throughput": 2778.0,
+          "speed": 5.41,
+          "vehicles": 297
+        },
+        {
+          "t": 990.0,
+          "delay": 104.1,
+          "queue": 25,
+          "throughput": 2747.0,
+          "speed": 5.58,
+          "vehicles": 297
+        },
+        {
+          "t": 1020.0,
+          "delay": 103.7,
+          "queue": 27,
+          "throughput": 2761.0,
+          "speed": 5.94,
+          "vehicles": 298
+        }
+      ],
+      "violations": [],
+      "notes": [],
+      "wall_time_s": 0.85
+    },
+    {
+      "id": "aggressive-flush",
+      "name": "Maximum EB green at C2",
+      "description": "Give Main St EB 72s of green at C2, leaving Pine Ave 8s.",
+      "policies": [
+        {
+          "intersection_id": "C2",
+          "phase_durations": {
+            "0": 72.0,
+            "3": 8.0
+          },
+          "offset_s": null,
+          "reason": "clear the incident queue as fast as possible"
+        }
+      ],
+      "corridor": null,
+      "reroutes": [],
+      "status": "rejected",
+      "metrics": null,
+      "timeline": [],
+      "violations": [
+        "C2 phase 3: green 8s < 12s (vehicle/pedestrian minimum)"
+      ],
+      "notes": [
+        "Rejected by the safety validator; not simulated."
+      ],
+      "wall_time_s": null
+    },
+    {
+      "id": "ems-corridor",
+      "name": "EMS green corridor",
+      "description": "Pre-empt each signal on the responder's route to green ahead of the EMS unit, through full yellow and all-red clearance.",
+      "policies": [],
+      "corridor": {
+        "intersection_ids": [],
+        "detection_distance_m": 150.0,
+        "min_served_green_s": 12.0,
+        "max_hold_s": 60.0,
+        "reason": "pre-empt signals ahead of EMS responding to INC-0001"
+      },
+      "reroutes": [],
+      "status": "completed",
+      "metrics": {
+        "sim_time": 1020.0,
+        "window_s": 600.0,
+        "mean_vehicle_delay": 94.2,
+        "max_queue_length": 40,
+        "max_queue_segment": "A2_B2",
+        "throughput": 2725.0,
+        "mean_speed": 5.16,
+        "emergency_vehicle_eta": 141.0,
+        "vehicles_in_network": 301,
+        "vehicles_waiting_to_enter": 4
+      },
+      "timeline": [
+        {
+          "t": 450.0,
+          "delay": 79.4,
+          "queue": 22,
+          "throughput": 2772.0,
+          "speed": 5.45,
+          "vehicles": 265
+        },
+        {
+          "t": 480.0,
+          "delay": 82.2,
+          "queue": 22,
+          "throughput": 2783.0,
+          "speed": 5.31,
+          "vehicles": 270
+        },
+        {
+          "t": 510.0,
+          "delay": 85.6,
+          "queue": 27,
+          "throughput": 2751.0,
+          "speed": 4.95,
+          "vehicles": 274
+        },
+        {
+          "t": 540.0,
+          "delay": 93.4,
+          "queue": 28,
+          "throughput": 2698.0,
+          "speed": 4.89,
+          "vehicles": 278
+        },
+        {
+          "t": 570.0,
+          "delay": 97.8,
+          "queue": 28,
+          "throughput": 2666.0,
+          "speed": 5.22,
+          "vehicles": 281
+        },
+        {
+          "t": 600.0,
+          "delay": 97.2,
+          "queue": 32,
+          "throughput": 2679.0,
+          "speed": 5.46,
+          "vehicles": 283
+        },
+        {
+          "t": 630.0,
+          "delay": 100.1,
+          "queue": 32,
+          "throughput": 2726.0,
+          "speed": 5.26,
+          "vehicles": 286
+        },
+        {
+          "t": 660.0,
+          "delay": 106.1,
+          "queue": 33,
+          "throughput": 2773.0,
+          "speed": 4.91,
+          "vehicles": 287
+        },
+        {
+          "t": 690.0,
+          "delay": 106.9,
+          "queue": 36,
+          "throughput": 2783.0,
+          "speed": 4.93,
+          "vehicles": 289
+        },
+        {
+          "t": 720.0,
+          "delay": 105.2,
+          "queue": 34,
+          "throughput": 2750.0,
+          "speed": 5.29,
+          "vehicles": 291
+        },
+        {
+          "t": 750.0,
+          "delay": 108.7,
+          "queue": 36,
+          "throughput": 2698.0,
+          "speed": 5.46,
+          "vehicles": 292
+        },
+        {
+          "t": 780.0,
+          "delay": 112.8,
+          "queue": 37,
+          "throughput": 2666.0,
+          "speed": 5.19,
+          "vehicles": 293
+        },
+        {
+          "t": 810.0,
+          "delay": 111.1,
+          "queue": 35,
+          "throughput": 2679.0,
+          "speed": 4.88,
+          "vehicles": 294
+        },
+        {
+          "t": 840.0,
+          "delay": 109.8,
+          "queue": 38,
+          "throughput": 2727.0,
+          "speed": 4.98,
+          "vehicles": 295
+        },
+        {
+          "t": 870.0,
+          "delay": 113.9,
+          "queue": 38,
+          "throughput": 2773.0,
+          "speed": 5.34,
+          "vehicles": 295
+        },
+        {
+          "t": 900.0,
+          "delay": 115.9,
+          "queue": 37,
+          "throughput": 2783.0,
+          "speed": 5.44,
+          "vehicles": 296
+        },
+        {
+          "t": 930.0,
+          "delay": 112.8,
+          "queue": 40,
+          "throughput": 2749.0,
+          "speed": 5.13,
+          "vehicles": 296
+        },
+        {
+          "t": 960.0,
+          "delay": 113.0,
+          "queue": 38,
+          "throughput": 2697.0,
+          "speed": 4.86,
+          "vehicles": 297
+        },
+        {
+          "t": 990.0,
+          "delay": 117.1,
+          "queue": 38,
+          "throughput": 2666.0,
+          "speed": 5.03,
+          "vehicles": 297
+        },
+        {
+          "t": 1020.0,
+          "delay": 116.9,
+          "queue": 40,
+          "throughput": 2680.0,
+          "speed": 5.39,
+          "vehicles": 298
+        }
+      ],
+      "violations": [],
+      "notes": [
+        "3 pre-emptions (A2, B2, C2); longest hold 14s"
+      ],
+      "wall_time_s": 0.93
+    },
+    {
+      "id": "corridor-plus-meter",
+      "name": "EMS corridor + meter at B2",
+      "description": "Green corridor for the responder, then keep metering EB inflow at B2.",
+      "policies": [
+        {
+          "intersection_id": "B2",
+          "phase_durations": {
+            "0": 55.0,
+            "3": 25.0
+          },
+          "offset_s": null,
+          "reason": "meter inflow toward the blocked link"
+        }
+      ],
+      "corridor": {
+        "intersection_ids": [],
+        "detection_distance_m": 150.0,
+        "min_served_green_s": 12.0,
+        "max_hold_s": 60.0,
+        "reason": "pre-empt signals ahead of EMS responding to INC-0001"
+      },
+      "reroutes": [],
+      "status": "completed",
+      "metrics": {
+        "sim_time": 1020.0,
+        "window_s": 600.0,
+        "mean_vehicle_delay": 81.2,
+        "max_queue_length": 31,
+        "max_queue_segment": "W2_A2",
+        "throughput": 2821.0,
+        "mean_speed": 5.84,
+        "emergency_vehicle_eta": 149.5,
+        "vehicles_in_network": 301,
+        "vehicles_waiting_to_enter": 4
+      },
+      "timeline": [
+        {
+          "t": 450.0,
+          "delay": 79.0,
+          "queue": 21,
+          "throughput": 2868.0,
+          "speed": 6.13,
+          "vehicles": 265
+        },
+        {
+          "t": 480.0,
+          "delay": 80.7,
+          "queue": 20,
+          "throughput": 2879.0,
+          "speed": 5.99,
+          "vehicles": 270
+        },
+        {
+          "t": 510.0,
+          "delay": 82.8,
+          "queue": 24,
+          "throughput": 2847.0,
+          "speed": 5.63,
+          "vehicles": 274
+        },
+        {
+          "t": 540.0,
+          "delay": 89.2,
+          "queue": 24,
+          "throughput": 2794.0,
+          "speed": 5.57,
+          "vehicles": 278
+        },
+        {
+          "t": 570.0,
+          "delay": 92.2,
+          "queue": 24,
+          "throughput": 2762.0,
+          "speed": 5.9,
+          "vehicles": 281
+        },
+        {
+          "t": 600.0,
+          "delay": 90.3,
+          "queue": 27,
+          "throughput": 2775.0,
+          "speed": 6.14,
+          "vehicles": 283
+        },
+        {
+          "t": 630.0,
+          "delay": 91.9,
+          "queue": 26,
+          "throughput": 2822.0,
+          "speed": 5.94,
+          "vehicles": 286
+        },
+        {
+          "t": 660.0,
+          "delay": 96.8,
+          "queue": 26,
+          "throughput": 2869.0,
+          "speed": 5.59,
+          "vehicles": 287
+        },
+        {
+          "t": 690.0,
+          "delay": 96.6,
+          "queue": 29,
+          "throughput": 2879.0,
+          "speed": 5.61,
+          "vehicles": 289
+        },
+        {
+          "t": 720.0,
+          "delay": 94.0,
+          "queue": 27,
+          "throughput": 2846.0,
+          "speed": 5.97,
+          "vehicles": 291
+        },
+        {
+          "t": 750.0,
+          "delay": 96.7,
+          "queue": 29,
+          "throughput": 2794.0,
+          "speed": 6.14,
+          "vehicles": 292
+        },
+        {
+          "t": 780.0,
+          "delay": 100.2,
+          "queue": 30,
+          "throughput": 2762.0,
+          "speed": 5.87,
+          "vehicles": 293
+        },
+        {
+          "t": 810.0,
+          "delay": 97.9,
+          "queue": 28,
+          "throughput": 2775.0,
+          "speed": 5.56,
+          "vehicles": 294
+        },
+        {
+          "t": 840.0,
+          "delay": 96.2,
+          "queue": 30,
+          "throughput": 2823.0,
+          "speed": 5.66,
+          "vehicles": 295
+        },
+        {
+          "t": 870.0,
+          "delay": 99.9,
+          "queue": 30,
+          "throughput": 2869.0,
+          "speed": 6.02,
+          "vehicles": 295
+        },
+        {
+          "t": 900.0,
+          "delay": 101.5,
+          "queue": 29,
+          "throughput": 2879.0,
+          "speed": 6.12,
+          "vehicles": 296
+        },
+        {
+          "t": 930.0,
+          "delay": 98.1,
+          "queue": 31,
+          "throughput": 2845.0,
+          "speed": 5.81,
+          "vehicles": 296
+        },
+        {
+          "t": 960.0,
+          "delay": 98.0,
+          "queue": 29,
+          "throughput": 2793.0,
+          "speed": 5.54,
+          "vehicles": 297
+        },
+        {
+          "t": 990.0,
+          "delay": 102.0,
+          "queue": 30,
+          "throughput": 2762.0,
+          "speed": 5.71,
+          "vehicles": 297
+        },
+        {
+          "t": 1020.0,
+          "delay": 101.6,
+          "queue": 32,
+          "throughput": 2776.0,
+          "speed": 6.07,
+          "vehicles": 298
+        }
+      ],
+      "violations": [],
+      "notes": [
+        "3 pre-emptions (A2, B2, C2); longest hold 16s"
+      ],
+      "wall_time_s": 0.95
+    },
+    {
+      "id": "divert-advisory",
+      "name": "Divert via Harbor St / Park St",
+      "description": "Advise 30% of drivers headed through the blocked block to divert (DMS sign + navigation alert).",
+      "policies": [],
+      "corridor": null,
+      "reroutes": [
+        {
+          "avoid_segment_ids": [
+            "B2_C2"
+          ],
+          "compliance": 0.3,
+          "reason": "lane blocked on Main St EB between Central Ave and Pine Ave"
+        }
+      ],
+      "status": "completed",
+      "metrics": {
+        "sim_time": 1020.0,
+        "window_s": 600.0,
+        "mean_vehicle_delay": 85.3,
+        "max_queue_length": 33,
+        "max_queue_segment": "A2_B2",
+        "throughput": 2760.0,
+        "mean_speed": 5.52,
+        "emergency_vehicle_eta": 248.0,
+        "vehicles_in_network": 301,
+        "vehicles_waiting_to_enter": 4
+      },
+      "timeline": [
+        {
+          "t": 450.0,
+          "delay": 79.2,
+          "queue": 21,
+          "throughput": 2807.0,
+          "speed": 5.81,
+          "vehicles": 265
+        },
+        {
+          "t": 480.0,
+          "delay": 81.5,
+          "queue": 20,
+          "throughput": 2818.0,
+          "speed": 5.67,
+          "vehicles": 270
+        },
+        {
+          "t": 510.0,
+          "delay": 84.1,
+          "queue": 24,
+          "throughput": 2786.0,
+          "speed": 5.31,
+          "vehicles": 274
+        },
+        {
+          "t": 540.0,
+          "delay": 91.2,
+          "queue": 25,
+          "throughput": 2733.0,
+          "speed": 5.25,
+          "vehicles": 278
+        },
+        {
+          "t": 570.0,
+          "delay": 94.8,
+          "queue": 25,
+          "throughput": 2701.0,
+          "speed": 5.58,
+          "vehicles": 281
+        },
+        {
+          "t": 600.0,
+          "delay": 93.4,
+          "queue": 28,
+          "throughput": 2714.0,
+          "speed": 5.82,
+          "vehicles": 283
+        },
+        {
+          "t": 630.0,
+          "delay": 95.5,
+          "queue": 27,
+          "throughput": 2761.0,
+          "speed": 5.62,
+          "vehicles": 286
+        },
+        {
+          "t": 660.0,
+          "delay": 100.8,
+          "queue": 28,
+          "throughput": 2808.0,
+          "speed": 5.27,
+          "vehicles": 287
+        },
+        {
+          "t": 690.0,
+          "delay": 100.9,
+          "queue": 31,
+          "throughput": 2818.0,
+          "speed": 5.29,
+          "vehicles": 289
+        },
+        {
+          "t": 720.0,
+          "delay": 98.6,
+          "queue": 28,
+          "throughput": 2785.0,
+          "speed": 5.65,
+          "vehicles": 291
+        },
+        {
+          "t": 750.0,
+          "delay": 101.5,
+          "queue": 30,
+          "throughput": 2733.0,
+          "speed": 5.82,
+          "vehicles": 292
+        },
+        {
+          "t": 780.0,
+          "delay": 105.2,
+          "queue": 31,
+          "throughput": 2701.0,
+          "speed": 5.55,
+          "vehicles": 293
+        },
+        {
+          "t": 810.0,
+          "delay": 103.0,
+          "queue": 29,
+          "throughput": 2714.0,
+          "speed": 5.24,
+          "vehicles": 294
+        },
+        {
+          "t": 840.0,
+          "delay": 101.4,
+          "queue": 32,
+          "throughput": 2762.0,
+          "speed": 5.34,
+          "vehicles": 295
+        },
+        {
+          "t": 870.0,
+          "delay": 105.1,
+          "queue": 32,
+          "throughput": 2808.0,
+          "speed": 5.7,
+          "vehicles": 295
+        },
+        {
+          "t": 900.0,
+          "delay": 106.8,
+          "queue": 30,
+          "throughput": 2818.0,
+          "speed": 5.8,
+          "vehicles": 296
+        },
+        {
+          "t": 930.0,
+          "delay": 103.4,
+          "queue": 33,
+          "throughput": 2784.0,
+          "speed": 5.49,
+          "vehicles": 296
+        },
+        {
+          "t": 960.0,
+          "delay": 103.3,
+          "queue": 31,
+          "throughput": 2732.0,
+          "speed": 5.22,
+          "vehicles": 297
+        },
+        {
+          "t": 990.0,
+          "delay": 107.3,
+          "queue": 32,
+          "throughput": 2701.0,
+          "speed": 5.39,
+          "vehicles": 297
+        },
+        {
+          "t": 1020.0,
+          "delay": 106.9,
+          "queue": 34,
+          "throughput": 2715.0,
+          "speed": 5.75,
+          "vehicles": 298
+        }
+      ],
+      "violations": [],
+      "notes": [
+        "212 vehicles diverted over the horizon"
+      ],
+      "wall_time_s": 0.91
+    }
+  ],
+  "recommendation": {
+    "candidate_id": "corridor-plus-meter",
+    "summary": "Green corridor for the responder, then keep metering EB inflow at B2.",
+    "rationale": [
+      "EMS response 4:23 -> 2:30 (-43%)",
+      "Mean delay 96s -> 81s (-16%)",
+      "Max queue 41 -> 31 vehicles",
+      "Throughput 2712 -> 2821 veh/h",
+      "meter-upstream has 2s less delay but leaves the responder 106s slower"
+    ]
+  },
+  "error": null
+}

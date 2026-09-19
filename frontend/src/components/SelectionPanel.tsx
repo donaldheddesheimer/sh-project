@@ -1,5 +1,6 @@
 import type { Approach, CityState } from '../api/types'
 import { CONGESTION_COLOR, CONGESTION_LABEL, DIRECTION_LABEL, mph, SIGNAL_COLOR } from '../lib/format'
+import { Section } from './Section'
 import type { Selection } from './map/CityMap'
 
 const APPROACHES: Approach[] = ['NB', 'SB', 'EB', 'WB']
@@ -7,10 +8,9 @@ const APPROACHES: Approach[] = ['NB', 'SB', 'EB', 'WB']
 export function SelectionPanel({ selection, state }: { selection: Selection | null; state: CityState | null }) {
   if (!selection || !state) {
     return (
-      <section className="panel-section">
-        <h2 className="section-title">Inspector</h2>
+      <Section title="Inspector" icon="eye">
         <div className="muted hint">Select an intersection or road segment on the map.</div>
-      </section>
+      </Section>
     )
   }
 
@@ -18,10 +18,7 @@ export function SelectionPanel({ selection, state }: { selection: Selection | nu
     const i = state.intersections.find((x) => x.id === selection.id)
     if (!i) return null
     return (
-      <section className="panel-section">
-        <h2 className="section-title">
-          Intersection <span className="mono">{i.id}</span>
-        </h2>
+      <Section title="Inspector · intersection" icon="signal" meta={i.id}>
         <div className="inspector-name">{i.name}</div>
         {i.signalized && (
           <div className="phase">
@@ -60,7 +57,7 @@ export function SelectionPanel({ selection, state }: { selection: Selection | nu
             })}
           </tbody>
         </table>
-      </section>
+      </Section>
     )
   }
 
@@ -69,17 +66,14 @@ export function SelectionPanel({ selection, state }: { selection: Selection | nu
   const from = state.intersections.find((x) => x.id === s.source)?.name ?? s.source
   const to = state.intersections.find((x) => x.id === s.destination)?.name ?? s.destination
   return (
-    <section className="panel-section">
-      <h2 className="section-title">
-        Road segment <span className="mono">{s.id}</span>
-      </h2>
+    <Section title="Inspector · road segment" icon="eye" meta={s.id}>
       <div className="inspector-name">
         {s.name} · {DIRECTION_LABEL[s.direction]}
       </div>
       <div className="muted small">
         {from} → {to}
       </div>
-      <dl className="facts">
+      <dl className="props boxed">
         <dt>Condition</dt>
         <dd>
           <span className="signal-dot" style={{ background: CONGESTION_COLOR[s.level] }} />
@@ -102,6 +96,6 @@ export function SelectionPanel({ selection, state }: { selection: Selection | nu
           </>
         )}
       </dl>
-    </section>
+    </Section>
   )
 }

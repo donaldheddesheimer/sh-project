@@ -1,52 +1,64 @@
 import type { StatusInfo } from '../api/types'
 import { clock } from '../lib/format'
+import type { AnalyzeState } from '../lib/plans'
+import { Icon } from './Icon'
 
 const SPEEDS = [1, 2, 4, 8, 16]
 
+type Action = 'start' | 'pause' | 'reset' | 'inject' | 'dispatch'
+
 interface Props {
+  networkName: string | null
   simTime: number | null
   status: StatusInfo | null
   connected: boolean
   hasIncident: boolean
   busy: string | null
-  onAction: (action: 'start' | 'pause' | 'reset' | 'inject' | 'dispatch') => void
+  analyze: AnalyzeState
+  fixture: boolean
+  onAction: (action: Action) => void
   onSpeed: (speed: number) => void
+  onAnalyze: () => void
 }
 
-export function TopBar({ simTime, status, connected, hasIncident, busy, onAction, onSpeed }: Props) {
+export function TopBar(props: Props) {
+  const { networkName, simTime, status, connected, hasIncident, busy, analyze, fixture, onAction, onSpeed, onAnalyze } =
+    props
   const run = status?.status ?? 'starting'
   const live = connected && run !== 'starting' && run !== 'error'
+  const running = run === 'running'
   return (
     <header className="topbar">
       <div className="brand">
-        <div className="brand-mark" aria-hidden>
-          <span />
-          <span />
-          <span />
-        </div>
-        <div>
-          <div className="brand-title">Traffic Operations Center</div>
-          <div className="brand-sub">Simulation-backed incident response</div>
-        </div>
+        <span className="brand-mark" aria-hidden>
+          <Icon name="grid" size={14} />
+        </span>
+        <span className="brand-name">Traffic Ops</span>
+        <span className="crumbs">
+          <span>{networkName ?? 'Network'}</span>
+          <Icon name="chevronRight" size={10} />
+          <span className="crumb-current">Live operations</span>
+        </span>
       </div>
 
+      {fixture && (
+        <span className="fixture-badge" title="Analysis runs are replayed from src/dev/scenario-run.json: synthetic numbers, not simulation output">
+          <Icon name="database" size={12} /> Fixture data
+        </span>
+      )}
+
       <div className="sim-clock">
-        <div className={`run-pill run-${connected ? run : 'offline'}`}>
+        <span className={`run-tag run-${connected ? run : 'offline'}`}>
           <span className="dot" />
           {connected ? run.toUpperCase() : 'OFFLINE'}
-        </div>
-        <div className="clock">
+        </span>
+        <span className="clock">
           <span className="clock-label">SIM</span>
           <span className="clock-value">{simTime == null ? '--:--:--' : clock(simTime)}</span>
-        </div>
-        <div className="speed" role="group" aria-label="Simulation speed">
+        </span>
+        <div className="seg" role="group" aria-label="Simulation speed">
           {SPEEDS.map((s) => (
-            <button
-              key={s}
-              className={status?.speed === s ? 'active' : ''}
-              disabled={!live}
-              onClick={() => onSpeed(s)}
-            >
+            <button key={s} className={status?.speed === s ? 'active' : ''} disabled={!live} onClick={() => onSpeed(s)}>
               {s}×
             </button>
           ))}
@@ -55,19 +67,29 @@ export function TopBar({ simTime, status, connected, hasIncident, busy, onAction
 
       <div className="controls">
         <div className="control-group">
-          <button className="btn" disabled={!live || run === 'running' || !!busy} onClick={() => onAction('start')}>
-            ▶ Start
+          <button
+            className="btn btn-icon"
+            disabled={!live || !!busy}
+            title={running ? 'Pause simulation' : 'Start simulation'}
+            aria-label={running ? 'Pause' : 'Start'}
+            onClick={() => onAction(running ? 'pause' : 'start')}
+          >
+            <Icon name={running ? 'pause' : 'play'} />
           </button>
-          <button className="btn" disabled={!live || run === 'paused' || !!busy} onClick={() => onAction('pause')}>
-            ❚❚ Pause
-          </button>
-          <button className="btn" disabled={!connected || run === 'starting' || !!busy} onClick={() => onAction('reset')}>
-            ↺ Reset
+          <button
+            className="btn btn-icon"
+            disabled={!connected || run === 'starting' || !!busy}
+            title="Reset simulation"
+            aria-label="Reset"
+            onClick={() => onAction('reset')}
+          >
+            <Icon name="reset" />
           </button>
         </div>
+        <span className="vsep" />
         <div className="control-group">
           <button className="btn btn-danger" disabled={!live || !!busy} onClick={() => onAction('inject')}>
-            ⚠ Inject Collision
+            <Icon name="warning" /> Inject collision
           </button>
           <button
             className="btn"
@@ -75,12 +97,19 @@ export function TopBar({ simTime, status, connected, hasIncident, busy, onAction
             title={hasIncident ? 'Send a responder from Fire Station 3 to the active incident' : 'No active incident'}
             onClick={() => onAction('dispatch')}
           >
-            ✚ Dispatch EMS
-          </button>
-          <button className="btn btn-primary" disabled title="Candidate simulation arrives in the next milestone">
-            ◇ Analyze Response
+            <Icon name="medical" /> Dispatch EMS
           </button>
         </div>
+        <button
+          className={`btn btn-primary btn-analyze${analyze.progress != null ? ' btn-busy' : ''}`}
+          disabled={!analyze.enabled}
+          title={analyze.reason}
+          onClick={onAnalyze}
+        >
+          <Icon name={analyze.progress != null ? 'spinner' : 'branch'} className={analyze.progress != null ? 'spin' : undefined} />
+          {analyze.label}
+          {analyze.progress != null && <span className="btn-progress" style={{ width: `${analyze.progress * 100}%` }} />}
+        </button>
       </div>
     </header>
   )

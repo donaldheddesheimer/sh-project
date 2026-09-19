@@ -1,16 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client'
 import type { NetworkGeometry } from './api/types'
-import { EventLog } from './components/EventLog'
 import { IncidentPanel } from './components/IncidentPanel'
 import { CityMap, type Selection } from './components/map/CityMap'
 import { MapLegend } from './components/MapLegend'
 import { MetricsPanel } from './components/MetricsPanel'
+import { AnalysisDock } from './components/plans/AnalysisDock'
+import { MapPlanCard } from './components/plans/MapPlanCard'
+import { ResponsePlans } from './components/plans/ResponsePlans'
 import { SelectionPanel } from './components/SelectionPanel'
 import { TopBar } from './components/TopBar'
-import { TrendChart } from './components/TrendChart'
+import { FIXTURE_MODE } from './dev/fixture'
 import { useCityStream } from './hooks/useCityStream'
-import { mph } from './lib/format'
+import { analyzeState, candidateColors, planOverlay } from './lib/plans'
 
 type Action = 'start' | 'pause' | 'reset' | 'inject' | 'dispatch'
 
@@ -23,11 +25,14 @@ const ACTIONS: Record<Action, () => Promise<unknown>> = {
 }
 
 export default function App() {
-  const { state, status, events, history, connected } = useCityStream()
+  const { state, status, events, history, connected, scenario, phaseLabels, acceptScenario } = useCityStream()
   const [network, setNetwork] = useState<NetworkGeometry | null>(null)
   const [selection, setSelection] = useState<Selection | null>(null)
+  const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null)
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const cancelReplay = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -52,6 +57,8 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [toast])
 
+  useEffect(() => () => cancelReplay.current?.(), [])
+
   const run = async (name: string, fn: () => Promise<unknown>) => {
     setBusy(name)
     try {
@@ -64,7 +71,11 @@ export default function App() {
   }
 
   const incidents = state?.incidents ?? []
-  const latestIncident = incidents.length ? incidents.reduce((a, b) => (a.timestamp > b.timestamp ? a : b)) : null
+  const activeIncidents = incidents.filter((incident) => incident.status === 'active')
+  const latestIncident = activeIncidents.length
+    ? activeIncidents.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
+    : null
+  const scopedScenario = scenario && scenario.incident_id === latestIncident?.id ? scenario : null
   const incidentTime = latestIncident?.sim_time ?? null
   // pre-incident reference for KPI deltas: the last trend sample before detection
   const reference = useMemo(
@@ -72,22 +83,71 @@ export default function App() {
     [history, incidentTime],
   )
   const markers = incidents.filter((i) => i.sim_time != null).map((i) => ({ t: i.sim_time!, label: i.id }))
+  const colors = useMemo(() => (scopedScenario ? candidateColors(scopedScenario) : {}), [scopedScenario])
+  const activePlanId = hoveredPlanId ?? selectedPlanId
+  const activeCandidate = scopedScenario?.candidates.find((candidate) => candidate.id === activePlanId) ?? null
+  const incidentSegmentId = latestIncident?.location.segment_id ?? null
+  const overlay = useMemo(
+    () =>
+      activeCandidate && network
+        ? planOverlay(activeCandidate, colors[activeCandidate.id], network, incidentSegmentId)
+        : null,
+    [activeCandidate, colors, incidentSegmentId, network],
+  )
+  const analyze = analyzeState({
+    connected,
+    runStatus: status?.status ?? null,
+    hasIncident: !!latestIncident,
+    busy: !!busy,
+    scenario: scopedScenario,
+    fixture: !!FIXTURE_MODE,
+  })
+
+  const selectPlan = (id: string) => setSelectedPlanId((current) => (current === id ? null : id))
+
+  const startAnalysis = async () => {
+    setBusy('analyze')
+    try {
+      if (FIXTURE_MODE) {
+        const { replayFixture } = await import('./dev/replay')
+        cancelReplay.current?.()
+        cancelReplay.current = replayFixture(FIXTURE_MODE, acceptScenario)
+      } else {
+        const run = await api.runScenario({ incident_id: latestIncident?.id ?? null, horizon_s: 600, ems_probe: true })
+        acceptScenario(run)
+      }
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
 
   return (
     <div className="app">
       <TopBar
+        networkName={network?.name ?? null}
         simTime={state?.sim_time ?? null}
         status={status}
         connected={connected}
-        hasIncident={incidents.length > 0}
+        hasIncident={!!latestIncident}
         busy={busy}
-        onAction={(action) => run(action, ACTIONS[action])}
+        analyze={analyze}
+        fixture={!!FIXTURE_MODE}
+onAction={(action) => {
+  if (action === 'reset') {
+    cancelReplay.current?.()
+    cancelReplay.current = null
+  }
+  void run(action, ACTIONS[action])
+}}
         onSpeed={(speed) => run('speed', () => api.speed(speed))}
+        onAnalyze={startAnalysis}
       />
 
       <main className="map-area">
         {network ? (
-          <CityMap network={network} state={state} selection={selection} onSelect={setSelection} />
+          <CityMap network={network} state={state} selection={selection} planOverlay={overlay} onSelect={setSelection} />
         ) : (
           <div className="map-loading">Connecting to traffic simulation…</div>
         )}
@@ -102,6 +162,7 @@ export default function App() {
           )}
         </div>
         <MapLegend />
+        {activeCandidate && overlay && <MapPlanCard candidate={activeCandidate} overlay={overlay} />}
         {status?.status === 'starting' && <div className="map-banner">Warming up simulation…</div>}
         {status?.status === 'error' && <div className="map-banner error">Simulation error: {status.error}</div>}
       </main>
@@ -122,35 +183,30 @@ export default function App() {
           segments={state?.segments ?? []}
         />
         <SelectionPanel selection={selection} state={state} />
-        <section className="panel-section">
-          <h2 className="section-title">Response plans</h2>
-          <div className="plans-placeholder">
-            Next milestone: <strong>Analyze Response</strong> branches SUMO from the current state and compares
-            baseline, upstream metering, split rebalancing and an emergency green corridor over a 10-minute horizon.
-          </div>
-        </section>
+        <ResponsePlans
+          run={scopedScenario}
+          incidentId={latestIncident?.id ?? null}
+          fixture={!!FIXTURE_MODE}
+          colors={colors}
+          phaseLabels={phaseLabels}
+          activeId={activePlanId}
+          selectedId={selectedPlanId}
+          onHover={setHoveredPlanId}
+          onSelect={selectPlan}
+        />
       </aside>
 
-      <section className="bottom">
-        <div className="trends">
-          <TrendChart title="Mean vehicle delay" unit="s" points={history.map((s) => ({ t: s.t, v: s.delay }))} markers={markers} />
-          <TrendChart title="Max queue" unit="veh" points={history.map((s) => ({ t: s.t, v: s.queue }))} markers={markers} />
-          <TrendChart
-            title="Throughput"
-            unit="veh/h"
-            points={history.map((s) => ({ t: s.t, v: s.throughput }))}
-            markers={markers}
-          />
-          <TrendChart
-            title="Mean speed"
-            unit="mph"
-            points={history.map((s) => ({ t: s.t, v: mph(s.speed) }))}
-            markers={markers}
-            format={(v) => v.toFixed(0)}
-          />
-        </div>
-        <EventLog events={events} />
-      </section>
+      <AnalysisDock
+        history={history}
+        events={events}
+        markers={markers}
+        run={scopedScenario}
+        colors={colors}
+        activeId={activePlanId}
+        selectedId={selectedPlanId}
+        onHover={setHoveredPlanId}
+        onSelect={selectPlan}
+      />
 
       {toast && (
         <div className="toast" role="alert" onClick={() => setToast(null)}>

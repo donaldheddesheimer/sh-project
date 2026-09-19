@@ -153,7 +153,7 @@ onAction={(action) => {
         )}
         <div className="map-caption">
           <span className="live-dot" data-live={connected && status?.status === 'running'} />
-          {network?.name ?? 'Network'} · {network?.intersections.length ?? 0} signalized intersections ·{' '}
+          {network?.name ?? 'Network'} · {network?.intersections.filter((i) => i.signalized).length ?? 0} signalized intersections ·{' '}
           {state?.vehicles.length ?? 0} vehicles tracked
           {state && (
             <span className="sources">
@@ -162,6 +162,7 @@ onAction={(action) => {
           )}
         </div>
         <MapLegend />
+        {network?.attribution && <div className="map-attribution">{network.attribution}</div>}
         {activeCandidate && overlay && <MapPlanCard candidate={activeCandidate} overlay={overlay} />}
         {status?.status === 'starting' && <div className="map-banner">Warming up simulation…</div>}
         {status?.status === 'error' && <div className="map-banner error">Simulation error: {status.error}</div>}

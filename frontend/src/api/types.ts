@@ -24,8 +24,9 @@ export interface IntersectionState {
   phase_remaining: number | null
   cycle_length: number | null
   program_id: string | null
-  approach_signals: Partial<Record<Approach, SignalColor>>
-  queue_lengths: Partial<Record<Approach, number>>
+  // keyed by incoming segment id; the segment's direction is only a label and can repeat at one junction
+  approach_signals: Record<string, SignalColor>
+  queue_lengths: Record<string, number>
   average_speed: number
   vehicle_count: number
   congestion: number
@@ -163,6 +164,7 @@ export interface IntersectionGeometry {
 export interface NetworkGeometry {
   id: string
   name: string
+  attribution: string | null
   center: [number, number]
   bounds: [[number, number], [number, number]]
   segments: SegmentGeometry[]

@@ -117,7 +117,7 @@ class CityService:
         self._runner.start()
         self.events.add(
             EventLevel.INFO,
-            f"Loading {self.scenario.name}: {len(self.network.intersections)} signalized intersections, "
+            f"Loading {self.scenario.name}: {sum(1 for i in self.network.intersections.values() if i.tls_id)} signalized intersections, "
             f"{self.settings.sim_warmup_s:.0f}s warm-up",
         )
 

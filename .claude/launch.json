@@ -12,6 +12,18 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "backend-oakland",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland", "backend/.venv/bin/uvicorn", "app.main:app", "--app-dir", "backend", "--host", "127.0.0.1", "--port", "8003"],
+      "port": 8003
+    },
+    {
+      "name": "frontend-oakland",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["BACKEND_URL=http://127.0.0.1:8003", "npm", "--prefix", "frontend", "run", "dev", "--", "--port", "5174", "--strictPort"],
+      "port": 5174
     }
   ]
 }

@@ -47,7 +47,7 @@ function staticSources(network: NetworkGeometry): Record<string, Features> {
       features: network.intersections.flatMap((i) =>
         i.approaches.map((a) => ({
           type: 'Feature' as const,
-          properties: { id: `${i.id}:${a.approach}` },
+          properties: { id: `${i.id}:${a.segment_id}` },
           geometry: { type: 'Point' as const, coordinates: a.signal_point },
         })),
       ),
@@ -187,8 +187,8 @@ export function CityMap({ network, state, selection, planOverlay, onSelect }: Pr
     }
     for (const i of state.intersections) {
       map.setFeatureState({ source: 'intersections', id: i.id }, { congestion: i.congestion })
-      for (const [approach, signal] of Object.entries(i.approach_signals)) {
-        map.setFeatureState({ source: 'signals', id: `${i.id}:${approach}` }, { signal })
+      for (const [segment, signal] of Object.entries(i.approach_signals)) {
+        map.setFeatureState({ source: 'signals', id: `${i.id}:${segment}` }, { signal })
       }
     }
     ;(map.getSource('vehicles') as GeoJSONSource).setData({

@@ -54,12 +54,16 @@ class Scenario(BaseModel):
     id: str
     name: str
     description: str = ""
+    attribution: str | None = None  # data credit the map must show (OSM data is ODbL)
     directory: Path
     sumocfg: Path
     net_file: Path
     geo_origin: GeoPoint
     ems_stations: list[EmsStation]
     default_collision: CollisionDefaults
+    # Clockwise rotation (degrees) applied to travel bearings before they are bucketed into
+    # NB/EB/SB/WB, for street grids that run off true north (Oakland, Pittsburgh: 45).
+    heading_offset_deg: float = 0.0
     demos: dict[str, DemoScript] = Field(default_factory=dict)
 
 
@@ -81,11 +85,13 @@ def load_scenario(directory: Path) -> Scenario:
         id=meta["id"],
         name=meta["name"],
         description=meta.get("description", ""),
+        attribution=meta.get("attribution"),
         directory=directory,
         sumocfg=sumocfg,
         net_file=(sumocfg.parent / net_value).resolve(),
         geo_origin=GeoPoint(**meta["geo_origin"]),
         ems_stations=[EmsStation(**s) for s in meta.get("ems_stations", [])],
         default_collision=CollisionDefaults(**meta["default_collision"]),
+        heading_offset_deg=meta.get("heading_offset_deg", 0.0),
         demos=load_demo_scripts(directory),
     )

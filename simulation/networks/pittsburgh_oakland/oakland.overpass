@@ -1,0 +1,9 @@
+[out:xml][timeout:90];
+(
+  way["highway"~"^(primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified|living_street|trunk|trunk_link)$"](40.437,-79.962,40.449,-79.944);
+  node["highway"="traffic_signals"](40.437,-79.962,40.449,-79.944);
+  nwr["amenity"="fire_station"](40.425,-79.975,40.460,-79.930);
+  nwr["amenity"="hospital"](40.437,-79.962,40.449,-79.944);
+);
+(._;>;);
+out body;

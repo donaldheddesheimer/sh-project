@@ -1,0 +1,18 @@
+{
+  "id": "pittsburgh_oakland",
+  "name": "Oakland, Pittsburgh",
+  "description": "Oakland street network from OpenStreetMap. Traffic demand and signal timing are synthetic.",
+  "attribution": "Map data © OpenStreetMap contributors (ODbL) · traffic and signal timing synthetic",
+  "sumocfg": "scenario.sumocfg",
+  "geo_origin": { "lat": 40.443, "lon": -79.953 },
+  "heading_offset_deg": 45,
+  "ems_stations": [
+    { "id": "EMS-14", "name": "Fire Station 14", "edge": "-494284371#0" }
+  ],
+  "default_collision": {
+    "edge": "714429624#0",
+    "lanes": [0, 1],
+    "position_fraction": 0.55,
+    "severity": "major"
+  }
+}

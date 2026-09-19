@@ -108,15 +108,22 @@ export function planChips(c: SimulationCandidate, phaseLabels: PhaseLabels): Pla
     const phases = Object.entries(p.phase_durations)
       .map(([index, seconds]) => ({ index: Number(index), seconds, label: phaseLabels[p.intersection_id]?.[Number(index)] }))
       .sort((a, b) => a.index - b.index)
-    const named = phases.every((ph) => ph.label)
-    const label = named
-      ? `${p.intersection_id} · ${phases.map((ph) => `${ph.label} ${Math.round(ph.seconds)}s`).join(' / ')}`
-      : `${p.intersection_id} split ${phases.map((ph) => Math.round(ph.seconds)).join('/')}`
-    const detail = phases
-      .map((ph) => `phase ${ph.index}${ph.label ? ` (${ph.label})` : ''} ${Math.round(ph.seconds)}s green`)
-      .join(', ')
-    const offset = p.offset_s != null ? `, offset ${Math.round(p.offset_s)}s` : ''
-    chips.push({ kind: 'timing', label, title: `${p.intersection_id}: ${detail}${offset}. ${p.reason}` })
+const named = phases.length > 0 && phases.every((ph) => ph.label)
+const changes: string[] = []
+if (phases.length > 0) {
+  changes.push(
+    named
+      ? phases.map((ph) => `${ph.label} ${Math.round(ph.seconds)}s`).join(' / ')
+      : `split ${phases.map((ph) => Math.round(ph.seconds)).join('/')}`,
+  )
+}
+if (p.offset_s != null) changes.push(`offset ${Math.round(p.offset_s)}s`)
+const label = `${p.intersection_id}${changes.length ? ` · ${changes.join(' · ')}` : ''}`
+const detail = [
+  ...phases.map((ph) => `phase ${ph.index}${ph.label ? ` (${ph.label})` : ''} ${Math.round(ph.seconds)}s green`),
+  ...(p.offset_s != null ? [`offset ${Math.round(p.offset_s)}s`] : []),
+].join(', ')
+chips.push({ kind: 'timing', label, title: `${p.intersection_id}: ${detail || 'timing update'}. ${p.reason}` })
   }
   if (c.corridor) {
     const ids = c.corridor.intersection_ids

@@ -246,5 +246,32 @@ the Result section below is filled in.
 - `start()` also spends about 1 s in a TraCI connect retry per branch.
 - Both are in `sumo.py`, which response-strategies owns. Subscribing lane position (`VAR_LANEPOSITION`) and reading it from `self._veh` would probably fix most of it. Until then, an 8-candidate run takes about 30 s. The UI shows progress, but lowering `SCENARIO_HORIZON_S` is the quick lever for the demo.
 
-**Contract change requests:** none.
+**Contract change requests.**
+- `backend/requirements.txt` gains `mcp>=2.2`, for the MCP server below.
+
+### Addendum: scenario engine as MCP tools
+The team's direction changed: an agent (Nemotron) should drive the analysis through MCP tools. Spec: [docs/specs/scenario-engine-mcp.md](../specs/scenario-engine-mcp.md).
+
+**Built.**
+- `backend/app/api/mcp_tools.py`: an `MCPServer` served at `/mcp` (streamable HTTP, stateless, JSON), with 5 tools: `start_analysis`, `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`. Its server `instructions` carry the workflow and how to read the metrics, ready to use as the agent's system prompt.
+- `ScenarioService` is split into reusable steps (`open` → `capture` → `evaluate` → `finish`/`fail`). The mock `POST /api/scenarios/run` pipeline now runs on the same steps.
+- An agent can call `simulate_plans` several times from the same snapshot, up to `SCENARIO_MAX_CANDIDATES` in total. The baseline is added automatically.
+- Tool runs mutate the same `ScenarioRun`, so the UI receives them over the existing `scenario` WebSocket messages without any contract change. `ScenarioRun.agent` holds the agent's name.
+- `SCENARIO_IDLE_TIMEOUT_S` (default 300) fails an abandoned agent run and releases the one-run lock. On shutdown, the open run's snapshot file is deleted.
+
+**Verified** with a scripted MCP client session over real streamable HTTP:
+- The client lists the 5 tools.
+- With no incident, `start_analysis` returns a tool error.
+- `start_analysis` on the crash returned the context: incident on Main St EB, 9 signals, 48 segments, worst first.
+- A second `start_analysis` gave a tool error because a run was already open.
+- `validate_plan` flagged "C2 phase 3: green 8s < 12s". The same plan inside `simulate_plans` came back `rejected`.
+- Round 1: baseline, flush and meter completed in 13.0 s. The live simulation advanced 429 → 636 during it.
+- A duplicate plan id and going over the candidate cap both gave tool errors.
+- Round 2 (1 plan) took 7.9 s.
+- Recommending a rejected candidate gave a tool error. The valid recommendation completed the run and wrote it to the ops log.
+- Tools called on the closed run gave tool errors.
+- The idle timeout (20 s in the test) failed an abandoned run, and a new analysis could then start.
+- WebSocket transitions: queued → proposing → simulating → proposing → simulating → proposing → completed.
+- The mock REST path still goes queued → proposing → simulating → recommending → completed.
+- `make test`: 19 passed.
 

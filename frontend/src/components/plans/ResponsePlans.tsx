@@ -185,7 +185,12 @@ export function ResponsePlans(props: Props) {
           role="button"
           tabIndex={0}
           onClick={() => onSelect(rec.candidate_id)}
-          onKeyDown={(e) => e.key === 'Enter' && onSelect(rec.candidate_id)}
+onKeyDown={(e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    onSelect(rec.candidate_id)
+  }
+}}
           onMouseEnter={() => onHover(rec.candidate_id)}
           onMouseLeave={() => onHover(null)}
         >

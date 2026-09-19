@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field
 
-from app.models.domain import PhaseKind, SignalPolicy, SignalProgram
+from app.models.domain import EmergencyCorridor, PhaseKind, SignalPolicy, SignalProgram
 
 
 class TimingLimits(BaseModel):
@@ -46,6 +46,11 @@ class ValidationResult(BaseModel):
 class SafetyValidator(ABC):
     @abstractmethod
     def validate(self, policy: SignalPolicy, base_program: SignalProgram) -> ValidationResult: ...
+
+    @abstractmethod
+    def validate_corridor(self, corridor: EmergencyCorridor, programs: dict[str, SignalProgram]) -> list[Violation]:
+        """Check a pre-emption request against the signals it may control (``programs``: every signalized
+        intersection, keyed by id). Empty list = safe to simulate."""
 
 
 class RuleBasedSafetyValidator(SafetyValidator):
@@ -108,3 +113,26 @@ class RuleBasedSafetyValidator(SafetyValidator):
             violations.append(Violation(code="offset", message=f"offset must be within [0, {cycle:.0f})s"))
 
         return ValidationResult(intersection_id=policy.intersection_id, ok=not violations, violations=violations)
+
+    def validate_corridor(self, corridor: EmergencyCorridor, programs: dict[str, SignalProgram]) -> list[Violation]:
+        lim = self.limits
+        violations: list[Violation] = []
+        unknown = [i for i in corridor.intersection_ids if i not in programs]
+        if unknown:
+            violations.append(Violation(code="unknown_signal", message=f"no signal program for {', '.join(unknown)}"))
+        floor = max(lim.min_green_s, lim.min_pedestrian_green_s)
+        if corridor.min_served_green_s < floor:
+            violations.append(
+                Violation(
+                    code="min_green",
+                    message=f"pre-emption may cut a green after {corridor.min_served_green_s:.0f}s "
+                    f"< {floor:.0f}s (vehicle/pedestrian minimum)",
+                )
+            )
+        if corridor.max_hold_s > lim.max_green_s:
+            violations.append(
+                Violation(code="max_green", message=f"hold {corridor.max_hold_s:.0f}s > {lim.max_green_s:.0f}s")
+            )
+        if not 30.0 <= corridor.detection_distance_m <= 400.0:
+            violations.append(Violation(code="detection_distance", message="detection distance must be 30-400 m"))
+        return violations

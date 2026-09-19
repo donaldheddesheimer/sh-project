@@ -9,12 +9,15 @@ try; the simulation only executes and measures it.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 
 from app.models.domain import (
     Disruption,
+    EmergencyCorridor,
     EmergencyDispatch,
     IntersectionState,
     NetworkState,
+    RerouteAction,
     RoadSegmentState,
     Severity,
     SignalPolicy,
@@ -45,11 +48,19 @@ class TrafficSimulation(ABC):
         """Advance one simulation step."""
 
     @abstractmethod
-    def run_for(self, seconds: float, speed_multiplier: float | None = None) -> TrafficMetrics:
+    def run_for(
+        self,
+        seconds: float,
+        speed_multiplier: float | None = None,
+        on_sample: Callable[[TrafficMetrics], None] | None = None,
+        sample_every_s: float = 30.0,
+    ) -> TrafficMetrics:
         """Advance ``seconds`` of simulated time; returns metrics for that window.
 
         ``speed_multiplier`` paces execution against the wall clock; ``None``
         runs as fast as possible (used for candidate evaluation).
+        ``on_sample`` receives live metrics every ``sample_every_s`` simulated
+        seconds (a candidate's timeline).
         """
 
     # observation -------------------------------------------------------------
@@ -105,6 +116,19 @@ class TrafficSimulation(ABC):
         destination_position: float | None = None,
         destination_lane: int = 0,
     ) -> EmergencyDispatch: ...
+
+    # incident responses (milestone 2) ------------------------------------------
+    def enable_emergency_corridor(self, corridor: EmergencyCorridor) -> None:
+        """Pre-empt signals ahead of every en-route emergency vehicle. Callers must validate first."""
+        raise NotImplementedError("emergency corridor not implemented by this simulation")
+
+    def reroute_vehicles(self, action: RerouteAction) -> int:
+        """Divert a share of traffic headed into the avoided segments; returns vehicles diverted so far."""
+        raise NotImplementedError("rerouting not implemented by this simulation")
+
+    def response_notes(self) -> list[str]:
+        """Human-readable effects of active responses so far, e.g. "3 pre-emptions (A2, B2, C2)"."""
+        return []
 
     # branching -------------------------------------------------------------------
     @abstractmethod

@@ -107,6 +107,17 @@ class EmergencyVehicleState(BaseModel):
     eta_s: float | None = Field(None, description="Estimated seconds to scene (None once arrived)")
 
 
+class MetricSample(BaseModel):
+    """One point of a metric trend (live trend or a candidate's horizon timeline)."""
+
+    t: float = Field(description="Simulation time")
+    delay: float
+    queue: int
+    throughput: float
+    speed: float
+    vehicles: int
+
+
 class TrafficMetrics(BaseModel):
     """Network performance indicators.
 
@@ -229,6 +240,32 @@ class SignalPolicy(BaseModel):
     reason: str
 
 
+class EmergencyCorridor(BaseModel):
+    """Signal pre-emption ahead of en-route emergency vehicles (a "green corridor").
+
+    Applies to every emergency vehicle en route in the simulation, including
+    ones dispatched after the corridor is enabled. The controller only ever
+    reaches a responder's green through the running phase's own yellow and
+    all-red clearance, never by skipping them.
+    """
+
+    intersection_ids: list[str] = Field(
+        default_factory=list, description="Signals that may pre-empt; empty = every signal on a responder's route"
+    )
+    detection_distance_m: float = Field(150.0, description="Pre-empt when a responder is this close to the stop line")
+    min_served_green_s: float = Field(12.0, description="A running green is never cut before it has run this long")
+    max_hold_s: float = Field(60.0, description="Longest a pre-empted green is held for one responder")
+    reason: str
+
+
+class RerouteAction(BaseModel):
+    """A diversion advisory (DMS sign / navigation-app alert) for traffic headed into given segments."""
+
+    avoid_segment_ids: list[str]
+    compliance: float = Field(ge=0.0, le=1.0, description="Share of affected drivers who divert")
+    reason: str
+
+
 class CandidateStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
@@ -238,12 +275,26 @@ class CandidateStatus(StrEnum):
 
 
 class SimulationCandidate(BaseModel):
-    id: str
+    """One candidate response and, once simulated, its outcome over the analysis horizon."""
+
+    id: str = Field(description='Stable plan id; "baseline" is the do-nothing reference')
+    name: str = ""
     description: str
-    policy: list[SignalPolicy] = Field(default_factory=list, description="Empty for the do-nothing baseline")
-    metrics: TrafficMetrics | None = None
+    policies: list[SignalPolicy] = Field(default_factory=list, description="Signal timing changes")
+    corridor: EmergencyCorridor | None = None
+    reroutes: list[RerouteAction] = Field(default_factory=list)
     status: CandidateStatus = CandidateStatus.PENDING
+    metrics: TrafficMetrics | None = Field(None, description="Horizon metrics (window_s set) once completed")
+    timeline: list[MetricSample] = Field(default_factory=list, description="Live metrics sampled during the horizon")
+    violations: list[str] = Field(default_factory=list, description="Safety-validator findings (status rejected)")
     notes: list[str] = Field(default_factory=list)
+    wall_time_s: float | None = Field(None, description="Wall-clock seconds the branch took to simulate")
+
+
+class Recommendation(BaseModel):
+    candidate_id: str
+    summary: str
+    rationale: list[str] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------

@@ -14,6 +14,7 @@ from app.models.domain import (
     Incident,
     IncidentType,
     IntersectionState,
+    MetricSample,  # noqa: F401 - re-exported for existing importers
     RoadSegmentState,
     Severity,
     TrafficMetrics,
@@ -53,17 +54,6 @@ class CityState(BaseModel):
     incidents: list[Incident]
     metrics: TrafficMetrics
     providers: ProviderInfo
-
-
-class MetricSample(BaseModel):
-    """One point of the live trend, sampled every few simulated seconds."""
-
-    t: float
-    delay: float
-    queue: int
-    throughput: float
-    speed: float
-    vehicles: int
 
 
 class EventLevel(StrEnum):

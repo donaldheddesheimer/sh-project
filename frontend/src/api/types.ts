@@ -179,8 +179,87 @@ export interface MetricSample {
   vehicles: number
 }
 
+// --- Scenario analysis (milestone-2 contract: backend/app/models/scenario.py) ---
+
+export interface SignalPolicy {
+  intersection_id: string
+  phase_durations: Record<string, number> // phase index -> seconds (JSON object keys are strings)
+  offset_s: number | null
+  reason: string
+}
+
+export interface EmergencyCorridor {
+  intersection_ids: string[] // empty = every signal on a responder's route
+  detection_distance_m: number
+  min_served_green_s: number
+  max_hold_s: number
+  reason: string
+}
+
+export interface RerouteAction {
+  avoid_segment_ids: string[]
+  compliance: number // 0..1 share of affected drivers who divert
+  reason: string
+}
+
+export type CandidateStatus = 'pending' | 'running' | 'completed' | 'rejected' | 'failed'
+
+export interface SimulationCandidate {
+  id: string // "baseline" = do-nothing reference
+  name: string
+  description: string
+  policies: SignalPolicy[]
+  corridor: EmergencyCorridor | null
+  reroutes: RerouteAction[]
+  status: CandidateStatus
+  metrics: TrafficMetrics | null // horizon metrics (window_s set) once completed
+  timeline: MetricSample[] // live metrics sampled during the horizon (t = simulation time)
+  violations: string[] // safety-validator findings when rejected
+  notes: string[]
+  wall_time_s: number | null
+}
+
+export interface Recommendation {
+  candidate_id: string
+  summary: string
+  rationale: string[]
+}
+
+export type ScenarioStatus = 'queued' | 'proposing' | 'simulating' | 'recommending' | 'completed' | 'failed'
+
+export interface ScenarioRunRequest {
+  incident_id?: string | null
+  horizon_s?: number
+  ems_probe?: boolean
+}
+
+export interface ScenarioRun {
+  id: string
+  incident_id: string
+  status: ScenarioStatus
+  agent: string
+  created_at: string
+  completed_at: string | null
+  snapshot_sim_time: number | null
+  horizon_s: number
+  ems_probe: boolean
+  candidates: SimulationCandidate[]
+  recommendation: Recommendation | null
+  error: string | null
+}
+
 export type StreamMessage =
-  | { type: 'hello'; data: { status: StatusInfo; state: CityState | null; events: OpsEvent[]; history: MetricSample[] } }
+  | {
+      type: 'hello'
+      data: {
+        status: StatusInfo
+        state: CityState | null
+        events: OpsEvent[]
+        history: MetricSample[]
+        scenario?: ScenarioRun | null // latest analysis run
+      }
+    }
   | { type: 'state'; data: CityState }
   | { type: 'status'; data: StatusInfo }
   | { type: 'event'; data: OpsEvent }
+  | { type: 'scenario'; data: ScenarioRun } // any change to an analysis run

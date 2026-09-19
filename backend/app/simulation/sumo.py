@@ -17,6 +17,7 @@ import subprocess
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -199,13 +200,22 @@ class SumoSimulation(TrafficSimulation):
         self.conn.simulationStep()
         self._after_step()
 
-    def run_for(self, seconds: float, speed_multiplier: float | None = None) -> TrafficMetrics:
+    def run_for(
+        self,
+        seconds: float,
+        speed_multiplier: float | None = None,
+        on_sample: Callable[[TrafficMetrics], None] | None = None,
+        sample_every_s: float = 30.0,
+    ) -> TrafficMetrics:
         start_time = self._time
         self._collector.begin_window(start_time, self._background_time_loss())
         steps = max(1, int(round(seconds / self._step_length)))
+        sample_steps = max(1, int(round(sample_every_s / self._step_length)))
         wall_start = time.monotonic()
         for i in range(steps):
             self.step()
+            if on_sample and (i + 1) % sample_steps == 0:
+                on_sample(self.collect_metrics())
             if speed_multiplier:
                 delay = wall_start + (i + 1) * self._step_length / speed_multiplier - time.monotonic()
                 if delay > 0:

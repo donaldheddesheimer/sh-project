@@ -4,7 +4,8 @@ A city traffic operations center that extends the NVIDIA Smart City blueprint id
 when a camera-detected incident (collision, stalled vehicle, …) hits the network,
 candidate responses are **tested in a SUMO traffic simulation before anything is
 recommended**. The experiments are already exposed as MCP tools; in milestone 3 a
-Nemotron agent drives them.
+Nemotron agent drives them and learns from each incident (see
+[Next stage](#next-stage-the-autonomous-self-learning-episode)).
 
 This repository has completed **milestone 2**. It has a live SUMO digital twin of a 3×3
 downtown grid and a FastAPI backend that streams city state over WebSocket. There is a
@@ -13,7 +14,8 @@ click **Analyze Response** to test up to 8 candidate plans in parallel SUMO bran
 Those plans include signal timing, an EMS green corridor and a diversion advisory. The
 console compares each plan against the baseline and recommends one. Everything runs on a
 laptop with no GPU. NVIDIA components plug in behind interfaces that already exist; the
-adapters are still stubs.
+adapters are still stubs. The groundwork for milestone 3 (scripted crashes, analyses over
+several incidents) is in the code but not yet exercised; see [Next stage](#next-stage-the-autonomous-self-learning-episode).
 
 ## Quick start
 
@@ -69,7 +71,7 @@ Other commands:
 | `SUMO_GUI=true make backend` | watch the live simulation in sumo-gui as well |
 | http://127.0.0.1:8000/docs | interactive API docs |
 
-## Demo script
+## Demo walkthrough (today)
 
 1. The network warms up (5 simulated minutes, about 1 s) and runs at 4× real time. Roads
    are colored by cycle-averaged congestion, signal heads show the live phase, and
@@ -97,59 +99,298 @@ Other commands:
    typically loses a couple of minutes in the incident queue.
 7. **Clear scene** reopens the lane; **Reset** restores a clean network.
 
-Nothing in the analysis changes the live signals: recommendations are advisory.
+Today nothing in the analysis changes the live signals: recommendations are advisory.
+The next stage adds a gated way to apply one.
 
 Use the speed buttons (1×–16×) to fast-forward. Click an intersection or road to inspect
 its phase, queues and speed.
 
-## Autonomous demo episode (in progress)
+## Next stage: the autonomous, self-learning episode
 
-The next demo runs itself. The "live city" is a SUMO simulation standing in for real
-camera data, and an agent responds to it end to end, then remembers what happened:
+This is the plan for the next stage and the single place that describes it. Milestones 1
+and 2 (everything above) work today. This section says what is built, what is not, and
+what each remaining piece must do.
+
+**Status at a glance**
+
+| Piece | State | Where |
+|---|---|---|
+| Live twin, incidents, Analyze Response, MCP tools | Working | milestones 1–2 |
+| Scripted crash scenarios | Files load; nothing triggers them yet | `simulation/scenarios/downtown_grid/demos/` |
+| One analysis over several incidents; branches that replay responses already applied; abandoning an analysis | Written, **not yet exercised** | `services/scenarios.py`, `simulation/branching.py` |
+| Records for an episode, scorecard, lesson and memory entry | Defined, unused | `backend/app/models/episode.py` |
+| Episode service, implementor, monitor, scorecard, reviewer, memory, Nemotron loop, UI | **Not started** | [task list](#task-list) |
+
+### The idea
+
+The "live city" is a SUMO simulation standing in for real camera data. An agent responds
+to it end to end, then remembers what happened, so the next incident starts with
+experience instead of cold.
 
 ```
 scripted crash ─► live sim plays it as "real data" ─► crash detected, state sent to the agent
    ─► agent tests alternatives in parallel branches (the live view keeps running)
    ─► agent's chosen plan is IMPLEMENTED on the live sim (really applied)
    ─► live data is cached for a fixed number of simulated seconds
-   ─► reviewer agent condenses it into a lesson ─► live collection stops
+   ─► reviewer condenses it into a lesson ─► live collection stops
    ─► lesson stored in the RAG memory ─► episode finished
    ─► next episode: remembered lessons are handed to the agent (the self-learning part)
 ```
 
-A demo script says when the crash happens: **already happened** (injected during warm-up,
-so a queue is forming when the console opens) or **will happen** (at a later simulation
-time). Scripts live in `simulation/scenarios/downtown_grid/demos/`: `crash-ahead`,
-`crash-already`, `double-crash` and `varied-crash` (a different crash, to test whether a
-lesson transfers instead of being memorised).
+| Role | What it is | Uses a model? |
+|---|---|---|
+| **Analyst agent** | The loop that reads the incident state, tests plans in parallel branches, picks one, then calls the implementor. Nemotron over MCP; the rule-based mock when offline. | Nemotron / no (mock) |
+| **Implementor** | The gated step that applies the agent's *recommended, already-simulated* plan to the live sim. Not a model. | No |
+| **Monitor** | Caches live data before and after the plan goes live, for a fixed number of **simulated** seconds. | No |
+| **Scorecard** | Deterministic numbers: what was predicted, what really happened, how far apart. | No |
+| **Reviewer** | A separate call that sees only the scorecard and the condensed episode (never the analyst's reasoning) and writes the lesson. Mock reviewer offline. | Nemotron / no (mock) |
+| **Memory** | Stores lessons and recalls the relevant ones for the next incident. | No (embeddings optional, later) |
+| **Episode service** | The state machine that ties these together. It is the only thing that starts an agent. | No |
 
-### When a second crash happens
+Expect an episode to take about 4–6 minutes at 4× speed (an estimate from today's timings:
+analysis rounds of 10–16 s wall each, plus a 600 s window, about 150 s wall). Use 8–16×
+on stage.
 
-One agent works at a time, and it always works on **every active incident**:
+### Terms
 
-| Situation when a crash is detected | What happens |
+Used the same way everywhere in this README, the code and the ops log.
+
+| Term | Meaning |
+|---|---|
+| **Crash** | The physical event scripted into the simulation (a `Disruption`). |
+| **Incident** | The Smart City provider's report of a crash (`INC-0001`). Detection comes a few simulated seconds after the crash. |
+| **Analysis / run** | One `ScenarioRun` (`SCN-0001`): one snapshot, a baseline plus candidate plans, one recommendation. |
+| **Plan / candidate** | A `CandidatePlan` (signal timing changes, an EMS corridor, reroutes) before simulating; a `SimulationCandidate` once it has metrics. `baseline` is the do-nothing plan. |
+| **Implement** | Apply the recommended plan to the *live* simulation, as opposed to simulating it in a branch. |
+| **Standing response** | A plan already applied to the live sim. Every later branch starts with it re-applied, because snapshots keep only the base signal programs. |
+| **Episode** | One agent working one set of active incidents, from detection to a stored lesson (`EP-0001`). |
+| **Monitor window** | The fixed number of simulated seconds the applied plan is watched. Default: the script's `monitor_s`, else the run's horizon (600 s in every shipped script), so predicted and realised windows match. |
+| **Staleness** | Live time that passed between the branch snapshot and the moment the plan went live. Recorded with every episode. |
+| **Lesson / experience** | The reviewer's verdict plus the numbers and the situation, stored as one memory entry. |
+| **Playbook** | A short, generated digest of all lessons, always given to the agent. |
+| **Superseded** | An episode stopped because another crash arrived while its agent was still working. |
+| **Demo script** | A JSON file in `demos/` that says when each crash happens (`DemoScript`). Not the manual [demo walkthrough](#demo-walkthrough-today) above. |
+
+### Scripted crash scenarios
+
+A demo script says when each crash happens. A crash before the end of warm-up (300 s) has
+**already happened** when the console opens: it is injected during boot and a queue is
+forming. A later crash **will happen** while the demo runs. Scripts live in
+`simulation/scenarios/downtown_grid/demos/*.json` and are loaded by
+`simulation/scenario.py`.
+
+| Script | Crashes | What it shows |
+|---|---|---|
+| `crash-ahead` | Main St eastbound at sim 420 s | The normal workflow, live. |
+| `crash-already` | Main St eastbound at sim 240 s (inside warm-up) | Opening on a crash that has already happened. |
+| `double-crash` | Main St eastbound at 400 s, then Central Ave northbound (`B1_B2`, which feeds the same intersection) at 460 s | The two-crash rule below. |
+| `varied-crash` | Left lane, Main St westbound, at 420 s | Whether a lesson transfers to a different crash instead of being memorised. |
+
+### The two-crash rule
+
+One agent works at a time, and it always works on **every active incident**.
+
+| When a crash is detected… | What happens |
 |---|---|
 | Nothing is running | Normal workflow: one crash triggers one agent. |
-| Another crash arrived while the first agent is still responding (analyzing, or its plan is being monitored) | The first agent and its implementor are **stopped completely**: the open analysis is abandoned and its queued branches dropped, its monitor stops, and no lesson is stored for it (the second crash contaminates it). A **new agent starts with the context of both crashes** and solves them at the same time. |
+| The first agent is still responding (analyzing, or its plan is being monitored) | The first agent and its implementor are **stopped completely**: its analysis is abandoned and its queued branches dropped, its monitor stops, and no lesson is stored for it (the second crash contaminates the data). A **new agent starts with the context of both crashes** and solves them at the same time. |
 | The first episode is already reviewing or finished | The review finishes normally. The new crash starts a new episode whose context still includes any incident that has not been cleared. |
 
 What the new agent inherits from the stopped one:
 
-- **The plan that was already applied stays on the live signals.** There is no automatic
-  revert yet. The new agent is told about it (`standing_responses` in `start_analysis`),
-  every branch it simulates starts with those responses re-applied, and a plan that
-  changes the same intersections replaces them.
-- **One EMS responder per incident.** Realised EMS response now means the *last* scene
-  reached (unchanged when there is a single responder).
-- The mock analyst, used offline, proposes combined plans (metering, diversion, corridor
-  for all crashes at once) plus each incident's own plans.
+- **The plan already applied stays on the live signals.** There is no automatic revert
+  yet. The new agent is told about it (`standing_responses` in `start_analysis`), every
+  branch it simulates starts with it re-applied, and a plan that changes the same
+  intersections replaces it. A second EMS corridor replaces the first (the latest wins).
+- **One EMS responder per incident.** Realised EMS response means the *last* scene
+  reached, and is unknown while any responder has not arrived. With one responder it is
+  unchanged.
+- The **mock analyst** proposes combined plans (metering, diversion, corridor for all
+  crashes at once) plus each incident's own plans.
 
-Already in the code (groundwork, not yet triggered by anything): demo scripts and the
-boot-time crash hook (`simulation/scenario.py`, `simulation/runner.py`); analyses over several
-incidents (`ScenarioRun.incident_ids`, `POST /api/scenarios/run` with `incident_ids`, MCP
-`start_analysis` defaulting to all active incidents, standing responses re-applied in
-branches, `ScenarioService.abandon`); and the episode, scorecard, lesson and memory
-records in `backend/app/models/episode.py`. The remaining work is the roadmap below.
+### How the pieces work
+
+**Implementor.** `implement_recommendation(run_id)` takes **no plan payload**. It applies
+only the recommended, completed candidate of a finished run, using `apply_plan` in
+`simulation/branching.py` (the same steps a branch runs, so what was tested is what goes
+live) through `CityService.run_on_live`. First it re-validates the plan against the *live*
+signal programs (they may have changed), and it refuses if the incident is already
+cleared. It dispatches an EMS probe at that moment, mirroring the probe every branch had
+(one per incident without a responder already en route). A `baseline` recommendation
+applies nothing but is still monitored and reviewed: doing nothing can be the right answer.
+Because the live sim kept running during analysis, the plan goes live at a later time
+than the branches started; that gap is the staleness.
+
+**Monitor.** A frame observer keeps a ring of live samples the whole time, so the
+unmanaged period between detection and implementation is already on record. After
+implementation it caches a sample every 5 simulated seconds (network delay, max queue,
+throughput, speed, vehicles, halted vehicles and speed on the incident segments) plus
+the responders' realised response time. It stops after the monitor window, or aborts if
+the simulation is reset (time goes backwards) or the scene is cleared. The window is in
+**simulated** seconds, so pausing the sim pauses it.
+
+**Predicted vs realised.** A branch's `timeline` and the live samples use the same
+definitions (`MetricSample`), so they can be compared directly. The branch *horizon*
+metrics are computed differently and are not compared with live numbers. There is only
+one live timeline, hence no realised do-nothing counterfactual: "improvement" means
+realised against the *predicted* baseline and against the trend before implementation,
+and the gap between realised and predicted for the chosen plan (prediction error) is
+itself a lesson about how far to trust the twin.
+
+**Scorecard** (`Scorecard` in `models/episode.py`; code, never the model). Realised,
+predicted, predicted-baseline and pre-implementation aggregates; delay and queue slope
+before and after; predicted gain; prediction error; staleness; how many plans were
+tried and rejected; whether the recommendation matched the mock's rubric among the
+simulated plans (`agent/mock.py`, reused as the "what should have won" reference); a
+`material` flag; and an outcome of `effective`, `ineffective` or `inconclusive`.
+Timing plans currently move delay by about 1%, so the materiality thresholds matter:
+without them the reviewer would learn noise. The thresholds are still to be chosen.
+
+**Reviewer.** Writes a `Lesson`: verdict, summary, what worked, what did not, what to
+try next time, and a confidence. Given only the scorecard and the condensed episode. The
+raw cache is condensed into the scorecard's numbers and discarded.
+
+**Memory.** Each episode becomes a markdown file, `memory/episodes/<episode id>.md`, with
+a JSON front matter block (so nothing needs a YAML dependency) and a human-readable body,
+so people can read and diff it. Illustrative shape, placeholders instead of numbers:
+
+```
+---
+{"id": "EP-0004", "script_id": "crash-ahead", "analyst": "nemotron",
+ "incidents": [{"type": "collision", "severity": "major", "street": "Main St",
+                "direction": "EB", "blocked_lanes": [0], "total_lanes": 2, ...}],
+ "chosen": {"id": "<plan id>", "kinds": ["<timing | corridor | diversion>"]},
+ "tried": [...], "scorecard": {...},
+ "lesson": {"verdict": "<effective | ineffective | inconclusive>", "next_time": [...]}}
+---
+# EP-0004: <one-line summary>
+What was tried, the numbers, and the lesson, in prose.
+```
+
+`memory/playbook.md` is a generated digest of all lessons. Recall ranks past episodes by
+how similar the situation is (incident type, segment, street and direction, severity,
+share of lanes blocked, up- and downstream intersections, number of incidents), then by
+recency and by how well the lesson held up. Embedding-based recall (an NVIDIA embedding
+NIM) can be added behind the same `recall` call when the corpus is big enough to need it.
+
+**Injection.** `start_analysis` returns an `experience` block (the playbook plus the top
+similar episodes), and a `recall_experience` tool lets the agent ask for more. The
+prompt says lessons only seed the first round: they never replace `validate_plan` and
+`simulate_plans`, so memory advises while the validator and the simulator stay the gate.
+
+**Finish.** The monitor stops, the live sim is paused (configurable), the lesson is
+written, and the episode is `completed`. Episode statuses: `armed → detected → analyzing →
+monitoring → reviewing → completed`, plus `superseded`, `aborted` (reset, or the scene was
+cleared before the window closed) and `failed` (agent, implementor or reviewer error).
+
+### Planned interfaces
+
+Nothing in this section exists yet.
+
+| Kind | Interface |
+|---|---|
+| REST | `POST /api/demo/start {"script": …}` (reset and arm), `POST /api/demo/stop`, `GET /api/demo`, `GET /api/episodes`, `GET /api/episodes/{id}`, `POST /api/scenarios/{id}/implement` (operator path, same code as the agent's), `GET /api/memory`, and a way to clear memory for a cold run |
+| WebSocket | an `episode` message on every change; `hello.data.episode` = the latest episode or `null` |
+| MCP | `implement_recommendation(run_id)`, `recall_experience(...)`; `start_analysis` also returns `experience` |
+
+| Setting (proposed) | Meaning |
+|---|---|
+| `DEMO_SCRIPT` | Arm a script at startup |
+| `EPISODE_ANALYST` | `auto` (Nemotron if a key and model are set, else mock), `mock` or `nemotron` |
+| `EPISODE_MONITOR_S` | Monitor window; default the script's `monitor_s`, else the run horizon |
+| `EPISODE_AGENT_TIMEOUT_S` | Wall-clock limit for the agent |
+| `EPISODE_FALLBACK_TO_MOCK` | Fall back to the mock analyst if NIM fails |
+| `EPISODE_PAUSE_ON_FINISH` | Pause the live sim when the episode completes |
+| `AGENT_MAY_IMPLEMENT` | Allow the MCP implement tool (the operator path is separate) |
+| `MEMORY_ENABLED`, `MEMORY_DIR` | Memory on/off and where it lives (`memory/`, with `memory/episodes/` git-ignored) |
+| `MCP_URL` | Where the Nemotron loop reaches this app's `/mcp` |
+| `NEMOTRON_MODEL`, `NVIDIA_API_KEY`, `NEMOTRON_BASE_URL` | Already in `config.py`; the model id has to be supplied |
+
+Every new setting goes in `backend/app/config.py` **and** `.env.example`.
+
+### Task list
+
+Ordered so each step can be demoed with the **mock** analyst and reviewer (no NIM key)
+before Nemotron is involved. `[x]` = groundwork written but not yet exercised (see
+[Review notes](#review-notes-the-groundwork-pass)).
+
+- [x] Demo scripts (crash already happened / will happen / second crash / different crash)
+- [x] Scenario engine solves several incidents together; branches replay standing responses
+- [x] Two-crash mechanics in the engine (`abandon`, per-incident EMS probes, combined mock plans)
+- [ ] **1. Episode service** (`backend/app/learning/episode.py`). Trigger on incident
+  detection through a new `CityService` incident listener; inject runtime crashes (a frame
+  observer) and register boot events (already-happened crashes) from the armed script; the
+  REST and WebSocket interfaces above. *Done when:* `POST /api/demo/start` on `crash-ahead`
+  reaches `analyzing` with no click, with the mock analyst.
+- [ ] **2. The two-crash rule.** A new detection while an episode is `detected`,
+  `analyzing` or `monitoring` cancels its agent task, calls `ScenarioService.abandon`,
+  stops its monitor, marks it `superseded`, and starts an episode over all active
+  incidents; a reset aborts the episode. *Done when:* `double-crash` ends with one
+  `superseded` episode and one `completed` episode that lists both incidents.
+- [ ] **3. Implementor** (`learning/implementor.py`). The MCP tool and the REST endpoint;
+  the registry of standing responses (`ScenarioService.standing_source`, cleared on
+  reset); ops-log events. *Done when:* after implementing, the live signal program ids
+  change and the run's EMS probe is dispatched on the live sim.
+- [ ] **4. Monitor and scorecard** (`learning/monitor.py`, `scorecard.py`). *Done when:* a
+  finished window yields a `Scorecard` with realised, predicted and prediction-error
+  numbers, and reset or a cleared scene aborts the window.
+- [ ] **5. Reviewer and memory** (`learning/reviewer.py`, `store.py`). Mock reviewer
+  first, Nemotron second; markdown episodes and the playbook. *Done when:* a completed
+  episode leaves a readable `memory/episodes/EP-….md`.
+- [ ] **6. Finish step.** Stop the monitor, pause the live sim, store the lesson.
+- [ ] **7. Nemotron analyst** (`learning/analysts.py`, `agent/nemotron.py`). An MCP client
+  of `/mcp` driving NIM tool calling with a step cap and a timeout, and a fallback to the
+  mock. *Done when:* the same script runs with `EPISODE_ANALYST=nemotron`.
+- [ ] **8. Recall and injection.** `experience` in `start_analysis`, `recall_experience`,
+  `IncidentContext.lessons` (`ScenarioService.lessons_source`), the playbook. *Done when:*
+  a second episode's context contains the first episode's lesson.
+- [ ] **9. Frontend.** An episode panel (timeline, monitor progress, lessons used and
+  recorded, which episode was superseded), `frontend/src/api/types.ts` in sync
+  (`incident_ids`, `episode`), and the "advisory" wording updated once plans really go live.
+- [ ] **10. Docs and the safety rule.** Update `docs/architecture.md` and the "agents
+  never touch live signals" rule wherever it appears (this README, `CLAUDE.md`, the UI
+  footer) to describe the one gated exception.
+- [ ] **Measure the learning.** Same script cold (empty memory) and warm, plus
+  `varied-crash`: rounds and candidates used, wall time, recommendation quality. Same-script
+  gains are memorisation; only the varied script shows transfer.
+
+Later: embedding-based recall; automatic revert of an applied plan when the scene
+clears; per-responder EMS metrics; verifying the corridor and diversion results before
+trusting their lessons; the branch speed-up in `sumo.py`; a slower live speed during
+analysis to reduce staleness; tests for `ScenarioService`, the MCP tools and the learning
+package (the convention so far is no new test files, so agree on this first).
+
+### Decisions and open questions
+
+**Decided by the team:** the implementor really applies the plan to the live sim; the
+crash is scripted (already there, or later); the reviewer runs after a fixed number of
+simulated seconds; the lesson goes to a RAG memory; the live collection stops at the end;
+and the two-crash rule.
+
+**Proposed in the plan, still needs a yes:**
+
+- Pause the live sim at the end of an episode (vs leaving it running).
+- Markdown-backed memory with structured recall first, embeddings optional.
+- No lesson is stored for a superseded episode.
+- A standing plan stays on the signals after its agent is superseded.
+- Fall back to the mock analyst if NIM fails.
+
+**Open:** which NIM model id to use; whether to slow the live sim during analysis to
+reduce staleness; whether a scene cleared mid-window should abort the episode (proposed)
+or store an inconclusive lesson.
+
+### Risks and known gaps
+
+- **The learnable signal is thin.** Timing plans move delay by about 1%, and the EMS
+  corridor often loses once a queue has formed (see [limitations](#current-limitations)).
+  The high-impact plans (corridor, diversion) have the least verification, so check them
+  before trusting their lessons.
+- **The plan stays on the live signals** after the episode. Only a reset removes it.
+- **Snapshots go stale** while the agent works, so the branches predicted a slightly
+  earlier city than the one the plan is applied to.
+- **Live-apply paths have never run on the live sim.** The corridor's `setPhase` jump in
+  particular was reported as never exercised.
+- **The groundwork in this pass has not been run** beyond imports (see the review notes).
 
 ## Architecture
 
@@ -190,7 +431,8 @@ Rules the code keeps:
 - **Agents never touch signals.** Agents return plans as data (`SignalPolicy`,
   `EmergencyCorridor`, `RerouteAction`). A deterministic `SafetyValidator` checks them,
   and only simulation branches execute them. Inside a branch, every pre-emption command
-  also passes a runtime transition check.
+  also passes a runtime transition check. This holds today; the next stage adds one gated
+  exception, the implementor (see [How the pieces work](#how-the-pieces-work)).
 
 Details, design decisions and the NVIDIA integration plan are in
 [docs/architecture.md](docs/architecture.md). That doc has a
@@ -226,6 +468,8 @@ backend/app/
   agent/                AgentProvider: base, mock (8 rule-based plans), nemotron (stub)
   safety/validator.py   SafetyValidator (signal policies + corridors) and rule-based MVP limits
   websocket/hub.py      non-blocking WebSocket fan-out
+  learning/             (planned, next stage) episode service, implementor, monitor,
+                        scorecard, reviewer, memory store, analysts
 backend/tests/          network, simulation, runner, safety/agent, mock provider, API tests
 frontend/src/
   App.tsx               layout + actions
@@ -240,6 +484,7 @@ simulation/
   scenarios/downtown_grid/  scenario.sumocfg, demand, vehicle types, scenario.json,
                         demos/*.json scripted crash scenarios (loaded, not yet triggered)
   controllers/          how pre-emption plugs in (the code lives in backend/app/simulation/)
+memory/                 (planned) lessons and the playbook; memory/episodes/ is git-ignored
 docs/
   architecture.md       design notes, the pipeline stage by stage, MCP tools
   milestone-2/          the milestone-2 plan, per-feature specs and results
@@ -267,10 +512,12 @@ docs/
 | WS | `/ws/state` | `hello` (state, events, trend, latest run) then `state` / `status` / `event` / `scenario` messages |
 | MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, default all active incidents), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation` ([spec](docs/specs/scenario-engine-mcp.md)) |
 
+Endpoints planned for the next stage are listed under [Planned interfaces](#planned-interfaces).
+
 ## Current limitations
 
 - **Recommendations are advisory.** No path applies a plan to the live simulation yet;
-  plans only run inside branches.
+  plans only run inside branches. The next stage adds one (the implementor).
 - **The EMS corridor rarely helps once the queue has formed.** Pre-emption turns the
   signals green, but the responder still waits behind the queue in the blocked lane.
   Measured on main with the analysis started about 75 s after the crash:
@@ -285,7 +532,9 @@ docs/
 - The mock agent is rule-based: it proposes a fixed set of 8 plans and recommends with a
   fixed rule (see [architecture.md](docs/architecture.md#analyze-response-pipeline)).
 - NVIDIA adapters (`NvidiaSmartCityProvider`, `NemotronAgentProvider`) are documented
-  stubs that raise `NotImplementedError`. Selecting them fails fast at startup.
+  stubs that raise `NotImplementedError`. `SMART_CITY_PROVIDER=nvidia` fails at startup;
+  `AGENT_PROVIDER=nemotron` starts, but the REST Analyze Response then fails when it
+  calls the stub.
 - Synthetic network and demand. The crash physics (blocked lane plus a 0.6 m/s pass
   speed) and congestion thresholds are calibrated for this grid, not measured data.
 - One live simulation per backend process and one analysis run at a time. State is in
@@ -295,105 +544,25 @@ docs/
 
 ## Next: milestone 3
 
-1. **Nemotron drives the analysis.** `NemotronAgentProvider` becomes an MCP client of
-   `/mcp`: it lists the tools, hands them to the OpenAI-compatible NIM endpoint, and runs
-   the model's tool calls. The loop goes `start_analysis` → `validate_plan` →
-   `simulate_plans` (one or more rounds) → `submit_recommendation`. The mock stays the
-   default and the fallback. See [nemotron.py](backend/app/agent/nemotron.py) and the
+Milestone 3 has two parts.
+
+1. **The autonomous, self-learning episode.** The plan, the status of each piece and the
+   task list are in [Next stage](#next-stage-the-autonomous-self-learning-episode). It
+   includes the Nemotron loop (an MCP client of `/mcp` that hands the tools to the
+   OpenAI-compatible NIM endpoint and runs the model's tool calls; the mock stays the
+   default and the fallback) and the gated implementor that applies a plan to the live
+   twin. See [nemotron.py](backend/app/agent/nemotron.py) and the
    [MCP spec](docs/specs/scenario-engine-mcp.md).
-2. **Implement on the live twin.** *(Changed from "operator-approved only": the autonomous
-   episode needs the agent to implement its own choice.)* An `implement_recommendation`
-   MCP tool and a matching REST endpoint apply a plan to the live simulation. They accept
-   **no plan payload**: only the recommended, completed candidate of a finished run, which
-   is re-validated against the live signal programs first and refused if the incident is
-   already cleared. The operator path and the agent path share one code path, and a setting
-   can turn the agent path off. This replaces the rule "agents never touch live signals",
-   so update that rule in this README, in `CLAUDE.md` and in the UI's "Advisory" footer
-   when it lands.
-3. **NVIDIA Smart City input, prepared but not faked.** The `NvidiaSmartCityProvider`
+2. **NVIDIA Smart City input, prepared but not faked.** The `NvidiaSmartCityProvider`
    mapping onto the VSS Video Analytics MCP tools, plus a map-matching component (lat/lon
    and place names → segment and lane). This milestone does not install or run the full
    Blueprint; until a real VSS endpoint exists, the mock stays the provider.
 
-### Task list for the autonomous, self-learning episode
-
-Ordered so each step is demoable with the **mock** analyst and reviewer (no NIM key needed)
-before Nemotron is involved. `[x]` = the groundwork described under
-[Completed in this pass](#completed-in-this-pass-for-review).
-
-- [x] Demo scripts (crash already happened / will happen / second crash / different crash)
-- [x] Scenario engine solves several incidents together; branches replay standing responses
-  (written, not yet exercised)
-- [x] Two-crash mechanics in the engine (`abandon`, per-incident EMS probes, combined mock
-  plans) (written, not yet exercised)
-- [ ] **1. Episode orchestration** (`backend/app/learning/episode.py`). Trigger on incident
-  detection through a new `CityService` incident listener; register the crash injector
-  (runtime crashes) and the boot events (already-happened crashes) from the armed script;
-  `POST /api/demo/start {script}`, `POST /api/demo/stop`, `GET /api/demo`,
-  `GET /api/episodes[/{id}]`; a WebSocket `episode` message; `DEMO_SCRIPT` to arm at startup.
-  Statuses: `armed → detected → analyzing → monitoring → reviewing → completed`, plus
-  `superseded`, `aborted`, `failed`.
-- [ ] **2. The two-crash rule** (see above). A new detection while an episode is `detected`,
-  `analyzing` or `monitoring` cancels its agent task, calls `ScenarioService.abandon`, stops
-  its monitor, marks it `superseded`, and starts an episode over all active incidents.
-  A `reset` aborts the episode.
-- [ ] **3. Implementor** (`learning/implementor.py`). `implement_recommendation(run_id)` as an
-  MCP tool and `POST /api/scenarios/{id}/implement`. Applies the recommended candidate to
-  the live sim with `apply_plan` through `CityService.run_on_live`, dispatches the EMS
-  probes at that moment, re-validates on the live programs, keeps the registry of standing
-  responses (`ScenarioService.standing_source`, cleared on reset), and writes ops events.
-- [ ] **4. Live monitor and scorecard** (`learning/monitor.py`, `scorecard.py`). A frame
-  observer caches live samples before and after implementation for `EPISODE_MONITOR_S`
-  **simulation** seconds. Code (not the LLM) computes realised vs predicted, vs the predicted
-  baseline, the delay/queue slope before and after, prediction error, staleness and a
-  materiality flag, reusing the mock's recommend rubric.
-- [ ] **5. Reviewer and memory** (`learning/reviewer.py`, `store.py`). The reviewer sees only
-  the scorecard and the condensed episode, never the solver's reasoning. Episodes are stored
-  as markdown with JSON front matter under `memory/episodes/`, plus a generated
-  `memory/playbook.md`. Mock reviewer first, Nemotron reviewer second.
-- [ ] **6. Finish step.** Stop the monitor, pause the live sim (`EPISODE_PAUSE_ON_FINISH`),
-  store the lesson, mark the episode `completed`.
-- [ ] **7. Nemotron analyst** (`learning/analysts.py`, `agent/nemotron.py`). An MCP client of
-  `/mcp` driving NIM tool calling, with a step cap and timeout, and a fallback to the mock
-  analyst. Needs `NEMOTRON_MODEL` and `NVIDIA_API_KEY`.
-- [ ] **8. Recall and injection.** `start_analysis` returns an `experience` block (playbook
-  plus similar past episodes), a `recall_experience` tool, `IncidentContext.lessons`
-  (`ScenarioService.lessons_source`). Lessons seed round one; they never replace
-  `validate_plan` and `simulate_plans`.
-- [ ] **9. Frontend.** An episode panel (timeline, monitor progress, lessons used and
-  recorded, which agent was superseded), `frontend/src/api/types.ts` in sync (`incident_ids`,
-  `episode`), and the "advisory only" wording updated once plans are really applied.
-- [ ] **10. Config and docs.** New settings in `config.py` **and** `.env.example`
-  (`MEMORY_ENABLED`, `MEMORY_DIR`, `DEMO_SCRIPT`, `EPISODE_MONITOR_S`,
-  `EPISODE_AGENT_TIMEOUT_S`, `EPISODE_FALLBACK_TO_MOCK`, `EPISODE_PAUSE_ON_FINISH`,
-  `EPISODE_ANALYST`, `MCP_URL`); update `docs/architecture.md`; revise the "agents never
-  touch live signals" rule everywhere it appears.
-- [ ] **Measure the learning.** Run the same script cold (empty memory) and warm, and the
-  `varied-crash` script, comparing rounds and candidates used, wall time and recommendation
-  quality. Same-script gains are memorisation; only the varied script shows transfer.
-
-Later: embedding-based recall (NVIDIA embedding NIM behind `ExperienceStore.recall`);
-automatic revert of an applied plan when the scene clears; per-responder EMS metrics;
-verifying the corridor and diversion results before trusting their lessons (the
-[limitations](#current-limitations) above show the corridor often loses); the branch
-speed-up in `sumo.py`; a slower live speed during analysis to reduce snapshot staleness;
-tests for `ScenarioService`, the MCP tools and the learning package (the team convention so
-far is no new test files, so agree on this before adding them).
-
-Decisions already made by the team: the implementor really applies the plan to the live
-sim; the crash is scripted (already there, or later); the reviewer runs after a fixed number
-of simulated seconds; the lesson goes to a RAG memory; the live collection stops at the
-end; and the two-crash rule above. Decisions made in the plan that still need a yes:
-pausing the live sim at the end of an episode, markdown-backed memory with structured
-recall first (embeddings optional), no lesson stored for a superseded episode, a standing
-plan staying on the signals after its agent is superseded, and a fallback to the mock
-analyst if NIM fails.
-
-## Completed in this pass (for review)
+## Review notes: the groundwork pass
 
 Scope: the multi-crash groundwork and the records the episode will use. **Nothing in this
 list is triggered yet**: there is no episode service, implementor, monitor, reviewer or
-memory (see the task list). Existing behavior with a single crash is meant to be unchanged.
+memory (see the [task list](#task-list)). Existing behavior with a single crash is meant to be unchanged.
 
 ### What changed
 
@@ -411,7 +580,8 @@ memory (see the task list). Existing behavior with a single crash is meant to be
 | `backend/app/api/mcp_tools.py` | `start_analysis(incident_ids?)` defaults to **all** active incidents (**renamed from `incident_id`**); the payload gains `incidents` and `standing_responses`; the instructions tell the agent to solve several incidents together. |
 | `docs/specs/scenario-engine-mcp.md` | The `start_analysis` row matches. |
 | `backend/app/models/episode.py` (new) | `Episode`, `EpisodeStatus` (with `superseded`), `Implementation`, `LiveSample`, `LiveRecord`, `Scorecard`, `Lesson`, `Experience`, `RecalledExperience`. Unused so far. |
-| `README.md` | This section, the episode section, the task list, and the API and layout rows. |
+| `README.md` | The Next stage section (status, roles, terms, scripts, two-crash rule, design, planned interfaces, task list, decisions, risks), these review notes, and the intro, demo, architecture, layout, API and limitations wording. |
+| `CLAUDE.md` (untracked) | A Hard rules section (never write or run tests; keep the README consistent), the intro and test-related lines aligned with it, and a corrected note on the stub providers. |
 
 ### What was and was not checked
 
@@ -451,4 +621,5 @@ memory (see the task list). Existing behavior with a single crash is meant to be
 7. **Unrelated uncommitted edits.** Before this pass the working tree already held small
    dead-code removals in `network.py`, `preemption.py`, `reroute.py`, `build_network.py` and
    two docs under `docs/milestone-2/`, and an untracked `CLAUDE.md`. They are not part of this
-   work and were left as they were.
+   work and were left as they were, except that `CLAUDE.md` gained the Hard rules and the
+   wording fixes listed above.

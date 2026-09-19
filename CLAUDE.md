@@ -4,12 +4,31 @@ Traffic operations center: a live SUMO digital twin (3×3 downtown grid) behind 
 backend and a React/MapLibre console. When an incident hits, candidate responses (signal
 timing, EMS green corridor, diversion) are **simulated in parallel SUMO branches before
 anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged; milestone 3
-(Nemotron agent, operator-approved apply, NVIDIA input) is next. Read
-[README.md](README.md) for the demo and [docs/architecture.md](docs/architecture.md) for
-the design and the pipeline stage by stage.
+(an autonomous, self-learning episode driven by a Nemotron agent, plus NVIDIA input) is next.
+Read [README.md](README.md) for the demo and for the plan of the next stage (its "Next stage"
+section), and [docs/architecture.md](docs/architecture.md) for the design and the pipeline
+stage by stage.
 
 Start every session with `git fetch && git status -sb`. `main` moves quickly and local docs
 can predate a merged cleanup.
+
+## Hard rules
+
+Set by the user. They override anything else in this file or in the docs.
+
+1. **Never make tests and never run tests, ever.** Do not create test files, add test cases
+   or edit existing ones. Do not run `pytest`, `make test` or any other test runner, and do
+   not write or run scratch scripts or other automated checks whose purpose is to test or
+   verify behavior. This holds even if a task, a doc or another part of this file suggests
+   it. Check work by reading the code, and say plainly in the report what was **not** run or
+   verified. If a check by running seems necessary, ask the user; they will run it.
+2. **Maintain [README.md](README.md) as a consistent source of information, always.** Every
+   change to behavior, API, settings, file layout, terminology, roadmap or decisions updates
+   the README in the same change, and before finishing you re-read the parts it touches.
+   One term keeps one meaning (see the README's Terms table). No section may contradict
+   another, and the same fact is not written in two places. Mark what is built versus
+   planned, and what was not verified. If the README and the code disagree, fix one of them
+   in that change; never leave both.
 
 ## Commands
 
@@ -20,8 +39,8 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Task | POSIX (`make`) | Windows |
 |---|---|---|
 | Set up | `make setup` | `python -m venv backend\.venv`, then `backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt`, then `npm --prefix frontend install` |
-| Backend tests (19, real SUMO, 20–40 s) | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
-| One test | `cd backend && .venv/bin/pytest -q -k <name>` | `.venv\Scripts\python.exe -m pytest -q -k <name>` (in `backend`) |
+| Backend tests (19, real SUMO, 20–40 s). **Reference only: never run (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
+| One test. **Reference only: never run (Hard rules)** | `cd backend && .venv/bin/pytest -q -k <name>` | `.venv\Scripts\python.exe -m pytest -q -k <name>` (in `backend`) |
 | Backend on :8000 | `make backend` | `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` |
 | Frontend on :5173 | `make frontend` | `npm --prefix frontend run dev` |
 | Frontend check | `make build` | `npm --prefix frontend run lint` and `npm --prefix frontend run build` (both clean today; a >500 kB chunk warning is expected) |
@@ -62,7 +81,9 @@ venv directly (this is what works in PowerShell or Git Bash):
 
 - **Providers are interfaces.** `CityService` sees `SmartCityProvider` and `AgentProvider`
   only; `providers.py` picks mock vs NVIDIA/Nemotron. The NVIDIA/Nemotron classes are stubs
-  that raise `NotImplementedError`, and selecting them fails at startup.
+  that raise `NotImplementedError`. `SMART_CITY_PROVIDER=nvidia` therefore fails at startup;
+  `AGENT_PROVIDER=nemotron` starts, but the REST Analyze Response then fails when it calls
+  the stub.
 - **One thread owns the live TraCI connection.** TraCI is blocking and not thread-safe.
   Touch the live simulation only through `CityService.run_on_live(fn)`.
 - **Every candidate runs in a brand-new SUMO process** restored from one snapshot. That is
@@ -71,7 +92,9 @@ venv directly (this is what works in PowerShell or Git Bash):
 - **Agents never touch live signals.** Plans are data (`SignalPolicy`, `EmergencyCorridor`,
   `RerouteAction`); the validator checks them, and only branches execute them. Pre-emption
   commands also pass `check_transition` at runtime. Keep new agent-facing tools read-only
-  or branch-only.
+  or branch-only. The one planned exception is a gated implementor that applies an agent's
+  recommended, already-validated plan to the live twin (README, "Next stage"); until it
+  exists this rule holds unchanged.
 - **`ScenarioRun` is mutated only on the event loop.** Workers return their own candidate
   object; publish changes with `publish_scenario`.
 - One analysis at a time (409 otherwise), and it needs an active, map-matched incident.
@@ -111,10 +134,12 @@ venv directly (this is what works in PowerShell or Git Bash):
 - **Frontend.** TypeScript with `noUnused*` on, React 19 function components, no
   semicolons, single quotes, 2-space indent. Lint is `oxlint`. Plan colors follow backend
   candidate order, never rank; the baseline stays neutral.
-- **Tests.** The team decided not to add new test files (demo over coverage, recorded in
-  `docs/milestone-2/MASTER.md`). Keep the suite green and verify by running things. Note the
-  gaps: pre-emption, reroute, `ScenarioService` and the MCP tools have no tests. The
-  `make_sim` fixture in `tests/conftest.py` starts real SUMO processes.
+- **Tests.** Never add tests and never run them (Hard rules). The team chose demo over
+  coverage (recorded in `docs/milestone-2/MASTER.md`). Verify by reading the code and report
+  what was not run. Known gaps: pre-emption, reroute, `ScenarioService` and the MCP tools
+  have no tests. The existing suite is in `backend/tests/`; the `make_sim` fixture in
+  `tests/conftest.py` starts real SUMO processes.
+- **README.** It is the source of truth for the next stage; keep it consistent (Hard rules).
 - **Git.** Work happens on feature branches merged by PR; don't push to `main`.
 
 ## Docs map

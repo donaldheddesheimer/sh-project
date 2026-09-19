@@ -1,16 +1,23 @@
-"""Adapter boundary for NVIDIA Nemotron via NIM (not implemented yet).
+"""Adapter boundary for NVIDIA Nemotron via NIM (not implemented yet; milestone 3).
 
-Planned loop (tool-calling over an OpenAI-compatible NIM endpoint):
+Plan: Nemotron drives the analysis as an MCP client of this backend's scenario
+tools at /mcp (app/api/mcp_tools.py). NIM does not speak MCP, so the loop lists
+the tools, hands them to the OpenAI-compatible NIM endpoint as ``tools``, runs
+each tool call the model makes against /mcp and returns the result:
 
-    incident detected -> get_city_state / get_incident
-    -> formulate hypotheses -> construct candidate SignalPolicies
-    -> validate_signal_plan (SafetyValidator) -> simulate_signal_plan / simulate_reroute
-       / simulate_emergency_corridor (fresh SUMO branches from one snapshot)
-    -> compare_scenarios -> reject poor candidates, refine
-    -> Recommendation with quantitative evidence
+    start_analysis         -> incident, segments (worst first), every signal's phases
+    -> design plans (SignalPolicy timing changes, EmergencyCorridor, RerouteAction)
+    -> validate_plan       -> safety findings, before spending a simulation
+    -> simulate_plans      -> parallel SUMO branches from one snapshot, baseline included
+    -> get_analysis        -> results with deltas against the baseline; refine and repeat
+    -> submit_recommendation (a completed candidate and a rationale that quotes numbers)
 
-Nemotron only ever returns data (CandidatePlan / Recommendation). It has no
-tool that changes live signals.
+The workflow text is the MCP server's ``instructions`` and the client snippet is
+in docs/specs/scenario-engine-mcp.md. This class keeps the AgentProvider shape
+(propose, then recommend) used by the one-shot REST pipeline.
+
+Nemotron only ever returns data: every tool it can call is read-only or runs
+inside a SUMO branch, and none of them changes live signals.
 """
 
 from __future__ import annotations

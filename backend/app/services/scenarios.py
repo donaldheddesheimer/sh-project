@@ -7,7 +7,7 @@ the SafetyValidator and never simulated. Nothing here touches live signals.
 Two drivers share the same steps (open → capture → evaluate → finish):
 - the mock pipeline (``start_run``, POST /api/scenarios/run): the
   AgentProvider proposes every plan up front and recommends one;
-- an external agent over MCP (``app/api/mcp.py``): it proposes plans in as
+- an external agent over MCP (``app/api/mcp_tools.py``): it proposes plans in as
   many ``evaluate`` rounds as it likes and submits the recommendation itself.
 
 Threading: branches run on a worker pool (``run_branch`` is synchronous), but

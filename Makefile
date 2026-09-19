@@ -3,11 +3,14 @@
 VENV := backend/.venv
 PY := $(VENV)/bin/python
 
-setup: ## Create the backend venv (bundles SUMO) and install frontend packages
+setup: ## Create the backend venv (bundles SUMO) if missing, sync its packages, install frontend packages
+	@# Safe to re-run: an existing venv is kept and only brought up to date with the requirements.
 	@if command -v uv >/dev/null 2>&1; then \
-		uv venv --python 3.13 $(VENV) && VIRTUAL_ENV=$(VENV) uv pip install -r backend/requirements-dev.txt; \
+		[ -x $(PY) ] || uv venv --python 3.13 $(VENV); \
+		VIRTUAL_ENV=$(VENV) uv pip install -r backend/requirements-dev.txt; \
 	else \
-		python3 -m venv $(VENV) && $(PY) -m pip install -r backend/requirements-dev.txt; \
+		[ -x $(PY) ] || python3 -m venv $(VENV); \
+		$(PY) -m pip install -r backend/requirements-dev.txt; \
 	fi
 	npm --prefix frontend install
 

@@ -180,3 +180,16 @@ Merge in any order; the branches touch disjoint files. Then, in one integration 
 2. Reconcile any Contract change requests.
 3. Update `README.md` and `docs/architecture.md` (API table, demo script, limitations,
    next milestone).
+
+**Integration result** (done in the milestone-3 prep PR):
+1. The end-to-end run works: collision → Analyze Response → candidates stream in →
+   recommendation, 26 s wall time for 7 branches. The corridor check **did not hold**
+   once a queue had formed. Its EMS response was 334 s against 292 s for the baseline,
+   and the diversion advisory won instead. Numbers and levers are in
+   [feature-response-strategies.md](feature-response-strategies.md#result).
+2. Contract change requests:
+   - done: `ems_origin_segment`, the `reroute_vehicles` docstring, the `mcp` dependency;
+   - holds as is: the candidate cap;
+   - not done: the test relaxation, because the project no longer adds tests.
+3. `README.md` and `docs/architecture.md` now describe milestone 2 and the pipeline stage
+   by stage.

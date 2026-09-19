@@ -1,7 +1,7 @@
 """The traffic-simulation contract.
 
-Everything above this layer (live runner, scenario branching, REST API, and
-later an MCP server exposing tools to Nemotron) talks to this interface only.
+Everything above this layer (live runner, scenario branching, REST API and the
+MCP tools at /mcp) talks to this interface only.
 It deliberately contains no decision-making logic: callers decide *what* to
 try; the simulation only executes and measures it.
 """
@@ -117,13 +117,16 @@ class TrafficSimulation(ABC):
         destination_lane: int = 0,
     ) -> EmergencyDispatch: ...
 
-    # incident responses (milestone 2) ------------------------------------------
+    # incident responses ----------------------------------------------------------
     def enable_emergency_corridor(self, corridor: EmergencyCorridor) -> None:
         """Pre-empt signals ahead of every en-route emergency vehicle. Callers must validate first."""
         raise NotImplementedError("emergency corridor not implemented by this simulation")
 
     def reroute_vehicles(self, action: RerouteAction) -> int:
-        """Divert a share of traffic headed into the avoided segments; returns vehicles diverted so far."""
+        """Divert a share of traffic headed into the avoided segments, now and for later departures.
+
+        Returns the vehicles diverted at activation; the running total is in ``response_notes()``.
+        """
         raise NotImplementedError("rerouting not implemented by this simulation")
 
     def response_notes(self) -> list[str]:

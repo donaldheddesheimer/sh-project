@@ -1,8 +1,9 @@
 """Scenario analysis ("Analyze Response") records: one run = one snapshot of the
 live network branched into a baseline plus candidate responses.
 
-Frozen milestone-2 contract (docs/milestone-2/MASTER.md): the scenario engine
-produces these, the UI renders them, the agent and simulation never see them.
+The scenario-analysis contract, introduced in milestone 2 (docs/milestone-2/MASTER.md)
+and mirrored in frontend/src/api/types.ts: the scenario engine produces these, the UI
+renders them, the agent and simulation never see them.
 """
 
 from __future__ import annotations

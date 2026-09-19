@@ -206,11 +206,11 @@ Result section below includes the numbers table.
 
 ## Result
 
-**Status: implemented and statically reviewed, but not yet run.** All testing was deferred
-on request, so Verify steps 1–6, the numbers table, the safety-audit count and the
-determinism check are still **open**. Two independent read-only reviews traced the code by
-hand (pre-emption safety; reroute, mock agent, validator and the existing tests) and found
-no bugs. The work is committed on `feature/response-strategies` and open for review as PR #4.
+**Status: merged (PR #4) and run.** The code was first reviewed statically. After the PR
+review it was run twice: once as a scratch script against the branch (Verify steps 1–5),
+and once end to end on `main` through `POST /api/scenarios/run` (step 6). The numbers
+are below. The one expected shape that did not hold is `ems-corridor` beating the baseline
+on EMS response once the queue has formed; see the second table.
 
 ### What was built
 
@@ -228,21 +228,63 @@ no bugs. The work is committed on `feature/response-strategies` and open for rev
 `_after_step` adds two `is not None` checks and no TraCI calls, so the live simulation is
 unchanged.
 
-### Results table (Verify step 3): pending
+### Results table (Verify step 3)
+
+Scratch run of the PR branch. The snapshot was taken at t = 430 s, 10 s after the
+default collision (not 120 s as step 1 says). Horizon 600 s, branches run one after
+another.
 
 | Plan | Delay (s) | Max queue | Throughput (veh/h) | EMS response | Wall (s) | Notes |
 |---|---|---|---|---|---|---|
-| baseline | – | – | – | – | – | |
-| flush-downstream | – | – | – | – | – | |
-| meter-upstream | – | – | – | – | – | |
-| relieve-cross-street | – | – | – | – | – | |
-| aggressive-flush | rejected by the validator (`min_green`, C2 phase 3: 8 s < 12 s), traced by hand | | | | | |
-| ems-corridor | – | – | – | – | – | |
-| corridor-plus-meter | – | – | – | – | – | |
-| divert-advisory | – | – | – | – | – | |
+| baseline | 85.8 | 60 | 2676 | 62 s | 5–7 | |
+| flush-downstream | 90.4 | 59 | 2664 | 60 s | 5–7 | |
+| meter-upstream | 86.1 | 61 | 2664 | 72 s | 5–7 | |
+| relieve-cross-street | 88.6 | 59 | 2652 | 80 s | 5–7 | |
+| aggressive-flush | rejected by the validator (`min_green`, C2 phase 3: 8 s < 12 s) | | | | | |
+| ems-corridor | 86.2 | 59 | 2628 | **49 s** | 5–7 | "2 pre-emptions (A2, B2); longest hold 0s" |
+| corridor-plus-meter | 85.9 | 61 | 2664 | **49 s** | 5–7 | |
+| divert-advisory | **72.9** | **28** | **2808** | 65 s | 5–7 | 4 rerouted at activation; "43 vehicles diverted" |
 
-Safety audit (step 4): pending (transitions checked: –). Determinism (step 5): pending.
-`make test` and the live-demo check (step 6): pending.
+`recommend()` picked `divert-advisory`: it had the lowest delay, and neither corridor
+plan's 13 s EMS gain reached the 60 s preference.
+
+**End to end on `main` (step 6).** `POST /api/scenarios/run` against a live backend,
+with the snapshot at t = 497 s (about 75 s after the crash, so a queue had formed). Polling
+saw the run go from queued through simulating to completed in 25.9 s, with 7 branches
+on 4 workers. The baseline branch took 11.6 s.
+
+| Plan | Delay (s) | EMS response |
+|---|---|---|
+| baseline | 103.1 | 292 s |
+| flush-downstream | 102.0 | 300 s |
+| meter-upstream | 102.1 | 309 s |
+| relieve-cross-street | 102.3 | 294 s |
+| aggressive-flush | rejected | |
+| ems-corridor | 102.6 | **334 s** (slower) |
+| corridor-plus-meter | 105.1 | 288 s |
+| divert-advisory | **87.2** | **242 s** |
+
+The recommendation was `divert-advisory`:
+- EMS response 4:52 → 4:03 (−17%);
+- delay −15%;
+- max queue 60 → 54;
+- throughput 2304 → 2568 veh/h.
+
+Once the spill-back queue exists, pre-emption can't help the responder: it removes the
+signal waits, but the responder still waits in the queue. The tuning notes below give
+the levers to try.
+
+**Safety audit (step 4):** 2,778 realised signal-state changes at pre-empted
+intersections were checked with `check_transition`, and 0 were unsafe.
+**Determinism (step 5):** two runs from one snapshot gave identical output for every plan.
+**Step 6:** `make test` passed (19 tests) on `main`. The live demo (inject, spill-back,
+dispatch) was unchanged, and the Analyze Response run above completed.
+
+Resolved assumptions from the list further down:
+- The diversion activates: it rerouted 4 vehicles at activation and 43 in total.
+- Pre-emption fired at A2 and B2, which exercises `setPhaseDuration(tls, 0)` and the
+  route-index walk. The runtime check caught no unsafe transitions.
+- Whether the `setPhase` jump from an all-red's last step ran was not logged.
 
 ### Recommendation rule (`MockAgentProvider.recommend`, also in its docstring)
 
@@ -277,14 +319,21 @@ Safety audit (step 4): pending (transitions checked: –). Determinism (step 5):
   the route changes made at that activation.
 - **Second `enable_emergency_corridor` replaces the first** (the latest wins).
 - **Validator additions:** codes `duplicate_signal`, `min_green_range`, `min_hold`
-  (`TimingLimits.min_corridor_hold_s = 5`), `no_clearance` (a targeted program with a
-  green directly followed by another green). The default `EmergencyCorridor()` still
-  validates.
+  (`TimingLimits.min_corridor_hold_s = 5`), and `no_clearance`. `no_clearance` flags a
+  targeted program in which some green is not followed by at least one yellow and then
+  an all-red; the rule was tightened in the PR #4 review. The default
+  `EmergencyCorridor()` still validates.
 - **Mock wording.** The `aggressive-flush` description adds a sentence saying it is
   deliberately unsafe (the UI must not string-match descriptions). When the baseline wins,
   the recommendation summary is "Keep current signal timing; no candidate beat it."
 
 ### Contract change requests
+
+Outcome at integration:
+- **1** was not done, because the project stopped adding and changing tests.
+- **2** is done: `ScenarioService` sets `ems_origin_segment` whenever `ems_probe` is true.
+- **3** holds: 8 plans against a cap of 8.
+- **4** is done in the `interface.py` docstring.
 
 1. **Test.** Relax `test_mock_agent_candidates_pass_safety_validation` to also cover a
    context with `ems_origin_segment` set. There `aggressive-flush` must be the only plan

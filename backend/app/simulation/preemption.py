@@ -89,7 +89,7 @@ class ResponderApproach:
 
     responder_id: str
     intersection_id: str
-    direction: str  # the responder's travel direction on the approach
+    segment_id: str  # the approach the responder is on (its incoming segment)
     distance_m: float
 
 
@@ -214,11 +214,11 @@ class PreemptionController:
         # nearest first: the closest responder picks the target, others join only if it serves them too
         for a in candidates:
             if service is None:
-                target = _pick_target(obs.program, obs.phase_index, a.direction)
+                target = _pick_target(obs.program, obs.phase_index, a.segment_id)
                 if target is None:
                     continue
                 service = self._services[iid] = _Service(target, obs.program.program_id)
-            elif a.direction not in obs.program.phases[service.target].served_approaches:
+            elif a.segment_id not in obs.program.phases[service.target].served_segments:
                 continue
             service.responders.add(a.responder_id)
             self._activate(a.responder_id, iid)
@@ -308,12 +308,12 @@ class PreemptionController:
         return self._now - clock.start
 
 
-def _pick_target(program: SignalProgram, current_index: int, direction: str) -> int | None:
-    """The running phase if it is a green serving ``direction``, else the next such green in cycle order."""
+def _pick_target(program: SignalProgram, current_index: int, segment_id: str) -> int | None:
+    """The running phase if it is a green serving approach ``segment_id``, else the next such green in cycle order."""
     n = len(program.phases)
     for k in range(n):
         index = (current_index + k) % n
         phase = program.phases[index]
-        if phase.kind is PhaseKind.GREEN and direction in phase.served_approaches:
+        if phase.kind is PhaseKind.GREEN and segment_id in phase.served_segments:
             return index
     return None

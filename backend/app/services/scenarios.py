@@ -424,7 +424,7 @@ class ScenarioService:
         """Snapshot, signal programs and network state from one instant (runs on the live simulation thread)."""
         snapshot = sim.save_snapshot()
         try:
-            programs = {iid: sim.get_signal_program(iid) for iid in self.city.network.intersections}
+            programs = {iid: sim.get_signal_program(iid) for iid, info in self.city.network.intersections.items() if info.tls_id}
             return snapshot, programs, sim.get_network_state()
         except Exception:
             Path(snapshot.path).unlink(missing_ok=True)

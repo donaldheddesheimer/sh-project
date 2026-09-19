@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.config import Settings
+from app.config import REPO_ROOT
 from app.simulation.network import RoadNetwork
 from app.simulation.scenario import Scenario, load_scenario
 from app.simulation.sumo import SumoSimulation
@@ -15,7 +15,8 @@ _labels = itertools.count()
 
 @pytest.fixture(scope="session")
 def scenario() -> Scenario:
-    return load_scenario(Settings().scenario_dir)
+    # the tests are written against the grid's ids and geometry, whatever SCENARIO_DIR the .env picks for the demo
+    return load_scenario(REPO_ROOT / "simulation" / "scenarios" / "downtown_grid")
 
 
 @pytest.fixture(scope="session")

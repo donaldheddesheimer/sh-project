@@ -26,7 +26,7 @@ vehicle (`vType ems`) that is en route, including ones spawned later. When a res
 comes within `detection_distance_m` of a signalized stop line on its remaining route
 (the junction at the end of its last edge is never crossed, so it is never pre-empted),
 the controller finds the green phase of the **active** program that serves the
-responder's approach, then:
+responder's approach (its incoming segment, matched against `SignalPhase.served_segments`), then:
 
 - **that green is running:** it is held (topped up) until the responder has crossed, for
   at most `max_hold_s`;

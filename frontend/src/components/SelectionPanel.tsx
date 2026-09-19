@@ -1,9 +1,19 @@
-import type { Approach, CityState } from '../api/types'
+import type { Approach, CityState, IntersectionState, RoadSegmentState } from '../api/types'
 import { CONGESTION_COLOR, CONGESTION_LABEL, DIRECTION_LABEL, mph, SIGNAL_COLOR } from '../lib/format'
 import { Section } from './Section'
 import type { Selection } from './map/CityMap'
 
 const APPROACHES: Approach[] = ['NB', 'SB', 'EB', 'WB']
+
+// One row per approach (incoming segment). A direction that repeats at the junction also names the street.
+function approachRows(i: IntersectionState, segments: RoadSegmentState[]): { id: string; label: string }[] {
+  const legs = segments.filter((s) => s.id in i.queue_lengths)
+  legs.sort((a, b) => APPROACHES.indexOf(a.direction) - APPROACHES.indexOf(b.direction))
+  return legs.map((s) => {
+    const repeated = legs.some((o) => o !== s && o.direction === s.direction)
+    return { id: s.id, label: repeated ? `${DIRECTION_LABEL[s.direction]} · ${s.name}` : DIRECTION_LABEL[s.direction] }
+  })
+}
 
 export function SelectionPanel({ selection, state }: { selection: Selection | null; state: CityState | null }) {
   if (!selection || !state) {
@@ -38,11 +48,11 @@ export function SelectionPanel({ selection, state }: { selection: Selection | nu
             </tr>
           </thead>
           <tbody>
-            {APPROACHES.filter((a) => a in i.queue_lengths).map((a) => {
-              const signal = i.approach_signals[a]
+            {approachRows(i, state.segments).map(({ id, label }) => {
+              const signal = i.approach_signals[id]
               return (
-                <tr key={a}>
-                  <td>{DIRECTION_LABEL[a]}</td>
+                <tr key={id}>
+                  <td>{label}</td>
                   <td>
                     {signal && (
                       <>
@@ -51,7 +61,7 @@ export function SelectionPanel({ selection, state }: { selection: Selection | nu
                       </>
                     )}
                   </td>
-                  <td className="num">{i.queue_lengths[a]} veh</td>
+                  <td className="num">{i.queue_lengths[id]} veh</td>
                 </tr>
               )
             })}

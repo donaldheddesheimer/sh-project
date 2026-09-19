@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     agent_provider: Literal["mock", "nemotron"] = "mock"
 
     # --- traffic simulation -------------------------------------------------
+    # downtown_grid (the tests use it) or pittsburgh_oakland; a relative path is taken from the repo root
     scenario_dir: Path = REPO_ROOT / "simulation" / "scenarios" / "downtown_grid"
     sumo_binary: str | None = None  # default: bundled eclipse-sumo, then $SUMO_HOME, then PATH
     sumo_gui: bool = False  # open sumo-gui for the live simulation (debugging)
@@ -60,6 +61,12 @@ class Settings(BaseSettings):
     nemotron_model: str | None = None
 
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    @field_validator("scenario_dir")
+    @classmethod
+    def _from_repo_root(cls, value: Path) -> Path:
+        # `make backend` runs from backend/, so a cwd-relative SCENARIO_DIR would depend on how it was started
+        return value if value.is_absolute() else REPO_ROOT / value
 
 
 @lru_cache

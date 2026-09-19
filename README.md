@@ -70,6 +70,8 @@ Other commands:
 | `make build` | type-check and production-build the UI |
 | http://localhost:5173/?fixture=scenario | Analyze Response replays a recorded run (synthetic numbers) instead of calling `POST /api/scenarios/run`; `?fixture=scenario-failed` replays the failure path. Only the analysis call is replaced: the backend must still be running and a collision active, because the map and the button's prerequisites come from the live stream |
 | `make network` | regenerate the SUMO network and demand from their build scripts |
+| `make backend-oakland` | the backend simulating [Oakland, Pittsburgh](#second-city-oakland-pittsburgh) instead of the grid (same port, so `make frontend` works as is) |
+| `make network-oakland` | rebuild the Oakland network, demand and signal timing from the OSM extract |
 | `SUMO_GUI=true make backend` | watch the live simulation in sumo-gui as well |
 | `DEMO_SCRIPT=crash-ahead make backend` | arm an autonomous-episode script at startup |
 | http://127.0.0.1:8000/docs | interactive API docs |
@@ -109,6 +111,40 @@ it. It uses the same gated implementor as an autonomous agent (see
 
 Use the speed buttons (1×–16×) to fast-forward. Click an intersection or road to inspect
 its phase, queues and speed.
+
+## Second city: Oakland, Pittsburgh
+
+A second scenario, `pittsburgh_oakland`, runs the same console and pipeline on a real street
+layout: central Oakland around Fifth and Forbes Avenues, with 332 road links and 33 signals.
+The downtown grid stays the default, and the tests always use it.
+
+```bash
+make backend-oakland   # or SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland in .env
+make frontend
+```
+
+- **What is real.** Only the map: streets, lane counts, speed limits and signal locations come
+  from OpenStreetMap (© OpenStreetMap contributors, ODbL; the credit is shown on the map).
+- **What is synthetic.** The demand is fringe-to-fringe flows weighted by road class, about
+  2,500 veh/h in total. The signal timing is Webster timing sized to that demand, with 12 s
+  minimum greens and coordinated offsets on a 54 s cycle. The build is described in
+  [simulation/networks/pittsburgh_oakland/](simulation/networks/pittsburgh_oakland/README.md).
+- **The default crash** blocks the two right lanes of Forbes Avenue eastbound, between
+  S Bouquet St and Bigelow Blvd. The EMS probe leaves from Fire Station 14.
+- **Measured.** With no crash, traffic is stable for two simulated hours, with no gridlock and
+  no teleports. After the crash, Analyze Response recommends the diversion advisory, which
+  cuts mean delay by 10–18% across runs. The timing plans move delay by only 1–3%.
+  `aggressive-flush` is still rejected by the validator. A run over two crashes (Forbes EB
+  plus Fifth Avenue WB, `incident_ids`) also completes.
+- **Slower than the grid.** Each branch takes 20–45 s of wall time with
+  `SCENARIO_WORKERS=6`, so a full run takes 40–60 s.
+- **The EMS figures are noisy here.** The probe often does not reach the scene within the
+  10-minute horizon, and then the column shows no value.
+- **Map-model limits.** Compass labels (NB/SB/EB/WB) are assigned after a 45° rotation,
+  because Oakland's grid runs diagonally (`heading_offset_deg` in `scenario.json`). A label
+  is display only: an approach is identified by its incoming segment, so the five-leg
+  junction at Fifth Ave and Neville St keeps all its approaches even though two of them read
+  SB (the inspector adds the street name there). There is no basemap under the road network.
 
 ## Demo walkthrough: autonomous episode
 
@@ -583,8 +619,10 @@ frontend/src/
   dev/                  ?fixture=scenario replay of a recorded run
 simulation/
   networks/grid3x3/     build_network.py → grid3x3.net.xml (named streets, 9 signals)
+  networks/pittsburgh_oakland/  OSM extract (ODbL) + build_network.py → oakland.net.xml (33 signals)
   scenarios/downtown_grid/  scenario.sumocfg, demand, vehicle types, scenario.json,
                         demos/*.json scripted crash scenarios for episodes
+  scenarios/pittsburgh_oakland/  the same files for Oakland, except demos/; demand from build_demand.py (synthetic)
   controllers/          how pre-emption plugs in (the code lives in backend/app/simulation/)
 memory/                 written at runtime: episodes/EP-NNNN.md lessons and playbook.md (git-ignored)
 docs/
@@ -642,8 +680,9 @@ docs/
   stubs that raise `NotImplementedError`. `SMART_CITY_PROVIDER=nvidia` fails at startup;
   `AGENT_PROVIDER=nemotron` starts, but the REST Analyze Response then fails when it calls
   the stub. Nemotron runs only as an episode's analyst and reviewer.
-- Synthetic network and demand. The crash physics (blocked lane plus a 0.6 m/s pass
-  speed) and congestion thresholds are calibrated for this grid, not measured data.
+- Synthetic network (the grid) and synthetic demand (both cities). The crash physics
+  (blocked lane plus a 0.6 m/s pass speed) and congestion thresholds are calibrated for
+  this grid, not measured data.
 - One live simulation per backend process, one analysis run and one working episode at a
   time. State is in memory, except the lessons under `memory/`. Nothing has auth, including
   `/mcp` and its `implement_recommendation`.

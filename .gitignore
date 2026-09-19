@@ -12,3 +12,7 @@ frontend/dist/
 .env
 *.log
 .DS_Store
+
+# Episode memory written at runtime (lessons and the generated playbook)
+memory/episodes/
+memory/playbook.md

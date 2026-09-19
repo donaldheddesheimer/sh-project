@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { streamUrl } from '../api/client'
-import type { CityState, MetricSample, OpsEvent, ScenarioRun, ScenarioStatus, StatusInfo, StreamMessage } from '../api/types'
+import type {
+  CityState,
+  Episode,
+  MetricSample,
+  OpsEvent,
+  ScenarioRun,
+  ScenarioStatus,
+  StatusInfo,
+  StreamMessage,
+} from '../api/types'
 import type { PhaseLabels } from '../lib/plans'
 
 export type { MetricSample }
@@ -26,6 +35,11 @@ function supersedes(next: ScenarioRun, prev: ScenarioRun | null): boolean {
   return Date.parse(next.created_at) >= Date.parse(prev.created_at)
 }
 
+/** The newest episode wins; an older one still reviewing only updates itself if it is the one shown. */
+function newerEpisode(next: Episode, prev: Episode | null): boolean {
+  return !prev || next.id === prev.id || Date.parse(next.created_at) >= Date.parse(prev.created_at)
+}
+
 export interface CityStream {
   state: CityState | null
   status: StatusInfo | null
@@ -33,6 +47,7 @@ export interface CityStream {
   history: MetricSample[]
   connected: boolean
   scenario: ScenarioRun | null
+  episode: Episode | null
   phaseLabels: PhaseLabels
   acceptScenario: (run: ScenarioRun) => void
 }
@@ -45,6 +60,7 @@ export function useCityStream(): CityStream {
   const [history, setHistory] = useState<MetricSample[]>([])
   const [connected, setConnected] = useState(false)
   const [scenario, setScenario] = useState<ScenarioRun | null>(null)
+  const [episode, setEpisode] = useState<Episode | null>(null)
   const [phaseLabels, setPhaseLabels] = useState<PhaseLabels>({})
   const lastSample = useRef<number>(-Infinity)
 
@@ -105,7 +121,8 @@ export function useCityStream(): CityStream {
             setStatus(msg.data.status)
             setEvents(msg.data.events)
             setHistory(msg.data.history)
-if (msg.data.scenario) acceptScenario(msg.data.scenario)
+            if (msg.data.scenario) acceptScenario(msg.data.scenario)
+            setEpisode(msg.data.episode ?? null)
             lastSample.current = msg.data.history.at(-1)?.t ?? -Infinity
             if (msg.data.state) {
               setState(msg.data.state)
@@ -128,6 +145,11 @@ if (msg.data.scenario) acceptScenario(msg.data.scenario)
           case 'scenario':
             acceptScenario(msg.data)
             break
+          case 'episode': {
+            const next = msg.data
+            setEpisode((prev) => (newerEpisode(next, prev) ? next : prev))
+            break
+          }
         }
       }
       socket.onclose = () => {
@@ -144,5 +166,5 @@ if (msg.data.scenario) acceptScenario(msg.data.scenario)
     }
   }, [acceptScenario])
 
-  return { state, status, events, history, connected, scenario, phaseLabels, acceptScenario }
+  return { state, status, events, history, connected, scenario, episode, phaseLabels, acceptScenario }
 }

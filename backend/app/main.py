@@ -17,20 +17,26 @@ from app.websocket.hub import ConnectionHub
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    mcp = build_mcp(lambda: app.state.scenarios)
+    mcp = build_mcp(lambda: app.state.services)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        city, scenarios = build_services(settings, ConnectionHub())
-        app.state.city = city
-        app.state.scenarios = scenarios
-        await city.start()
+        services = build_services(settings, ConnectionHub(), mcp)
+        app.state.services = services
+        app.state.city = services.city
+        app.state.scenarios = services.scenarios
+        app.state.implementor = services.implementor
+        app.state.episodes = services.episodes
+        app.state.memory = services.memory
+        services.episodes.arm_at_startup()  # DEMO_SCRIPT: before the first boot, so it plays the early crashes
+        await services.city.start()
         try:
             async with mcp.session_manager.run():
                 yield
         finally:
-            await scenarios.shutdown()
-            await city.stop()
+            await services.episodes.shutdown()
+            await services.scenarios.shutdown()
+            await services.city.stop()
 
     app = FastAPI(title="Traffic Operations Center", version="0.1.0", lifespan=lifespan)
     app.add_middleware(

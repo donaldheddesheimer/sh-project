@@ -14,7 +14,14 @@ let replays = 0
 
 /** The run as it ends: the recorded fixture, or a copy with a failed branch and a failed run. */
 function finalRun(mode: FixtureMode): ScenarioRun {
-  const run = structuredClone(recorded) as ScenarioRun
+  // the recording predates the multi-incident and episode fields
+  const run = {
+    incident_ids: [recorded.incident_id],
+    rounds: 1,
+    recalled: [],
+    implementation: null,
+    ...structuredClone(recorded),
+  } as ScenarioRun
   if (mode === 'scenario-failed') {
     const divert = run.candidates.find((c) => c.id === 'divert-advisory')
     if (divert) {

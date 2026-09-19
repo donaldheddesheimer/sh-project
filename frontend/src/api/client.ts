@@ -1,4 +1,4 @@
-import type { NetworkGeometry, ScenarioRun, ScenarioRunRequest } from './types'
+import type { DemoInfo, Episode, Implementation, NetworkGeometry, ScenarioRun, ScenarioRunRequest } from './types'
 
 /** A non-2xx response; `message` is the server's `detail` when it sent one. */
 export class ApiError extends Error {
@@ -10,7 +10,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
@@ -40,6 +40,11 @@ export const api = {
   runScenario: (req: ScenarioRunRequest = {}) => request<ScenarioRun>('POST', '/api/scenarios/run', req),
   getScenario: (id: string) => request<ScenarioRun>('GET', `/api/scenarios/${encodeURIComponent(id)}`),
   listScenarios: () => request<ScenarioRun[]>('GET', '/api/scenarios'),
+  implement: (id: string) => request<Implementation>('POST', `/api/scenarios/${encodeURIComponent(id)}/implement`),
+  demo: () => request<DemoInfo>('GET', '/api/demo'),
+  demoStart: (script: string) => request<Episode>('POST', '/api/demo/start', { script }),
+  demoStop: () => request<DemoInfo>('POST', '/api/demo/stop'),
+  clearMemory: () => request<{ removed: number }>('DELETE', '/api/memory'),
 }
 
 export function streamUrl(): string {

@@ -60,13 +60,25 @@ class LiveSimulationRunner:
         self._status = RunStatus.STARTING
         self._error: str | None = None
         self._dirty = True
-        self._boot_events: list[tuple[float, Callable[[TrafficSimulation], object]]] = []
+        self._events: list[tuple[float, Callable[[TrafficSimulation], object]]] = []
+        self._next_event = 0
 
     # ------------------------------------------------------------ public API
 
-    def set_boot_events(self, events: list[tuple[float, Callable[[TrafficSimulation], object]]]) -> None:
-        """Events to fire at simulation times inside every warm-up (this boot's and each later reset's)."""
-        self._boot_events = sorted(events, key=lambda e: e[0])
+    def set_scripted_events(self, events: list[tuple[float, Callable[[TrafficSimulation], object]]]) -> None:
+        """Commands to fire at their simulation time, on every boot: inside the warm-up (a scripted crash that has
+        already happened when the console opens) or while running. A new script takes effect at the next boot
+        (reset); an empty list also stops events still due in this run."""
+        events = sorted(events, key=lambda e: e[0])
+
+        def apply(_sim: TrafficSimulation | None = None) -> None:
+            self._events = events
+            self._next_event = len(events) if self._sim is not None else 0  # nothing fires before the next boot
+
+        if self._thread is None:
+            apply()
+        else:
+            self.submit(apply)  # between steps, and before a reset queued after it
 
     @property
     def status(self) -> RunStatus:
@@ -137,6 +149,7 @@ class LiveSimulationRunner:
                 if self._status is RunStatus.RUNNING:
                     if now >= next_step:
                         self._sim.step()
+                        self._fire_due_events()
                         stepped = True
                         next_step += self._sim.step_length / self._speed
                         if now - next_step > MAX_LAG_S:
@@ -178,18 +191,29 @@ class LiveSimulationRunner:
         self._dirty = True
 
     def _warm_up(self, sim: TrafficSimulation) -> None:
-        """Run the warm-up, firing each boot event at its simulation time (a scripted crash that has already
-        happened by the time the console opens)."""
+        """Run the warm-up, firing each scripted event that falls inside it at its simulation time (a crash that
+        has already happened by the time the console opens). Later events fire while running."""
         now = 0.0
-        for at, fn in self._boot_events:
+        self._next_event = 0
+        for at, fn in self._events:
             if at >= self._warmup_s:
-                continue  # after warm-up: whoever scheduled it fires it while the demo runs
+                break
             if at > now:
                 sim.run_for(at - now)
                 now = at
             fn(sim)
+            self._next_event += 1
         if self._warmup_s > now:
             sim.run_for(self._warmup_s - now)
+
+    def _fire_due_events(self) -> None:
+        while self._next_event < len(self._events) and self._events[self._next_event][0] <= self._sim.sim_time:
+            _, fn = self._events[self._next_event]
+            self._next_event += 1
+            try:
+                fn(self._sim)
+            except Exception:  # noqa: BLE001 - a bad scripted event must not stop the simulation
+                log.exception("scripted event failed")
 
     def _drain(self, wait: float) -> None:
         try:

@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     scenario_history: int = 10  # runs kept in memory for GET /api/scenarios
     scenario_idle_timeout_s: float = 300.0  # an MCP agent's open run fails after this long without a tool call
 
+    # --- autonomous demo episode (app/learning/) ----------------------------
+    demo_script: str | None = None  # arm this demos/*.json script at startup
+    episode_analyst: Literal["auto", "mock", "nemotron"] = "auto"  # auto: nemotron if NVIDIA_API_KEY + NEMOTRON_MODEL
+    episode_monitor_s: float | None = None  # sim seconds a plan is watched (default: script monitor_s, else horizon)
+    episode_agent_timeout_s: float = 300.0  # wall-clock limit for one Nemotron analyst run
+    episode_fallback_to_mock: bool = True  # run the mock analyst when the Nemotron loop fails
+    episode_pause_on_finish: bool = True  # pause the live simulation when an episode completes
+    agent_may_implement: bool = True  # allow the MCP implement_recommendation tool (the operator path is separate)
+    memory_enabled: bool = True  # store lessons and recall them for the next incident
+    memory_dir: Path = REPO_ROOT / "memory"
+    mcp_url: str | None = None  # where the Nemotron loop reaches /mcp; unset = this app's MCP server, in-process
+
     # --- mock Smart City provider ------------------------------------------
     incident_detection_delay_s: float = 4.0  # simulated seconds between a crash and its detection
 

@@ -10,12 +10,14 @@ interface Props {
   run: ScenarioRun | null
   incidentId: string | null
   fixture: boolean
+  busy: boolean
   colors: Record<string, string>
   phaseLabels: PhaseLabels
   activeId: string | null
   selectedId: string | null
   onHover: (id: string | null) => void
   onSelect: (id: string) => void
+  onImplement: (runId: string) => void
 }
 
 const RUN_TAG: Record<ScenarioStatus, { tone: string; icon: IconName; label: string }> = {
@@ -32,7 +34,7 @@ const PIPELINE: { title: string; desc: string; safety?: boolean }[] = [
   { title: 'Propose', desc: 'The response agent drafts signal splits, a green corridor and diversions.' },
   {
     title: 'Validate',
-    desc: 'A deterministic safety validator rejects unsafe timings (minimum greens, clearances, cycle limits). The agent never drives live signals.',
+    desc: 'A deterministic safety validator rejects unsafe timings (minimum greens, clearances, cycle limits). Agents never set signal states: only a validated, simulated recommendation can be applied to the live city, and it is re-checked first.',
     safety: true,
   },
   { title: 'Simulate', desc: 'Each surviving plan runs in its own branch over a 10-minute horizon, in parallel.' },
@@ -129,7 +131,7 @@ function RunHeader({ run }: { run: ScenarioRun }) {
           {tag.label}
         </span>
         <span className="run-id">{run.id}</span>
-        <span className="tag tag-minimal">{run.incident_id}</span>
+        <span className="tag tag-minimal">{(run.incident_ids.length ? run.incident_ids : [run.incident_id]).join(' + ')}</span>
       </div>
       <dl className="props">
         <dt>Branched at</dt>
@@ -152,7 +154,8 @@ function RunHeader({ run }: { run: ScenarioRun }) {
 }
 
 export function ResponsePlans(props: Props) {
-  const { run, incidentId, fixture, colors, phaseLabels, activeId, selectedId, onHover, onSelect } = props
+  const { run, incidentId, fixture, busy, colors, phaseLabels, activeId, selectedId, onHover, onSelect, onImplement } =
+    props
 
   if (!run) {
     return (
@@ -210,10 +213,29 @@ onKeyDown={(e) => {
               ))}
             </ul>
           )}
-          <div className="rec-foot">
-            <Icon name="shield" size={12} /> Advisory. This plan passed the safety validator; nothing is applied to live
-            signals.
-          </div>
+          {run.implementation ? (
+            <div className="rec-foot applied">
+              <Icon name="bolt" size={12} /> Applied to live signals by {run.implementation.implemented_by} at{' '}
+              {clock(run.implementation.implemented_at)}
+              {run.implementation.staleness_s != null &&
+                `, ${Math.round(run.implementation.staleness_s)} s after the snapshot`}
+              .
+            </div>
+          ) : (
+            <div className="rec-foot">
+              <Icon name="shield" size={12} /> Advisory until applied. This plan passed the safety validator and is
+              re-checked against the live signals when applied.
+            </div>
+          )}
+        </div>
+      )}
+
+      {rec && !run.implementation && run.status === 'completed' && !fixture && (
+        <div className="rec-apply">
+          <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onImplement(run.id)}>
+            <Icon name="bolt" size={12} /> Apply to live signals
+          </button>
+          <span>Operator path. An autonomous agent applies its own recommendation.</span>
         </div>
       )}
 

@@ -4,6 +4,8 @@ pydantic>=2.7
 pydantic-settings>=2.3
 # MCP server exposing the scenario engine to agents (app/api/mcp_tools.py)
 mcp>=2.2
+# NIM chat client for the Nemotron analyst and reviewer (app/agent/nemotron.py); mcp already depends on it
+httpx2>=2.5
 # Eclipse SUMO: simulator binaries + Python TraCI/sumolib. No GPU required.
 eclipse-sumo>=1.20
 traci>=1.20

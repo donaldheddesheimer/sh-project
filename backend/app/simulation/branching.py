@@ -71,17 +71,17 @@ def _sample(m: TrafficMetrics) -> MetricSample:
     )
 
 
-def apply_plan(sim: TrafficSimulation, plan: CandidatePlan) -> dict[str, str]:
-    """Install a plan's policies, corridor and reroutes on ``sim``; returns intersection -> program id.
+def apply_plan(sim: TrafficSimulation, plan: CandidatePlan) -> tuple[dict[str, str], int]:
+    """Install a plan's policies, corridor and reroutes on ``sim``.
 
-    The same steps run in a branch and on the live simulation, so what was tested is what goes live.
+    Returns intersection -> program id now running, and the vehicles diverted at activation. The same steps run
+    in a branch and on the live simulation (the implementor), so what was tested is what goes live.
     """
     programs = {policy.intersection_id: sim.apply_signal_policy(policy) for policy in plan.policies}
     if plan.corridor is not None:
         sim.enable_emergency_corridor(plan.corridor)
-    for action in plan.reroutes:
-        sim.reroute_vehicles(action)
-    return programs
+    diverted = sum(sim.reroute_vehicles(action) for action in plan.reroutes)
+    return programs, diverted
 
 
 def run_branch(

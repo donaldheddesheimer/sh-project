@@ -6,7 +6,8 @@
 |---|---|---|---|
 | UI | `frontend/` | REST + WebSocket payloads | SUMO, providers |
 | API | `app/api/routes.py` | `CityService`, `ScenarioService` | TraCI |
-| Agent tools | `app/api/mcp_tools.py` (MCP at `/mcp`) | `ScenarioService` | live signals |
+| Agent tools | `app/api/mcp_tools.py` (MCP at `/mcp`) | `ScenarioService`, `Implementor`, `ExperienceStore` | signal states (only the implementor applies a run's recommendation) |
+| Episodes | `app/learning/` | `CityService`, `ScenarioService`, the analysts and reviewer | SUMO specifics |
 | Orchestration | `app/services/city.py` | provider **interfaces**, `TrafficSimulation`, runner | mock vs NVIDIA, SUMO specifics |
 | Scenario analysis | `app/services/scenarios.py` | `CityService`, `AgentProvider`, `SafetyValidator`, a branch factory | SUMO specifics, which agent drives it |
 | Branching | `app/simulation/branching.py` | `TrafficSimulation`, `CandidatePlan` | agents, the run it belongs to |
@@ -44,7 +45,9 @@ SUMO ──TraCI──► SumoSimulation.step()          (runner thread, paced t
 One run is one snapshot of the live twin, branched into a baseline plus candidate
 responses. `ScenarioService` (`app/services/scenarios.py`) owns it, one run at a time, and
 broadcasts the `ScenarioRun` as a `scenario` WebSocket message on every change. Nothing in
-the pipeline touches live signals: plans only ever execute inside SUMO branches.
+the pipeline touches live signals: plans only ever execute inside SUMO branches. Applying a
+recommendation to the live city is a separate, gated step (see
+[Autonomous episode](#autonomous-episode-applearning)).
 
 ```
 live twin ─► detect ─► trigger ─► capture ─► propose ─► validate ─► simulate ×N ─► recommend ─► UI
@@ -62,7 +65,7 @@ live twin ─► detect ─► trigger ─► capture ─► propose ─► vali
 | 5 | Validate | `validation_findings` → `RuleBasedSafetyValidator` | each plan and the captured programs | `violations[]`; a plan with any is `rejected` and never simulated |
 | 6 | Simulate | `branching.run_branch` on a 4-worker pool | snapshot, plan, probe, horizon | `SimulationCandidate`: `completed` with horizon `TrafficMetrics`, a 30 s `timeline`, `notes` and `wall_time_s`, or `failed` with the error in `notes`. Status `simulating` |
 | 7 | Recommend | `AgentProvider.recommend` | the context and every candidate | `Recommendation {candidate_id, summary, rationale[]}` naming a completed candidate (else the baseline). Status `completed`, a summary in the ops log, the snapshot file deleted |
-| 8 | Present | `frontend/src/components/plans/` | `scenario` messages and `hello.data.scenario` | plan cards with deltas against the baseline, rejection reasons, a KPI comparison, a horizon chart, map overlays. Advisory only |
+| 8 | Present | `frontend/src/components/plans/` | `scenario` messages and `hello.data.scenario` | plan cards with deltas against the baseline, rejection reasons, a KPI comparison, a horizon chart, map overlays. Advisory until applied |
 
 **A branch** (stage 6) is a brand-new SUMO process: restore the snapshot, dispatch the EMS
 probe (before the plan, so every branch sends it at the same moment), apply the timing
@@ -145,6 +148,13 @@ behavior:
   `test_fresh_branches_from_one_snapshot_are_identical`).
 - Re-loading into a process that has already run diverges, because internal SUMO state
   leaks.
+- SUMO saves the state of every signal program variant by id, and `loadState` refuses an
+  id the process does not know (`Unknown program`). A timing policy applied to the live city
+  installs such a program (`policy-N`), so the snapshot records every runtime-installed
+  program (`custom_programs`) and `restore_snapshot` re-creates them before loading. The
+  branch then starts with the live signals exactly as they were. Corridors, diversions and
+  pending offsets live in Python and are replayed from the standing responses instead. This
+  fix was checked against the SUMO source, not by a run.
 
 **So every candidate must run in a fresh process**, which also makes parallel candidate
 evaluation natural. A 600 s horizon of the healthy network takes under 1 s headless, but
@@ -177,8 +187,10 @@ and `list_cameras`.
 - `aggressive-flush`, which is deliberately unsafe (an 8 s green), so the demo always shows
   the validator rejecting a plan.
 
-`NemotronAgentProvider` is a stub. In milestone 3, Nemotron drives the
-[MCP tools](#mcp-tools-for-agents) through a tool-calling loop over NIM.
+With lessons in the context (see [Autonomous episode](#autonomous-episode-applearning)),
+the mock prunes or reorders these proposals. `NemotronAgentProvider` (the REST pipeline's
+provider) is still a stub: Nemotron drives the [MCP tools](#mcp-tools-for-agents) through a
+tool-calling loop over NIM, in episodes only (`learning/analysts.py`).
 
 **Safety.** `RuleBasedSafetyValidator` checks min/max green (including a pedestrian
 floor), non-shortened yellow and all-red clearance, cycle bounds, and offset range.
@@ -199,13 +211,42 @@ and client snippet: [docs/specs/scenario-engine-mcp.md](specs/scenario-engine-mc
 
 | Tool | Pipeline stages | Returns |
 |---|---|---|
-| `start_analysis(incident_id?, horizon_s?, agent)` | trigger + capture | run id, the incident, segments (worst congestion first), every signal's phases |
+| `start_analysis(incident_ids?, horizon_s?, agent)` | trigger + capture | run id, the incident(s) (default: every active one), segments (worst congestion first), every signal's phases, standing responses, and `experience` (playbook + similar past episodes) when memory has any |
 | `validate_plan(run_id, plan)` | validate | `{safe, violations}` without simulating |
 | `simulate_plans(run_id, plans[])` | validate + simulate, one round | this round's candidates with deltas against the baseline (blocks while the branches run; baseline added on the first round) |
 | `get_analysis(run_id)` | none | every candidate so far |
 | `submit_recommendation(run_id, candidate_id, summary, rationale[])` | recommend | the completed run |
+| `implement_recommendation(run_id)` | implement (gated by `AGENT_MAY_IMPLEMENT`) | the `Implementation`: programs now running, EMS probes dispatched, staleness |
+| `recall_experience(run_id, limit?)` | none | the playbook and more similar past episodes |
 
 Tool runs mutate the same `ScenarioRun` the REST API exposes, so the UI streams an agent's
 analysis as it happens. An agent run that goes `SCENARIO_IDLE_TIMEOUT_S` (300 s) without a
 tool call is failed, releasing the one-run lock. Every tool is read-only or runs inside a
-SUMO branch; none changes live signals.
+SUMO branch, except `implement_recommendation`, which can apply only the run's own
+recommendation, re-validated on the live programs.
+
+## Autonomous episode (`app/learning/`)
+
+An episode is one agent answering one set of active incidents, from detection to a stored
+lesson. `EpisodeService` is the only thing that starts an agent, and only while a demo
+script is armed. The README's
+[autonomous episode section](../README.md#the-autonomous-self-learning-episode) has the
+rules (two-crash rule, decisions, thresholds). This table is the code path.
+
+| # | Stage | Code | Output |
+|---|---|---|---|
+| 1 | Script | `EpisodeService.start_demo` → `CityService.set_scripted_events` → `LiveSimulationRunner` | crashes fired on the runner thread at their simulation time: inside the warm-up (already happened) or while running; episode `armed` |
+| 2 | Detect | `MockSmartCityProvider` → `CityService.incident_listeners` → `EpisodeService._on_incident` | episode `detected` over every active incident, or the working one superseded |
+| 3 | Analyze | `MockAnalyst` (`ScenarioService.run_pipeline`) or `NemotronAnalyst` (MCP client over NIM, fallback to the mock) | a completed `ScenarioRun`; episode `analyzing` |
+| 4 | Implement | `Implementor.implement(run_id, by)` in one `run_on_live` command | re-validation on live programs, EMS probes, `apply_plan`; `Implementation` on the run and the episode; the plan joins the standing responses; episode `monitoring` |
+| 5 | Monitor | `LiveMonitor` (a frame observer) | `LiveSample` every 5 simulated seconds; a `LiveRecord` after the window |
+| 6 | Score | `build_scorecard` | `Scorecard` (code only): predicted vs realised on absolute simulation time, outcome |
+| 7 | Review | `MockReviewer` / `NemotronReviewer` | `Lesson` (verdict = the scorecard's outcome); episode `reviewing` |
+| 8 | Remember | `ExperienceStore.save` | `memory/episodes/EP-NNNN.md` + `playbook.md`; episode `completed`; live sim paused |
+| 9 | Recall | `ScenarioService.lessons_source` → `ExperienceStore.recall` | `IncidentContext.lessons`, `ScenarioRun.recalled`, MCP `experience` |
+
+Hooks (`incident_listeners`, `reset_listeners`, implementation listeners, the monitor) run
+inside the frame pipeline or a request, so they change state synchronously and spawn tasks
+for slow work. The implementor's live apply runs in a shielded task: once started, a plan
+that reached the live signals is always recorded as standing, even if its agent is
+superseded mid-apply.

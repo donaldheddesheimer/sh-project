@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router, ws_router
 from app.config import Settings, get_settings
-from app.providers import build_city_service
+from app.providers import build_services
 from app.websocket.hub import ConnectionHub
 
 
@@ -19,12 +19,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        city = build_city_service(settings, ConnectionHub())
+        city, scenarios = build_services(settings, ConnectionHub())
         app.state.city = city
+        app.state.scenarios = scenarios
         await city.start()
         try:
             yield
         finally:
+            scenarios.shutdown()
             await city.stop()
 
     app = FastAPI(title="Traffic Operations Center", version="0.1.0", lifespan=lifespan)

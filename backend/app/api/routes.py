@@ -17,7 +17,9 @@ from app.models.api import (
     SpeedRequest,
 )
 from app.models.domain import Incident, NetworkGeometry, SignalProgram
+from app.models.scenario import ScenarioRun, ScenarioRunRequest
 from app.services.city import CityService, Conflict, NotReady
+from app.services.scenarios import ScenarioService
 from app.smart_city.base import Camera
 
 router = APIRouter(prefix="/api")
@@ -28,7 +30,12 @@ def get_city(request: Request) -> CityService:
     return request.app.state.city
 
 
+def get_scenarios(request: Request) -> ScenarioService:
+    return request.app.state.scenarios
+
+
 City = Annotated[CityService, Depends(get_city)]
+Scenarios = Annotated[ScenarioService, Depends(get_scenarios)]
 
 
 def _control(city: CityService) -> ControlResponse:
@@ -133,6 +140,31 @@ async def signal_program(city: City, intersection_id: str) -> SignalProgram:
         return await city.signal_program(intersection_id)
     except (KeyError, ValueError) as exc:
         raise HTTPException(404, f"no signal program for {intersection_id}") from exc
+
+
+@router.post("/scenarios/run", response_model=ScenarioRun, status_code=202)
+async def run_scenario(scenarios: Scenarios, request: ScenarioRunRequest) -> ScenarioRun:
+    try:
+        return await scenarios.start_run(request)
+    except NotReady as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Conflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(404, f"unknown incident {exc.args[0]}") from exc
+
+
+@router.get("/scenarios", response_model=list[ScenarioRun])
+async def list_scenarios(scenarios: Scenarios) -> list[ScenarioRun]:
+    return scenarios.runs()
+
+
+@router.get("/scenarios/{scenario_id}", response_model=ScenarioRun)
+async def scenario(scenarios: Scenarios, scenario_id: str) -> ScenarioRun:
+    try:
+        return scenarios.get(scenario_id)
+    except KeyError as exc:
+        raise HTTPException(404, f"unknown scenario run {scenario_id}") from exc
 
 
 @router.get("/cameras", response_model=list[Camera])

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Vehicle types for the downtown_grid scenario.
+     "ems" and "crash" must be defined here (not created at runtime) so that
+     every SUMO process that restores a saved snapshot knows them. -->
+<additional>
+    <!-- Background traffic mix used by every demand flow. -->
+    <vTypeDistribution id="background">
+        <vType id="background_car" vClass="passenger" length="4.6" minGap="2.5" accel="2.6" decel="4.5"
+               sigma="0.5" speedDev="0.1" probability="0.90"/>
+        <vType id="background_truck" vClass="truck" length="9.0" minGap="2.5" accel="1.3" decel="4.0"
+               sigma="0.5" speedDev="0.05" probability="0.07"/>
+        <vType id="background_bus" vClass="bus" length="12.0" minGap="3.0" accel="1.2" decel="4.0"
+               sigma="0.5" speedDev="0.05" probability="0.03"/>
+    </vTypeDistribution>
+
+    <!-- Emergency responder. Faster than traffic; signal priority is modelled
+         explicitly by candidate policies rather than implicitly here. -->
+    <vType id="ems" vClass="emergency" guiShape="emergency" length="6.5" minGap="2.0"
+           accel="3.0" decel="6.0" sigma="0.2" speedFactor="1.3" speedDev="0" color="1,0.15,0.15"/>
+
+    <!-- Disabled vehicles placed by inject_collision(). -->
+    <vType id="crash" vClass="passenger" length="4.6" minGap="0.5" accel="0.1" decel="9.0"
+           sigma="0" speedFactor="0.1" color="1,0.45,0"/>
+</additional>

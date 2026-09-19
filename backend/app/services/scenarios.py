@@ -21,7 +21,7 @@ import asyncio
 import itertools
 import logging
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -36,6 +36,7 @@ from app.models.domain import (
     EmergencyStatus,
     Incident,
     IncidentStatus,
+    NetworkState,
     Recommendation,
     SignalProgram,
     SimulationCandidate,
@@ -58,12 +59,10 @@ def validation_findings(
 ) -> list[str]:
     """Human-readable reasons the plan must not be simulated; empty = safe."""
     findings: list[str] = []
-    seen_intersections: set[str] = set()
+    for iid, n in Counter(p.intersection_id for p in plan.policies).items():
+        if n > 1:  # policies apply one after another, so their combination would go unvalidated
+            findings.append(f"{iid}: {n} policies for one intersection; combine them into one")
     for policy in plan.policies:
-        if policy.intersection_id in seen_intersections:
-            findings.append(f"{policy.intersection_id}: multiple policies target this intersection")
-            continue
-        seen_intersections.add(policy.intersection_id)
         program = programs.get(policy.intersection_id)
         if program is None:
             findings.append(f"{policy.intersection_id}: no signal program at this intersection")
@@ -158,9 +157,8 @@ class ScenarioService:
         try:
             await self.capture(a)
             plans = await self.agent.propose_candidates(a.context)
-            if not any(p.id == BASELINE.id for p in plans):
-                plans.insert(0, BASELINE)
-            await self.evaluate(a, plans[: self.settings.scenario_max_candidates], then=ScenarioStatus.RECOMMENDING)
+            plans = [BASELINE, *(p for p in plans if p.id != BASELINE.id)][: self.settings.scenario_max_candidates]
+            await self.evaluate(a, plans, then=ScenarioStatus.RECOMMENDING)
             recommendation = await self.agent.recommend(a.context, a.run.candidates)
             self.finish(a, self._checked(recommendation, a.run))
         except Exception as exc:  # noqa: BLE001 - reported on the run and in the ops log
@@ -181,11 +179,9 @@ class ScenarioService:
         if self.city.status.status in (RunStatus.STARTING, RunStatus.ERROR):
             raise NotReady(f"simulation is {self.city.status.status.value}")
         self.city.state  # raises NotReady before the first frame
-        if self._open is not None:
-            raise Conflict(f"{self._open.run.id} is still running")
+        self._ensure_no_open_run()
         incident = await self._resolve_incident(incident_id)
-        if self._open is not None:
-            raise Conflict(f"{self._open.run.id} is still running")
+        self._ensure_no_open_run()  # another start may have claimed it while we awaited
         run = ScenarioRun(
             id=f"SCN-{next(self._ids):04d}",
             incident_id=incident.id,
@@ -204,10 +200,10 @@ class ScenarioService:
         return analysis
 
     async def capture(self, a: Analysis) -> None:
-        """Snapshot the live network and read every signal program at one instant (status proposing)."""
-        a.snapshot, a.programs = await self.city.run_on_live(self._capture)
+        """Snapshot the live network, its state and every signal program at one instant (status proposing)."""
+        a.snapshot, a.programs, state = await self.city.run_on_live(self._capture)
         a.run.snapshot_sim_time = a.snapshot.sim_time
-        a.context = self._context(a)
+        a.context = self._context(a, state)
         a.probe = self._probe(a)
         self._set_status(a.run, ScenarioStatus.PROPOSING)
 
@@ -223,8 +219,8 @@ class ScenarioService:
         if a.busy:
             raise Conflict(f"{a.run.id} is already simulating")
         existing = {c.id for c in a.run.candidates}
-        if not any(c.id == BASELINE.id for c in a.run.candidates) and not any(p.id == BASELINE.id for p in plans):
-            plans = [BASELINE, *plans]
+        if BASELINE.id not in existing:  # the reference is always the canonical do-nothing plan
+            plans = [BASELINE, *(p for p in plans if p.id != BASELINE.id)]
         ids = [p.id for p in plans]
         if duplicates := sorted({i for i in ids if ids.count(i) > 1 or i in existing}):
             raise ValueError(f"plan ids already used in {a.run.id}: {', '.join(duplicates)}")
@@ -249,6 +245,12 @@ class ScenarioService:
 
         a.busy = True
         self._set_status(a.run, ScenarioStatus.SIMULATING)
+        # The round belongs to the service, not the caller: if a tool call is cancelled, the branches
+        # still finish and are recorded, and the run stays busy until they have.
+        await asyncio.shield(self._spawn(self._run_round(a, start, plans, then)))
+        return a.run.candidates[start:]
+
+    async def _run_round(self, a: Analysis, start: int, plans: list[CandidatePlan], then: ScenarioStatus) -> None:
         try:
             accepted = [i for i in range(start, len(a.run.candidates)) if a.run.candidates[i].status is CandidateStatus.PENDING]
             await asyncio.gather(*(self._simulate(a, i, plans[i - start]) for i in accepted))
@@ -257,7 +259,6 @@ class ScenarioService:
             a.touched = time.monotonic()
         if a.run.status is ScenarioStatus.SIMULATING:  # not failed meanwhile
             self._set_status(a.run, then)
-        return a.run.candidates[start:]
 
     def finish(self, a: Analysis, recommendation: Recommendation) -> ScenarioRun:
         """Complete the run with a recommendation for a completed candidate."""
@@ -279,14 +280,20 @@ class ScenarioService:
         self.city.events.add(EventLevel.ALERT, f"Analysis {a.run.id} failed: {error}", self.city.sim_time, a.incident.id)
         self._close(a)
 
-    def shutdown(self) -> None:
-        for task in self._tasks:
+    async def shutdown(self) -> None:
+        for task in list(self._tasks):
             task.cancel()
+        # cancel queued branches and wait for running ones, which still read the snapshot
+        await asyncio.to_thread(self._executor.shutdown, wait=True, cancel_futures=True)
         if self._open is not None:
             self._close(self._open)  # drop the open run's snapshot file
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     # ------------------------------------------------------------- helpers
+
+    def _ensure_no_open_run(self) -> None:
+        if self._open is not None:
+            raise Conflict(f"{self._open.run.id} is still running")
 
     async def _resolve_incident(self, incident_id: str | None) -> Incident:
         if incident_id is not None:
@@ -304,13 +311,17 @@ class ScenarioService:
             raise Conflict(f"{incident.id} is not matched to a road segment")
         return incident
 
-    def _capture(self, sim: TrafficSimulation) -> tuple[SimulationSnapshot, dict[str, SignalProgram]]:
-        """Snapshot and signal programs from one instant (runs on the live simulation thread)."""
+    def _capture(self, sim: TrafficSimulation) -> tuple[SimulationSnapshot, dict[str, SignalProgram], NetworkState]:
+        """Snapshot, signal programs and network state from one instant (runs on the live simulation thread)."""
         snapshot = sim.save_snapshot()
-        return snapshot, {iid: sim.get_signal_program(iid) for iid in self.city.network.intersections}
+        try:
+            programs = {iid: sim.get_signal_program(iid) for iid in self.city.network.intersections}
+            return snapshot, programs, sim.get_network_state()
+        except Exception:
+            Path(snapshot.path).unlink(missing_ok=True)
+            raise
 
-    def _context(self, a: Analysis) -> IncidentContext:
-        state = self.city.state
+    def _context(self, a: Analysis, state: NetworkState) -> IncidentContext:
         stations = self.city.scenario.ems_stations
         return IncidentContext(
             incident=a.incident,
@@ -395,10 +406,11 @@ class ScenarioService:
         if a.snapshot is not None:
             Path(a.snapshot.path).unlink(missing_ok=True)
 
-    def _spawn(self, coro) -> None:
+    def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
     def _set_status(self, run: ScenarioRun, status: ScenarioStatus) -> None:
         run.status = status

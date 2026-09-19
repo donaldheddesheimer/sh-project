@@ -393,6 +393,7 @@ class StationGeometry(BaseModel):
 class NetworkGeometry(BaseModel):
     id: str
     name: str
+    attribution: str | None = Field(None, description="Data credit to show on the map")
     center: tuple[float, float]
     bounds: tuple[tuple[float, float], tuple[float, float]]
     segments: list[SegmentGeometry]

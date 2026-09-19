@@ -21,8 +21,8 @@ def _wait_for(predicate, timeout=30.0, interval=0.2):
 
 
 @pytest.fixture(scope="module")
-def client():
-    settings = Settings(sim_warmup_s=120, sim_speed=32, incident_detection_delay_s=2)
+def client(scenario):
+    settings = Settings(scenario_dir=scenario.directory, sim_warmup_s=120, sim_speed=32, incident_detection_delay_s=2)
     with TestClient(create_app(settings)) as c:
         _wait_for(lambda: c.get("/api/state").status_code == 200)
         yield c

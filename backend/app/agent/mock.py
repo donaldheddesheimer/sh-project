@@ -24,6 +24,9 @@ from app.models.domain import (
 SPLIT_SHIFT_S = 15.0
 STRONG_SHIFT_S = 25.0
 AGGRESSIVE_CROSS_GREEN_S = 8.0  # deliberately below the safety validator's green floor
+MIN_GREEN_S = 12.0  # a shift never takes a green below this (the validator's vehicle/pedestrian floor)
+MIN_SHIFT_S = 4.0  # less spare green than this is not worth proposing
+MAX_DIVERT_NAMES = 3
 DIVERT_COMPLIANCE = 0.3
 EMS_ETA_TOLERANCE = 1.10  # a plan may not slow responders by more than 10%
 EMS_GAIN_PREFERRED_S = 60.0  # an EMS improvement this large outweighs a small delay penalty...
@@ -54,6 +57,13 @@ def _shift(program: SignalProgram, give_to: int, take_from: int, seconds: float,
         phase_durations={give_to: durations[give_to] + seconds, take_from: durations[take_from] - seconds},
         reason=reason,
     )
+
+
+def _safe_shift(program: SignalProgram, give_to: int, take_from: int, seconds: float, reason: str) -> SignalPolicy | None:
+    """``_shift`` capped at the green ``take_from`` can spare above MIN_GREEN_S; None if that is too little."""
+    spare = next(p.duration for p in program.phases if p.index == take_from) - MIN_GREEN_S
+    shift = min(seconds, spare)
+    return _shift(program, give_to, take_from, shift, reason) if shift >= MIN_SHIFT_S else None
 
 
 def _cross_street(context: IncidentContext, node: str, approach: str) -> str | None:
@@ -129,15 +139,18 @@ class MockAgentProvider(AgentProvider):
         if downstream and (flow := _green_phase(downstream, approach)) is not None:
             cross = _cross_green_phase(downstream, approach)
             if cross is not None:
-                plans.append(
-                    CandidatePlan(
-                        id="flush-downstream",
-                        name=f"Extend {approach} green at {segment.destination}",
-                        description=f"Give the incident approach {SPLIT_SHIFT_S:.0f}s more green downstream to discharge vehicles past the scene.",
-                        policies=[_shift(downstream, flow, cross, SPLIT_SHIFT_S, "discharge traffic past the incident")],
-                    )
-                )
                 cross_green = next(p.duration for p in downstream.phases if p.index == cross)
+                flush = _safe_shift(downstream, flow, cross, SPLIT_SHIFT_S, "discharge traffic past the incident")
+                if flush is not None:
+                    plans.append(
+                        CandidatePlan(
+                            id="flush-downstream",
+                            name=f"Extend {approach} green at {segment.destination}",
+                            description=f"Give the incident approach {cross_green - flush.phase_durations[cross]:.0f}s more green "
+                            "downstream to discharge vehicles past the scene.",
+                            policies=[flush],
+                        )
+                    )
                 unsafe = _shift(
                     downstream, flow, cross, cross_green - AGGRESSIVE_CROSS_GREEN_S, "clear the incident queue as fast as possible"
                 )
@@ -154,23 +167,27 @@ class MockAgentProvider(AgentProvider):
 
         if upstream and (feed := _green_phase(upstream, approach)) is not None:
             cross = _cross_green_phase(upstream, approach)
-            if cross is not None:
+            feed_green = next(p.duration for p in upstream.phases if p.index == feed)
+            metered = None if cross is None else _safe_shift(upstream, cross, feed, SPLIT_SHIFT_S, "meter inflow toward the blocked link")
+            if metered is not None:
                 meter = CandidatePlan(
                     id="meter-upstream",
                     name=f"Meter {approach} inflow at {segment.source}",
-                    description=f"Move {SPLIT_SHIFT_S:.0f}s of {approach} green to the cross street upstream so the queue "
+                    description=f"Move {feed_green - metered.phase_durations[feed]:.0f}s of {approach} green to the cross street upstream so the queue "
                     "stays off the intersection and cross traffic keeps moving.",
-                    policies=[_shift(upstream, cross, feed, SPLIT_SHIFT_S, "meter inflow toward the blocked link")],
+                    policies=[metered],
                 )
                 plans.append(meter)
-                plans.append(
-                    CandidatePlan(
-                        id="relieve-cross-street",
-                        name=f"Favour cross street at {segment.source}",
-                        description=f"Stronger metering: shift {STRONG_SHIFT_S:.0f}s to the cross street at the upstream intersection.",
-                        policies=[_shift(upstream, cross, feed, STRONG_SHIFT_S, "protect cross-street flow from spillback")],
+                strong = _safe_shift(upstream, cross, feed, STRONG_SHIFT_S, "protect cross-street flow from spillback")
+                if strong is not None and strong.phase_durations != metered.phase_durations:
+                    plans.append(
+                        CandidatePlan(
+                            id="relieve-cross-street",
+                            name=f"Favour cross street at {segment.source}",
+                            description=f"Stronger metering: shift {feed_green - strong.phase_durations[feed]:.0f}s to the cross street at the upstream intersection.",
+                            policies=[strong],
+                        )
                     )
-                )
 
         if ems_present:
             # The unsafe demo plan travels with the EMS plans (Analyze Response always carries an EMS probe), so a
@@ -206,7 +223,9 @@ class MockAgentProvider(AgentProvider):
         plans.append(
             CandidatePlan(
                 id="divert-advisory",
-                name=f"Divert via {' / '.join(parallels)}" if parallels else f"Divert around {segment.name} {approach}",
+                name=f"Divert via {' / '.join(parallels)}"
+                if parallels and len(parallels) <= MAX_DIVERT_NAMES
+                else f"Divert around {segment.name} {approach}",
                 description=f"Advise {DIVERT_COMPLIANCE:.0%} of drivers headed through the blocked segment to divert "
                 "(DMS sign + navigation alert).",
                 reroutes=[

@@ -163,6 +163,7 @@ export interface IntersectionGeometry {
 export interface NetworkGeometry {
   id: string
   name: string
+  attribution: string | null
   center: [number, number]
   bounds: [[number, number], [number, number]]
   segments: SegmentGeometry[]

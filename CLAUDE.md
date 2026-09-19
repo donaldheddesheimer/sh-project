@@ -44,6 +44,8 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Backend on :8000 | `make backend` | `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` |
 | Frontend on :5173 | `make frontend` | `npm --prefix frontend run dev` |
 | Frontend check | `make build` | `npm --prefix frontend run lint` and `npm --prefix frontend run build` (both clean today; a >500 kB chunk warning is expected) |
+| Oakland, Pittsburgh instead of the grid | `make backend-oakland` (still :8000) | set `SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland` in `.env`, then run the backend as usual |
+| Rebuild Oakland net/demand/timing | `make network-oakland` | run `simulation/networks/pittsburgh_oakland/build_network.py` with the venv python |
 | Regenerate network/demand | `make network` | run `simulation/networks/grid3x3/build_network.py` then `simulation/scenarios/downtown_grid/build_demand.py` with the venv python |
 
 - `ModuleNotFoundError: mcp` means the venv predates a `requirements.txt` change. Re-run
@@ -72,6 +74,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Which plans the mock proposes, and how it recommends | [backend/app/agent/mock.py](backend/app/agent/mock.py) |
 | Data models | `backend/app/models/{domain,api,scenario}.py` |
 | Network, demand, incident defaults | `simulation/networks/grid3x3/`, `simulation/scenarios/downtown_grid/` (`scenario.json`) |
+| The Oakland city (OSM map, synthetic demand and timing) | `simulation/networks/pittsburgh_oakland/` (README, build), `simulation/scenarios/pittsburgh_oakland/` |
 | Frontend layout and actions | [frontend/src/App.tsx](frontend/src/App.tsx) |
 | WebSocket client, scenario state | [frontend/src/hooks/useCityStream.ts](frontend/src/hooks/useCityStream.ts) |
 | Response-plan UI and derived deltas | `frontend/src/components/plans/`, `frontend/src/lib/plans.ts` |
@@ -126,6 +129,11 @@ venv directly (this is what works in PowerShell or Git Bash):
   TraCI lookups in `sumo.py`, the known optimisation). `simulate_plans` blocks until every
   branch finishes, so MCP clients need a timeout of 120 s or more.
 - Snapshot files go to `<OS temp>/traffic-ops-snapshots` and are deleted when a run ends.
+- On Oakland the mock can propose fewer than 8 plans. A timing shift never takes a green below
+  12 s (`_safe_shift` in `agent/mock.py`); when the donor phase has less than 4 s to spare, that
+  plan is skipped rather than proposed and rejected. `aggressive-flush` is still proposed on purpose.
+- The backend assumes a signal's id is its junction id. netconvert names OSM-guessed signals
+  `GS_<junction>`, so the Oakland build drops the prefix. Non-signalized junctions have `tls_id=None`.
 
 ## Conventions
 

@@ -503,6 +503,17 @@ button {
   pointer-events: none;
   white-space: nowrap;
 }
+.map-attribution {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  background: rgba(28, 33, 39, 0.8);
+  color: var(--muted);
+  font: 10.5px var(--mono);
+  pointer-events: none;
+}
 .map-caption .sources {
   margin-left: 2px;
   padding-left: 10px;

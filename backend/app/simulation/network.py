@@ -7,6 +7,7 @@ geometry, the safety validator and (later) agent tools.
 
 from __future__ import annotations
 
+import html
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -30,8 +31,11 @@ EARTH_M_PER_DEG_LAT = 110_540.0
 EARTH_M_PER_DEG_LON_EQUATOR = 111_320.0
 
 
-def heading_direction(dx: float, dy: float) -> str:
-    """Compass travel direction for a displacement (x east, y north)."""
+def heading_direction(dx: float, dy: float, offset_deg: float = 0.0) -> str:
+    """Compass travel direction for a displacement (x east, y north), bearing rotated clockwise by ``offset_deg``."""
+    if offset_deg:
+        t = math.radians(offset_deg)
+        dx, dy = dx * math.cos(t) + dy * math.sin(t), dy * math.cos(t) - dx * math.sin(t)
     if abs(dx) >= abs(dy):
         return "EB" if dx >= 0 else "WB"
     return "NB" if dy >= 0 else "SB"
@@ -129,10 +133,10 @@ class RoadNetwork:
             (x0, y0), (x1, y1) = shape[-2], shape[-1]
             self.segments[edge.getID()] = SegmentInfo(
                 id=edge.getID(),
-                name=edge.getName() or edge.getID(),
+                name=html.unescape(edge.getName()) or edge.getID(),  # netconvert double-escapes OSM names
                 source=edge.getFromNode().getID(),
                 destination=edge.getToNode().getID(),
-                direction=heading_direction(x1 - x0, y1 - y0),
+                direction=heading_direction(x1 - x0, y1 - y0, self.scenario.heading_offset_deg),
                 lanes=edge.getLaneNumber(),
                 length=edge.getLength(),
                 speed_limit=edge.getSpeed(),
@@ -140,9 +144,11 @@ class RoadNetwork:
             )
 
         for node in self.net.getNodes():
-            if node.getType() == "dead_end" or len(node.getIncoming()) < 3:
+            signalized = node.getType() == "traffic_light"
+            # a signal where a one-way crosses a one-way has only two approaches; keep it
+            if not signalized and (node.getType() == "dead_end" or len(node.getIncoming()) < 3):
                 continue
-            tls_id = node.getID() if node.getType() == "traffic_light" else None
+            tls_id = node.getID() if signalized else None
             approaches: dict[str, ApproachInfo] = {}
             for edge in node.getIncoming():
                 if edge.getFunction() == "internal":
@@ -179,7 +185,7 @@ class RoadNetwork:
     def _intersection_name(self, node) -> str:
         north_south, east_west = set(), set()
         for edge in node.getIncoming():
-            name = edge.getName()
+            name = self.segments[edge.getID()].name if edge.getName() else ""
             if not name:
                 continue
             (north_south if self.segments[edge.getID()].direction in ("NB", "SB") else east_west).add(name)
@@ -296,6 +302,7 @@ class RoadNetwork:
         return NetworkGeometry(
             id=self.scenario.id,
             name=self.scenario.name,
+            attribution=self.scenario.attribution,
             center=center,
             bounds=(sw, ne),
             segments=segments,

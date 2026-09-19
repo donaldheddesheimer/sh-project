@@ -97,6 +97,19 @@ export const layers: LayerSpecification[] = [
     },
   },
   {
+    id: 'plan-reroute',
+    type: 'line',
+    source: 'roads',
+    filter: ['==', ['get', 'id'], ''],
+    layout: { 'line-cap': 'butt', 'line-join': 'round' },
+    paint: {
+      'line-color': '#3987e5',
+      'line-width': byZoom((px) => ['+', 5, ['*', lanes, px]]),
+      'line-opacity': 0.9,
+      'line-dasharray': [1.5, 1.5],
+    },
+  },
+  {
     id: 'traffic-hit',
     type: 'line',
     source: 'roads',
@@ -125,6 +138,19 @@ export const layers: LayerSpecification[] = [
         CONGESTION_COLOR.heavy,
         '#4b5968',
       ],
+    },
+  },
+  {
+    id: 'plan-halo',
+    type: 'circle',
+    source: 'intersections',
+    filter: ['==', ['get', 'id'], ''],
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 8, 16, 13, 18, 21],
+      'circle-color': 'rgba(0,0,0,0)',
+      'circle-stroke-width': 3,
+      'circle-stroke-color': '#3987e5',
+      'circle-stroke-opacity': 0.95,
     },
   },
   {

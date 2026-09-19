@@ -1,5 +1,7 @@
 import type { EmergencyVehicleState, Incident, RoadSegmentState } from '../api/types'
 import { clock, CONGESTION_LABEL, duration, mph } from '../lib/format'
+import { Icon } from './Icon'
+import { Section } from './Section'
 
 interface Props {
   incidents: Incident[]
@@ -29,42 +31,50 @@ export function IncidentPanel({ incidents, segments, responders, busy, onDispatc
 
   if (!incident) {
     return (
-      <section className="panel-section">
-        <h2 className="section-title">Active incident</h2>
-        <div className="all-clear">
-          <span className="all-clear-icon">✓</span>
+      <Section title="Active incident" icon="warning" meta="0 active">
+        <div className="object-card all-clear">
+          <span className="object-icon success">
+            <Icon name="check" />
+          </span>
           <div>
-            <div className="all-clear-title">No active incidents</div>
-            <div className="muted">Network operating normally. Camera analytics monitoring 9 intersections.</div>
+            <div className="object-title">No active incidents</div>
+            <div className="muted small">Network operating normally. Camera analytics monitoring 9 intersections.</div>
           </div>
         </div>
-      </section>
+      </Section>
     )
   }
 
   const segment = segments.find((s) => s.id === incident.location.segment_id)
   const responder = responders.find((r) => r.destination_segment === incident.location.segment_id && r.status !== 'completed')
   return (
-    <section className="panel-section">
-      <h2 className="section-title">
-        Active incident {incidents.length > 1 && <span className="count">{incidents.length}</span>}
-      </h2>
-      <div className={`incident-card severity-${incident.severity}`}>
-        <div className="incident-head">
-          <span className="badge badge-type">⚠ {incident.type.replace('_', ' ').toUpperCase()}</span>
-          <span className={`badge badge-${incident.severity}`}>{incident.severity.toUpperCase()}</span>
-          <span className="incident-id">{incident.id}</span>
+    <Section
+      title="Active incident"
+      icon="warning"
+      meta={<span className="tag tag-danger">{incidents.length} active</span>}
+    >
+      <div className={`object-card severity-${incident.severity}`}>
+        <div className="object-head">
+          <span className="object-icon danger">
+            <Icon name="warning" />
+          </span>
+          <div className="object-heading">
+            <div className="object-title">{incident.location.description}</div>
+            <div className="object-sub">
+              {incident.id} · {incident.type.replace('_', ' ').toUpperCase()}
+            </div>
+          </div>
+          <span className={`tag severity-tag severity-${incident.severity}`}>{incident.severity}</span>
         </div>
-        <div className="incident-location">{incident.location.description}</div>
-        <p className="incident-desc">{incident.description}</p>
+        <p className="object-desc">{incident.description}</p>
 
         {incident.total_lanes != null && <LaneDiagram total={incident.total_lanes} blocked={incident.affected_lanes} />}
 
-        <dl className="facts">
+        <dl className="props">
           <dt>Detected</dt>
-          <dd>{incident.sim_time != null ? clock(incident.sim_time) : '—'}</dd>
+          <dd className="mono">{incident.sim_time != null ? clock(incident.sim_time) : '—'}</dd>
           <dt>Cameras</dt>
-          <dd>{incident.sensor_ids.join(', ') || '—'}</dd>
+          <dd className="mono">{incident.sensor_ids.join(', ') || '—'}</dd>
           {segment && (
             <>
               <dt>Roadway</dt>
@@ -85,15 +95,15 @@ export function IncidentPanel({ incidents, segments, responders, busy, onDispatc
           <dd>Smart City · {incident.source}</dd>
         </dl>
 
-        <div className="incident-actions">
-          <button className="btn" disabled={!!busy || !!responder} onClick={onDispatch}>
-            ✚ Dispatch EMS
+        <div className="object-actions">
+          <button className="btn btn-sm" disabled={!!busy || !!responder} onClick={onDispatch}>
+            <Icon name="medical" size={12} /> Dispatch EMS
           </button>
-          <button className="btn" disabled={!!busy} onClick={() => onClear(incident.id)}>
-            Clear scene
+          <button className="btn btn-sm" disabled={!!busy} onClick={() => onClear(incident.id)}>
+            <Icon name="check" size={12} /> Clear scene
           </button>
         </div>
       </div>
-    </section>
+    </Section>
   )
 }

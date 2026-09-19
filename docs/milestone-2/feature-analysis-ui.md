@@ -177,6 +177,67 @@ filled in, with screenshots saved under your scratchpad and their paths listed.
 
 ## Result
 
-_(Fill in when done: components added, how fixture mode works, the palette validator
-output, screenshot paths, deviations from this handoff, contract change requests, and
-anything the integrator must know.)_
+Implemented the complete Analyze Response operator flow on `feature/analysis-ui`.
+
+### Components and behavior
+
+- Reworked the console into a dense Blueprint/Palantir-style dark operations theme with
+  shared `Icon` and collapsible `Section` components.
+- Added the live Analyze Response control and progress states, scenario HTTP methods,
+  WebSocket scenario state, learned phase labels, and reset-safe scenario retention.
+- Added `ResponsePlans`, recommendation and run summaries, candidate cards, compact plan
+  chips, baseline-relative KPI deltas, safety violations, failure details, and run notes.
+- Added the Live trends / Scenario comparison dock. The comparison view has four aligned
+  KPI dot plots with baseline reference lines and a crosshair/tooltip horizon chart for
+  baseline, the recommendation, and the focused plan.
+- Added plan hover/selection previews to MapLibre: retimed-intersection halos, dashed
+  avoided segments, corridor badges, and an honest assumed-route label when the backend
+  supplies an empty corridor intersection list.
+- Candidate colors are assigned once by backend order and never by rank; baseline stays
+  neutral. Status colors remain separate from candidate identity.
+
+### Fixture mode
+
+- `?fixture=scenario` dynamically imports `src/dev/replay.ts` and the copied JSON fixture,
+  then replays queued → proposing → simulating (four workers; pending/running/terminal
+  candidates) → recommending → completed. The replay module is emitted as its own Vite
+  chunk and is not in the main module path.
+- `?fixture=scenario-failed` changes one branch to failed and ends the run in failed state.
+- Both variants retain the live map and network stream and display a persistent
+  `FIXTURE DATA` badge. Analyze still requires a connected running/paused simulation and
+  an active incident.
+
+### Palette validation
+
+PASS against the requested dark surface `#0e1319`; all seven categorical marks exceed
+the 3:1 graphical-object contrast threshold:
+
+```
+#3987e5 5.13:1
+#d95926 4.80:1
+#199e70 5.48:1
+#c98500 6.07:1
+#d55181 4.73:1
+#008300 3.77:1
+#9085e9 5.97:1
+```
+
+### Verification
+
+- `npm run lint` — clean, no warnings.
+- `npm run build` — clean TypeScript and production Vite build. The existing MapLibre/main
+  bundle size advisory remains; no dependency was added.
+- Browser-tested with the stock backend on `:8003` and Vite on `:5174`: collision →
+  `INC-0001` → progressive analysis → recommendation → rejected card → KPI comparison →
+  corridor/retiming and diversion overlays.
+- Verified the failed-run and failed-candidate fixture. Without a fixture query, the stock
+  backend's missing scenario endpoint produces the existing `Not Found` toast and no
+  console error or crash.
+- Screenshots: `/tmp/feature-analysis-ui-1440.png`,
+  `/tmp/feature-analysis-ui-1280.png`, and
+  `/tmp/feature-analysis-ui-failed-1280.png`.
+
+### Integration notes
+
+- No frozen contract, backend, simulation, dependency, or package-lock changes.
+- No contract change requests and no functional deviations from the handoff.

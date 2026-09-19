@@ -4,6 +4,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useRef } from 'react'
 import type { CityState, Incident, NetworkGeometry } from '../../api/types'
 import { duration } from '../../lib/format'
+import type { PlanOverlay } from '../../lib/plans'
 import { baseStyle, layers } from './style'
 import { VEHICLE_ICON_PIXEL_RATIO, vehicleIconImages } from './vehicleIcons'
 
@@ -17,6 +18,7 @@ interface Props {
   network: NetworkGeometry
   state: CityState | null
   selection: Selection | null
+  planOverlay: PlanOverlay | null
   onSelect: (selection: Selection | null) => void
 }
 
@@ -77,12 +79,13 @@ function markerElement(className: string, html: string): HTMLDivElement {
   return el
 }
 
-export function CityMap({ network, state, selection, onSelect }: Props) {
+export function CityMap({ network, state, selection, planOverlay, onSelect }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const ready = useRef(false)
   const incidentMarkers = useRef(new Map<string, Marker>())
   const emsMarkers = useRef(new Map<string, Marker>())
+  const corridorMarkers = useRef(new Map<string, Marker>())
   const onSelectRef = useRef(onSelect)
   useEffect(() => {
     onSelectRef.current = onSelect
@@ -102,6 +105,7 @@ export function CityMap({ network, state, selection, onSelect }: Props) {
     mapRef.current = map
     const incidents = incidentMarkers.current
     const responders = emsMarkers.current
+    const corridors = corridorMarkers.current
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
     map.touchZoomRotate.disableRotation()
 
@@ -167,6 +171,7 @@ export function CityMap({ network, state, selection, onSelect }: Props) {
       ready.current = false
       incidents.clear()
       responders.clear()
+      corridors.clear()
       map.remove()
       mapRef.current = null
     }
@@ -236,6 +241,43 @@ export function CityMap({ network, state, selection, onSelect }: Props) {
     if (ready.current) apply()
     else map.once('load', apply)
   }, [selection, network])
+
+  // ---- analysis-plan preview ---------------------------------------------------------------
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const corridors = corridorMarkers.current
+    const clearBadges = () => {
+      for (const marker of corridors.values()) marker.remove()
+      corridors.clear()
+    }
+    const apply = () => {
+      const retimed = planOverlay?.retimed ?? []
+      const avoid = planOverlay?.avoid ?? []
+      map.setFilter('plan-halo', ['in', ['get', 'id'], ['literal', retimed]])
+      map.setFilter('plan-reroute', ['in', ['get', 'id'], ['literal', avoid]])
+      if (planOverlay) {
+        map.setPaintProperty('plan-halo', 'circle-stroke-color', planOverlay.color)
+        map.setPaintProperty('plan-reroute', 'line-color', planOverlay.color)
+      }
+      clearBadges()
+      if (!planOverlay?.corridor) return
+      for (const id of planOverlay.corridor.ids) {
+        const intersection = network.intersections.find((item) => item.id === id)
+        if (!intersection) continue
+        const el = markerElement(`corridor-badge${planOverlay.corridor.assumed ? ' assumed' : ''}`, '')
+        el.style.setProperty('--plan-color', planOverlay.color)
+        el.textContent = `⚡ ${id}`
+        corridors.set(id, new Marker({ element: el, anchor: 'bottom', offset: [0, -12] }).setLngLat([intersection.lon, intersection.lat]).addTo(map))
+      }
+    }
+    if (ready.current) apply()
+    else map.once('load', apply)
+    return () => {
+      map.off('load', apply)
+      clearBadges()
+    }
+  }, [planOverlay, network])
 
   return <div ref={container} className="map-canvas" />
 }

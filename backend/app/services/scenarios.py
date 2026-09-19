@@ -184,6 +184,8 @@ class ScenarioService:
         if self._open is not None:
             raise Conflict(f"{self._open.run.id} is still running")
         incident = await self._resolve_incident(incident_id)
+        if self._open is not None:
+            raise Conflict(f"{self._open.run.id} is still running")
         run = ScenarioRun(
             id=f"SCN-{next(self._ids):04d}",
             incident_id=incident.id,

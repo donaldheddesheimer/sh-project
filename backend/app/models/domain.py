@@ -334,6 +334,14 @@ class EmergencyDispatch(BaseModel):
     status: EmergencyStatus = EmergencyStatus.EN_ROUTE
 
 
+class ProgramLogic(BaseModel):
+    """A signal program installed at runtime (e.g. a timing policy applied to the live city)."""
+
+    tls_id: str
+    program_id: str
+    phases: list[tuple[float, str]] = Field(description="(duration s, SUMO state string) per phase")
+
+
 class SimulationSnapshot(BaseModel):
     """A saved simulation state that candidate runs can branch from."""
 
@@ -343,6 +351,11 @@ class SimulationSnapshot(BaseModel):
     created_at: datetime
     disruptions: list[Disruption] = Field(default_factory=list)
     dispatches: list[EmergencyDispatch] = Field(default_factory=list)
+    custom_programs: list[ProgramLogic] = Field(
+        default_factory=list,
+        description="Programs installed at runtime; SUMO refuses to load a state naming a program it does not know, "
+        "so a branch re-creates these before loading",
+    )
 
 
 class NetworkState(BaseModel):

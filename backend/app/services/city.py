@@ -33,21 +33,25 @@ from app.models.domain import (
     IncidentType,
     NetworkGeometry,
     NetworkState,
+    Severity,
     SignalProgram,
 )
+from app.models.episode import Episode
 from app.models.scenario import ScenarioRun
 from app.services.events import EventLog
 from app.simulation.branching import probe_for_incident
 from app.simulation.interface import TrafficSimulation
 from app.simulation.network import RoadNetwork
 from app.simulation.runner import LiveFrame, LiveSimulationRunner
-from app.simulation.scenario import Scenario
+from app.simulation.scenario import DemoCrash, Scenario
 from app.smart_city.base import SmartCityEvent, SmartCityEventKind, SmartCityProvider
 from app.websocket.hub import ConnectionHub
 
 log = logging.getLogger(__name__)
 
 FrameObserver = Callable[[NetworkState], Awaitable[None]]
+IncidentListener = Callable[[SmartCityEvent], Awaitable[None]]
+ResetListener = Callable[[], Awaitable[None]]
 T = TypeVar("T")
 
 TREND_SAMPLE_S = 5.0  # simulated seconds between trend samples
@@ -106,6 +110,13 @@ class CityService:
         self._ems_status: dict[str, EmergencyStatus] = {}
         self._trend: deque[MetricSample] = deque(maxlen=TREND_SAMPLES)
         self.latest_scenario: ScenarioRun | None = None
+        self.latest_episode: Episode | None = None
+        # Hooks for the learning services: called after an incident is logged, and before the simulation reboots.
+        self.incident_listeners: list[IncidentListener] = []
+        self.reset_listeners: list[ResetListener] = []
+        # Held for a whole reset (listeners and reboot), and by the implementor for a whole apply, so a plan is
+        # never installed on a simulation that is about to be, or has just been, replaced.
+        self.live_change_lock = asyncio.Lock()
 
     # ------------------------------------------------------------ lifecycle
 
@@ -151,10 +162,11 @@ class CityService:
         state = self._state.model_dump_json() if self._state else "null"
         trend = ",".join(s.model_dump_json() for s in self._trend)
         scenario = self.latest_scenario.model_dump_json() if self.latest_scenario else "null"
+        episode = self.latest_episode.model_dump_json() if self.latest_episode else "null"
         return envelope(
             "hello",
             f'{{"status":{self.status_json()},"state":{state},"events":[{events}],"history":[{trend}],'
-            f'"scenario":{scenario}}}',
+            f'"scenario":{scenario},"episode":{episode}}}',
         )
 
     async def incidents(self, include_cleared: bool = False) -> list[Incident]:
@@ -173,6 +185,27 @@ class CityService:
         self.latest_scenario = run
         self.hub.broadcast(envelope("scenario", run.model_dump_json()))
 
+    def publish_episode(self, episode: Episode) -> None:
+        # an older episode still reviewing must not replace a newer one in the hello message
+        if self.latest_episode is None or episode.created_at >= self.latest_episode.created_at:
+            self.latest_episode = episode
+        self.hub.broadcast(envelope("episode", episode.model_dump_json()))
+
+    def add_frame_observer(self, observer: FrameObserver) -> None:
+        self._observers.append(observer)
+
+    def set_scripted_events(self, events: list[tuple[float, Callable[[TrafficSimulation], object]]]) -> None:
+        """Commands the live runner fires at their simulation time on every boot, inside the warm-up (a scripted
+        crash that has already happened) or while running. A new script takes effect at the next reset."""
+        self._runner.set_scripted_events(events)
+
+    def crash_command(self, crash: DemoCrash) -> Callable[[TrafficSimulation], Disruption]:
+        """A scripted crash as a command for the live simulation thread."""
+        segment_id, lanes, position, severity = self._collision_args(
+            crash.segment_id, crash.lanes, crash.position_fraction, crash.severity
+        )
+        return lambda sim: sim.inject_collision(segment_id, lanes, position, severity)
+
     # ------------------------------------------------------------- commands
 
     async def set_running(self, running: bool) -> None:
@@ -183,21 +216,39 @@ class CityService:
         await self._runner.set_speed(multiplier)
 
     async def reset(self) -> None:
-        self.events.add(EventLevel.INFO, "Resetting simulation to a clean network", self._sim_time())
-        self._ems_status.clear()
-        await self._runner.reset()
+        async with self.live_change_lock:  # wait for an apply in flight, and keep the next one out until we reboot
+            self.events.add(EventLevel.INFO, "Resetting simulation to a clean network", self._sim_time())
+            self._ems_status.clear()
+            for listener in self.reset_listeners:
+                try:
+                    await listener()
+                except Exception:  # noqa: BLE001 - a broken listener must not block the reset
+                    log.exception("reset listener failed")
+            await self._runner.reset()
+
+    def _collision_args(
+        self, segment_id: str | None, lanes: list[int] | None, position_fraction: float | None, severity: Severity | None
+    ) -> tuple[str, list[int], float, Severity]:
+        """Fill a collision's unset fields from the scenario defaults (operator injection and scripted crashes)."""
+        defaults = self.scenario.default_collision
+        segment_id = segment_id or defaults.edge
+        segment = self.network.segments.get(segment_id)
+        if segment is None:
+            raise KeyError(segment_id)
+        return (
+            segment_id,
+            lanes if lanes is not None else defaults.lanes,
+            (position_fraction or defaults.position_fraction) * segment.length,
+            severity or defaults.severity,
+        )
 
     async def inject_incident(self, request: InjectIncidentRequest) -> Disruption:
         if request.type is not IncidentType.COLLISION:
             raise ValueError(f"injecting '{request.type}' is not supported yet; use 'collision'")
-        defaults = self.scenario.default_collision
-        segment_id = request.segment_id or defaults.edge
-        segment = self.network.segments.get(segment_id)
-        if segment is None:
-            raise KeyError(segment_id)
-        lanes = request.lanes if request.lanes is not None else defaults.lanes
-        severity = request.severity or defaults.severity
-        position = (request.position_fraction or defaults.position_fraction) * segment.length
+        segment_id, lanes, position, severity = self._collision_args(
+            request.segment_id, request.lanes, request.position_fraction, request.severity
+        )
+        segment = self.network.segments[segment_id]
         disruption = await self._runner.call(lambda sim: sim.inject_collision(segment_id, lanes, position, severity))
         self.events.add(
             EventLevel.WARNING,
@@ -340,6 +391,11 @@ class CityService:
             )
         elif event.kind is SmartCityEventKind.INCIDENT_CLEARED:
             self.events.add(EventLevel.INFO, f"{incident.id} closed", self._sim_time(), incident.id)
+        for listener in self.incident_listeners:
+            try:
+                await listener(event)
+            except Exception:  # noqa: BLE001 - keep the frame pipeline going
+                log.exception("incident listener failed")
 
     def _broadcast_event(self, event: OpsEvent) -> None:
         self.hub.broadcast(envelope("event", event.model_dump_json()))

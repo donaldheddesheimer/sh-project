@@ -6,9 +6,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 
+from app.learning.episode import EpisodeService
+from app.learning.implementor import Implementor
+from app.learning.store import ExperienceStore
 from app.models.api import (
     CityState,
     ControlResponse,
+    DemoStartRequest,
     DispatchRequest,
     DispatchResponse,
     InjectIncidentRequest,
@@ -17,6 +21,7 @@ from app.models.api import (
     SpeedRequest,
 )
 from app.models.domain import Incident, NetworkGeometry, SignalProgram
+from app.models.episode import DemoInfo, Episode, Implementation
 from app.models.scenario import ScenarioRun, ScenarioRunRequest
 from app.services.city import CityService, Conflict, NotReady
 from app.services.scenarios import ScenarioService
@@ -34,8 +39,23 @@ def get_scenarios(request: Request) -> ScenarioService:
     return request.app.state.scenarios
 
 
+def get_implementor(request: Request) -> Implementor:
+    return request.app.state.implementor
+
+
+def get_episodes(request: Request) -> EpisodeService:
+    return request.app.state.episodes
+
+
+def get_memory(request: Request) -> ExperienceStore:
+    return request.app.state.memory
+
+
 City = Annotated[CityService, Depends(get_city)]
 Scenarios = Annotated[ScenarioService, Depends(get_scenarios)]
+Implementors = Annotated[Implementor, Depends(get_implementor)]
+Episodes = Annotated[EpisodeService, Depends(get_episodes)]
+Memory = Annotated[ExperienceStore, Depends(get_memory)]
 
 
 def _control(city: CityService) -> ControlResponse:
@@ -165,6 +185,65 @@ async def scenario(scenarios: Scenarios, scenario_id: str) -> ScenarioRun:
         return scenarios.get(scenario_id)
     except KeyError as exc:
         raise HTTPException(404, f"unknown scenario run {scenario_id}") from exc
+
+
+@router.post("/scenarios/{scenario_id}/implement", response_model=Implementation)
+async def implement(implementor: Implementors, scenario_id: str) -> Implementation:
+    """Operator path: apply the run's recommendation to the live simulation (same code as the agent's)."""
+    try:
+        return await implementor.implement(scenario_id, by="operator")
+    except KeyError as exc:
+        raise HTTPException(404, f"unknown scenario run {scenario_id}") from exc
+    except Conflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:  # the validator rejects it against the live signal programs
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/demo", response_model=DemoInfo)
+async def demo(episodes: Episodes) -> DemoInfo:
+    return episodes.info()
+
+
+@router.post("/demo/start", response_model=Episode, status_code=202)
+async def demo_start(episodes: Episodes, request: DemoStartRequest) -> Episode:
+    """Reset the city and arm a demo script; detected crashes then start autonomous episodes."""
+    try:
+        return await episodes.start_demo(request.script)
+    except KeyError as exc:
+        raise HTTPException(404, f"unknown demo script {request.script}") from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/demo/stop", response_model=DemoInfo)
+async def demo_stop(episodes: Episodes) -> DemoInfo:
+    return await episodes.stop_demo()
+
+
+@router.get("/episodes", response_model=list[Episode])
+async def list_episodes(episodes: Episodes) -> list[Episode]:
+    return episodes.list()
+
+
+@router.get("/episodes/{episode_id}", response_model=Episode)
+async def episode(episodes: Episodes, episode_id: str) -> Episode:
+    try:
+        return episodes.get(episode_id)
+    except KeyError as exc:
+        raise HTTPException(404, f"unknown episode {episode_id}") from exc
+
+
+@router.get("/memory")
+async def memory(store: Memory) -> dict:
+    """What the agent remembers: episode count, latest ids and the playbook."""
+    return {**store.stats(), "playbook": store.playbook()}
+
+
+@router.delete("/memory")
+async def clear_memory(store: Memory) -> dict:
+    """Forget every lesson, for a cold run."""
+    return {"removed": store.clear()}
 
 
 @router.get("/cameras", response_model=list[Camera])

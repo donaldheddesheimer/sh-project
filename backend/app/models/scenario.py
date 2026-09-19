@@ -14,6 +14,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from app.models.domain import Recommendation, SimulationCandidate
+from app.models.episode import Implementation
 
 
 class ScenarioStatus(StrEnum):
@@ -48,3 +49,8 @@ class ScenarioRun(BaseModel):
     )
     recommendation: Recommendation | None = None
     error: str | None = None
+    rounds: int = Field(0, description="Simulation rounds run (the mock runs one; an MCP agent may run several)")
+    recalled: list[str] = Field(default_factory=list, description="Remembered episodes given to the agent as lessons")
+    implementation: Implementation | None = Field(
+        None, description="Set once the recommended plan was applied to the live simulation"
+    )

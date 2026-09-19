@@ -47,6 +47,15 @@ class MockSmartCityProvider(SmartCityProvider):
     async def observe(self, state: NetworkState) -> None:
         """Feed one simulation frame (wired up by the provider factory, not by consumers)."""
         active = {d.id: d for d in state.disruptions}
+        # Clear first: after a reset the first frame drops the old crashes and may already carry a new one, and
+        # whoever reacts to the detection must not see the old incidents as still active.
+        for disruption_id, incident_id in list(self._by_disruption.items()):
+            incident = self._incidents[incident_id]
+            if disruption_id not in active and incident.status is IncidentStatus.ACTIVE:
+                incident.status = IncidentStatus.CLEARED
+                incident.cleared_at = datetime.now(UTC)
+                await self._publish(SmartCityEventKind.INCIDENT_CLEARED, incident)
+
         for disruption in active.values():
             if disruption.id in self._by_disruption or state.sim_time - disruption.started_at < self._delay:
                 continue
@@ -54,13 +63,6 @@ class MockSmartCityProvider(SmartCityProvider):
             self._incidents[incident.id] = incident
             self._by_disruption[disruption.id] = incident.id
             await self._publish(SmartCityEventKind.INCIDENT_DETECTED, incident)
-
-        for disruption_id, incident_id in list(self._by_disruption.items()):
-            incident = self._incidents[incident_id]
-            if disruption_id not in active and incident.status is IncidentStatus.ACTIVE:
-                incident.status = IncidentStatus.CLEARED
-                incident.cleared_at = datetime.now(UTC)
-                await self._publish(SmartCityEventKind.INCIDENT_CLEARED, incident)
 
     async def list_incidents(self, include_cleared: bool = False) -> list[Incident]:
         return [i for i in self._incidents.values() if include_cleared or i.status is IncidentStatus.ACTIVE]

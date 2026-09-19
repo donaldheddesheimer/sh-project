@@ -3,11 +3,12 @@
 Traffic operations center: a live SUMO digital twin (3×3 downtown grid) behind a FastAPI
 backend and a React/MapLibre console. When an incident hits, candidate responses (signal
 timing, EMS green corridor, diversion) are **simulated in parallel SUMO branches before
-anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged; milestone 3
-(an autonomous, self-learning episode driven by a Nemotron agent, plus NVIDIA input) is next.
-Read [README.md](README.md) for the demo and for the plan of the next stage (its "Next stage"
-section), and [docs/architecture.md](docs/architecture.md) for the design and the pipeline
-stage by stage.
+anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged. Milestone 3's
+first part, the autonomous, self-learning episode (agent responds, applies its plan to the live
+twin, measures it, stores a lesson), is built but not yet run end to end; NVIDIA input is next.
+Read [README.md](README.md) for the demos and the episode (its "The autonomous, self-learning
+episode" section), and [docs/architecture.md](docs/architecture.md) for the design and both
+pipelines stage by stage.
 
 Start every session with `git fetch && git status -sb`. `main` moves quickly and local docs
 can predate a merged cleanup.
@@ -54,6 +55,8 @@ venv directly (this is what works in PowerShell or Git Bash):
 - Try the pipeline: `POST /api/incidents/inject` with `{}`, wait about 2 simulated minutes
   (30 s at the default 4×), then `POST /api/scenarios/run` with `{}`. The run takes ~25 s.
   Use `curl.exe` in PowerShell (`curl` is an alias for `Invoke-WebRequest`).
+- Try an episode: `POST /api/demo/start` with `{"script": "crash-ahead"}` (or the console's
+  Autonomous agent panel). `DELETE /api/memory` first for a cold run.
 - To test the UI against a non-default backend: `BACKEND_URL=http://127.0.0.1:8001` for Vite.
   `?fixture=scenario` replays a recorded run but still needs a running backend and an active incident.
 - Config is env vars or `.env` (repo root or `backend/`); every setting is in
@@ -71,33 +74,42 @@ venv directly (this is what works in PowerShell or Git Bash):
 | TraCI behavior: collisions, EMS, snapshots, rubbernecking | [backend/app/simulation/sumo.py](backend/app/simulation/sumo.py) (contract: `interface.py`) |
 | EMS pre-emption / diversion | `simulation/preemption.py`, `simulation/reroute.py` |
 | Safety rules (timing limits, corridor bounds) | [backend/app/safety/validator.py](backend/app/safety/validator.py) |
-| Which plans the mock proposes, and how it recommends | [backend/app/agent/mock.py](backend/app/agent/mock.py) |
-| Data models | `backend/app/models/{domain,api,scenario}.py` |
+| Which plans the mock proposes, how lessons prune them, and how it recommends | [backend/app/agent/mock.py](backend/app/agent/mock.py) |
+| Episode state machine, two-crash rule, demo scripts | [backend/app/learning/episode.py](backend/app/learning/episode.py) |
+| Applying a recommendation to the live city (the only live apply) | [backend/app/learning/implementor.py](backend/app/learning/implementor.py) |
+| Live monitor, scorecard thresholds and outcome rules | `backend/app/learning/monitor.py`, `scorecard.py` |
+| Reviewer (lesson text), memory files, recall similarity | `backend/app/learning/reviewer.py`, `store.py` |
+| Analysts: mock pipeline, Nemotron MCP loop over NIM | `backend/app/learning/analysts.py`, `backend/app/agent/nemotron.py` (NIM client) |
+| Data models | `backend/app/models/{domain,api,scenario,episode}.py` |
 | Network, demand, incident defaults | `simulation/networks/grid3x3/`, `simulation/scenarios/downtown_grid/` (`scenario.json`) |
 | The Oakland city (OSM map, synthetic demand and timing) | `simulation/networks/pittsburgh_oakland/` (README, build), `simulation/scenarios/pittsburgh_oakland/` |
 | Frontend layout and actions | [frontend/src/App.tsx](frontend/src/App.tsx) |
 | WebSocket client, scenario state | [frontend/src/hooks/useCityStream.ts](frontend/src/hooks/useCityStream.ts) |
 | Response-plan UI and derived deltas | `frontend/src/components/plans/`, `frontend/src/lib/plans.ts` |
+| Episode panel (scripts, step strip, lesson) | [frontend/src/components/EpisodePanel.tsx](frontend/src/components/EpisodePanel.tsx) |
 | Theme | one file, [frontend/src/styles.css](frontend/src/styles.css), driven by CSS variables |
 
 ## Rules the design depends on
 
 - **Providers are interfaces.** `CityService` sees `SmartCityProvider` and `AgentProvider`
-  only; `providers.py` picks mock vs NVIDIA/Nemotron. The NVIDIA/Nemotron classes are stubs
-  that raise `NotImplementedError`. `SMART_CITY_PROVIDER=nvidia` therefore fails at startup;
-  `AGENT_PROVIDER=nemotron` starts, but the REST Analyze Response then fails when it calls
-  the stub.
+  only; `providers.py` picks mock vs NVIDIA/Nemotron. `NvidiaSmartCityProvider` and the REST
+  pipeline's `NemotronAgentProvider` are stubs that raise `NotImplementedError`:
+  `SMART_CITY_PROVIDER=nvidia` fails at startup, and with `AGENT_PROVIDER=nemotron` the REST
+  Analyze Response fails. Nemotron runs only as an episode's analyst (`EPISODE_ANALYST`).
 - **One thread owns the live TraCI connection.** TraCI is blocking and not thread-safe.
-  Touch the live simulation only through `CityService.run_on_live(fn)`.
+  Touch the live simulation only through `CityService.run_on_live(fn)`; scripted crashes are
+  fired by the runner thread itself (`set_scripted_events`).
 - **Every candidate runs in a brand-new SUMO process** restored from one snapshot. That is
   the only way SUMO stays bit-reproducible; reloading into a used process diverges. Never
   reuse a branch process.
-- **Agents never touch live signals.** Plans are data (`SignalPolicy`, `EmergencyCorridor`,
-  `RerouteAction`); the validator checks them, and only branches execute them. Pre-emption
-  commands also pass `check_transition` at runtime. Keep new agent-facing tools read-only
-  or branch-only. The one planned exception is a gated implementor that applies an agent's
-  recommended, already-validated plan to the live twin (README, "Next stage"); until it
-  exists this rule holds unchanged.
+- **Agents never set signal states; one gated implementor applies recommendations.** Plans
+  are data (`SignalPolicy`, `EmergencyCorridor`, `RerouteAction`); the validator checks them
+  and branches simulate them. Only `learning/implementor.py` changes the live signals, and
+  only with a completed run's recommended candidate, re-validated against the live programs
+  and installed with the same `apply_plan` a branch runs. `AGENT_MAY_IMPLEMENT` gates the agent
+  path; the operator path is `POST /api/scenarios/{id}/implement`. Pre-emption commands also
+  pass `check_transition` at runtime. Keep every other agent-facing tool read-only or
+  branch-only.
 - **An approach is its incoming segment.** `IntersectionInfo.approaches_by_segment`,
   `SignalPhase.served_segments`, pre-emption targets and the live `approach_signals` /
   `queue_lengths` are keyed by segment id. NB/SB/EB/WB is a display label and repeats at
@@ -106,17 +118,25 @@ venv directly (this is what works in PowerShell or Git Bash):
 - **`ScenarioRun` is mutated only on the event loop.** Workers return their own candidate
   object; publish changes with `publish_scenario`.
 - One analysis at a time (409 otherwise), and it needs an active, map-matched incident.
-  Snapshots capture base signal programs only.
+  Snapshots carry programs installed at runtime (`custom_programs`, re-created before
+  `loadState`); corridors, diversions and pending offsets are Python-side, so branches replay
+  the standing responses.
+- **Only the episode service starts an agent**, and only while a demo script is armed. Its
+  hooks run inside the frame pipeline: change state synchronously, spawn tasks for slow work.
 
 ## Keep in sync by hand
 
-- `backend/app/models/*.py` ↔ [frontend/src/api/types.ts](frontend/src/api/types.ts).
-  There is no codegen.
+- `backend/app/models/*.py` (including `episode.py`) ↔
+  [frontend/src/api/types.ts](frontend/src/api/types.ts). There is no codegen.
 - `ScenarioStatus` ↔ the `STAGE` map in `useCityStream.ts`.
-- `TREND_SAMPLE_S` in `services/city.py` ↔ `SAMPLE_EVERY_S` in `useCityStream.ts`.
+- `EpisodeStatus` ↔ `FLOW` / `STATUS_TAG` in `EpisodePanel.tsx`; `WORKING_STATUSES` ↔
+  `WORKING` in `lib/plans.ts`.
+- `TREND_SAMPLE_S` in `services/city.py` ↔ `SAMPLE_EVERY_S` in `useCityStream.ts` ↔
+  `SAMPLE_S` in `learning/monitor.py`.
 - A new setting goes in `config.py` **and** `.env.example`.
 - The mock proposes exactly 8 plans, which equals the default `SCENARIO_MAX_CANDIDATES`. A
-  ninth plan silently pushes `divert-advisory` off the end.
+  ninth plan silently pushes `divert-advisory` off the end. (A warm run with a close lesson
+  proposes 4 on purpose.)
 - The recorded run lives in `frontend/src/dev/scenario-run.json`. The copy under
   `docs/milestone-2/fixtures/` is a frozen duplicate; edit the frontend one.
 
@@ -134,6 +154,14 @@ venv directly (this is what works in PowerShell or Git Bash):
   TraCI lookups in `sumo.py`, the known optimisation). `simulate_plans` blocks until every
   branch finishes, so MCP clients need a timeout of 120 s or more.
 - Snapshot files go to `<OS temp>/traffic-ops-snapshots` and are deleted when a run ends.
+- A warm mock run simulates fewer plans than a cold one: `_apply_lessons` in `agent/mock.py`
+  prunes the set when a remembered episode is a close match.
+- Many lessons come out `inconclusive`: a gain below the materiality thresholds in
+  `learning/scorecard.py` (5% delay, 5 vehicles, 30 s EMS) counts as noise, and timing plans
+  move delay by about 1%.
+- A reset or **Clear scene** during an episode aborts it, and a Reset also fails any open
+  analysis ("the simulation was reset"): its snapshot describes a city that is gone.
+- Applied plans stay on the live signals until a reset; nothing reverts them.
 - On Oakland the mock can propose fewer than 8 plans. A timing shift never takes a green below
   12 s (`_safe_shift` in `agent/mock.py`); when the donor phase has less than 4 s to spare, that
   plan is skipped rather than proposed and rejected. `aggressive-flush` is still proposed on purpose.
@@ -149,16 +177,17 @@ venv directly (this is what works in PowerShell or Git Bash):
   candidate order, never rank; the baseline stays neutral.
 - **Tests.** Never add tests and never run them (Hard rules). The team chose demo over
   coverage (recorded in `docs/milestone-2/MASTER.md`). Verify by reading the code and report
-  what was not run. Known gaps: pre-emption, reroute, `ScenarioService` and the MCP tools
-  have no tests. The existing suite is in `backend/tests/`; the `make_sim` fixture in
-  `tests/conftest.py` starts real SUMO processes.
-- **README.** It is the source of truth for the next stage; keep it consistent (Hard rules).
+  what was not run. Known gaps: pre-emption, reroute, `ScenarioService`, the MCP tools and
+  the whole `learning/` package have no tests. The existing suite is in `backend/tests/`; the
+  `make_sim` fixture in `tests/conftest.py` starts real SUMO processes.
+- **README.** It is the source of truth for the episode and the roadmap; keep it consistent
+  (Hard rules).
 - **Git.** Work happens on feature branches merged by PR; don't push to `main`.
 
 ## Docs map
 
-- [docs/architecture.md](docs/architecture.md): current design, the 8-stage pipeline table, the safety model.
-- [docs/specs/scenario-engine-mcp.md](docs/specs/scenario-engine-mcp.md): MCP tool contract and a client snippet for the Nemotron loop.
+- [docs/architecture.md](docs/architecture.md): current design, the Analyze Response and episode stage tables, the safety model.
+- [docs/specs/scenario-engine-mcp.md](docs/specs/scenario-engine-mcp.md): MCP tool contract and a client snippet.
 - [simulation/controllers/README.md](simulation/controllers/README.md): how pre-emption stays safe.
 - `docs/milestone-2/`: **historical** planning record. Its file-ownership and "frozen"
   rules no longer apply. `docs/hackathon-reference-projects.md` is unrelated inspiration.

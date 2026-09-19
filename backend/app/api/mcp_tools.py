@@ -1,9 +1,10 @@
 """MCP server: the scenario engine as tools for an agent (Nemotron, or any MCP client).
 
-Mounted on the FastAPI app at /mcp (streamable HTTP). Tools are read-only or
-simulation-only: plans are only ever executed inside SUMO branches, never on
-the live signals. Every tool mutates the same ScenarioRun the REST API and
-WebSocket expose, so the UI streams agent-driven analyses as they happen.
+Mounted on the FastAPI app at /mcp (streamable HTTP); the episode's Nemotron analyst also
+connects to it in-process. Tools are read-only or simulation-only, with one gated exception:
+``implement_recommendation`` applies the run's own recommendation to the live city through
+the implementor (AGENT_MAY_IMPLEMENT). Every tool mutates the same ScenarioRun the REST API
+and WebSocket expose, so the UI streams agent-driven analyses as they happen.
 
 Spec: docs/specs/scenario-engine-mcp.md
 """
@@ -12,17 +13,21 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from app.agent.base import CandidatePlan
+from app.learning.store import incident_features
 from app.models.domain import Recommendation, SimulationCandidate, TrafficMetrics
 from app.models.scenario import ScenarioRun
 from app.services.city import Conflict, NotReady
-from app.services.scenarios import Analysis, ScenarioService
+from app.services.scenarios import Analysis
+
+if TYPE_CHECKING:
+    from app.providers import Services
 
 INSTRUCTIONS = """\
 You are the analyst in a city traffic operations center. One or more collisions are
@@ -36,6 +41,9 @@ Workflow:
    simulate in this analysis starts from that same instant, so results are
    comparable. If several incidents are listed, solve them TOGETHER: one plan may
    combine timing changes, a corridor and reroutes that address all of them.
+   `experience`, when present, holds lessons from earlier episodes (a playbook and
+   the most similar past incidents); recall_experience returns more. Use lessons to
+   choose what to simulate first; they never replace simulating.
 2. Design plans. A plan combines any of:
    - policies: signal timing changes. They change existing phase durations and/or
      the offset only (phase index -> new seconds). Movements that run together
@@ -51,6 +59,9 @@ Workflow:
    baseline is included automatically. Call it again to try refinements.
 5. submit_recommendation: the winning completed candidate, with a rationale that
    quotes the numbers.
+6. implement_recommendation (when enabled): applies your recommendation to the LIVE
+   city. It is re-validated against the live signals first; nothing else can be
+   applied. The live result is measured afterwards and becomes the next lesson.
 
 Reading results. Lower is better for delay_s (time lost per vehicle served,
 including waiting to enter), max_queue (halted vehicles on the worst segment) and
@@ -152,11 +163,11 @@ def _standing(plan: CandidatePlan) -> dict:
     }
 
 
-def _context(a: Analysis, max_candidates: int) -> dict:
+def _context(a: Analysis, max_candidates: int, playbook: str) -> dict:
     ctx = a.context
     by_id = {s.id: s for s in ctx.segments}
     segments = sorted(ctx.segments, key=lambda s: s.congestion, reverse=True)
-    return {
+    payload = {
         "run_id": a.run.id,
         "snapshot_sim_time": ctx.sim_time,
         "horizon_s": a.run.horizon_s,
@@ -203,10 +214,13 @@ def _context(a: Analysis, max_candidates: int) -> dict:
             for iid, program in sorted(ctx.signal_programs.items())
         },
     }
+    if playbook or ctx.lessons:  # lessons from earlier episodes: they seed round one, simulating stays the gate
+        payload["experience"] = {"playbook": playbook, "similar": ctx.lessons}
+    return payload
 
 
-def build_mcp(get_service: Callable[[], ScenarioService]) -> MCPServer:
-    """``get_service`` resolves the ScenarioService at call time (it is built in the app lifespan)."""
+def build_mcp(get_services: Callable[[], Services]) -> MCPServer:
+    """``get_services`` resolves the services at call time (they are built in the app lifespan)."""
     mcp = MCPServer(
         name="traffic-scenarios",
         title="Traffic scenario engine",
@@ -223,9 +237,10 @@ def build_mcp(get_service: Callable[[], ScenarioService]) -> MCPServer:
         agent: Annotated[str, Field(description="Your name, shown to operators")] = "mcp-agent",
     ) -> dict:
         """Freeze the live city for analysis. Returns run_id, the incident(s), road segments (worst first), every
-        signal's phases and the responses already in force. Only one analysis can be open at a time. It stays
-        open until submit_recommendation."""
-        service = get_service()
+        signal's phases, the responses already in force and lessons from earlier episodes. Only one analysis can
+        be open at a time. It stays open until submit_recommendation."""
+        services = get_services()
+        service = services.scenarios
         with _as_tool_errors():
             if not incident_ids:  # every active incident, so simultaneous crashes are solved together
                 incident_ids = [i.id for i in await service.city.smart_city.list_incidents()] or None
@@ -238,13 +253,13 @@ def build_mcp(get_service: Callable[[], ScenarioService]) -> MCPServer:
         except Exception as exc:
             service.fail(analysis, f"{type(exc).__name__}: {exc}")
             raise ToolError(f"could not snapshot the simulation: {exc}") from exc
-        return _context(analysis, service.settings.scenario_max_candidates)
+        return _context(analysis, service.settings.scenario_max_candidates, services.memory.playbook())
 
     @mcp.tool()
     async def validate_plan(run_id: str, plan: CandidatePlan) -> dict:
         """Check a plan against the signal safety limits without simulating it. An empty violations list means
         it is safe to simulate."""
-        service = get_service()
+        service = get_services().scenarios
         with _as_tool_errors():
             violations = service.check_plan(service.analysis(run_id), plan)
         return {"plan_id": plan.id, "safe": not violations, "violations": violations}
@@ -255,7 +270,7 @@ def build_mcp(get_service: Callable[[], ScenarioService]) -> MCPServer:
         horizon, with a test ambulance dispatched in every branch. The baseline is added on the first call.
         Blocks until every branch finishes (tens of seconds). Returns this round's results with deltas against
         the baseline."""
-        service = get_service()
+        service = get_services().scenarios
         with _as_tool_errors():
             analysis = service.analysis(run_id)
             candidates = await service.evaluate(analysis, plans)
@@ -266,7 +281,7 @@ def build_mcp(get_service: Callable[[], ScenarioService]) -> MCPServer:
     @mcp.tool()
     async def get_analysis(run_id: str) -> dict:
         """Every candidate of the analysis so far (or of a finished one), with deltas against the baseline."""
-        service = get_service()
+        service = get_services().scenarios
         with _as_tool_errors():
             run = service.get(run_id)
             if run.status.value not in ("completed", "failed"):
@@ -281,8 +296,8 @@ def build_mcp(get_service: Callable[[], ScenarioService]) -> MCPServer:
         rationale: Annotated[list[str], Field(description="Evidence: before/after figures and why the runner-up lost")],
     ) -> dict:
         """Close the analysis with your recommendation. It is shown to operators and written to the ops log.
-        Nothing is applied to the live signals."""
-        service = get_service()
+        Submitting applies nothing; implement_recommendation does."""
+        service = get_services().scenarios
         with _as_tool_errors():
             analysis = service.analysis(run_id)
             if analysis.busy:
@@ -291,5 +306,33 @@ def build_mcp(get_service: Callable[[], ScenarioService]) -> MCPServer:
                 analysis, Recommendation(candidate_id=candidate_id, summary=summary, rationale=rationale)
             )
         return _run_summary(run)
+
+    @mcp.tool()
+    async def implement_recommendation(run_id: str) -> dict:
+        """Apply this run's submitted recommendation to the LIVE city, once. It is re-validated against the live
+        signal programs, the test ambulance is dispatched for real, and its timing changes, corridor and diversion
+        go live and stay until reset. Takes no plan: only the recommendation can be applied."""
+        services = get_services()
+        if not services.scenarios.settings.agent_may_implement:
+            raise ToolError("agents may not implement plans here (AGENT_MAY_IMPLEMENT=false); an operator applies them")
+        with _as_tool_errors():
+            implementation = await services.implementor.implement(run_id, by="agent")
+        return implementation.model_dump(mode="json")
+
+    @mcp.tool()
+    async def recall_experience(
+        run_id: str, limit: Annotated[int, Field(ge=1, le=10, description="How many past episodes")] = 5
+    ) -> dict:
+        """Lessons from earlier episodes most similar to this analysis' incidents (start_analysis includes the top
+        few). Lessons advise what to simulate first; they never replace simulating."""
+        services = get_services()
+        with _as_tool_errors():
+            run = services.scenarios.get(run_id)
+        found = [await services.city.smart_city.get_incident(i) for i in run.incident_ids or [run.incident_id]]
+        features = [incident_features(i, services.city.network) for i in found if i is not None]
+        return {
+            "playbook": services.memory.playbook(),
+            "similar": [r.model_dump() for r in services.memory.recall(features, limit)],
+        }
 
     return mcp

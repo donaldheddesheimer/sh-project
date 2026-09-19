@@ -97,6 +97,10 @@ class SpeedRequest(BaseModel):
     multiplier: float = Field(gt=0, le=64)
 
 
+class DemoStartRequest(BaseModel):
+    script: str = Field(description="A demo script id from simulation/scenarios/<scenario>/demos/*.json")
+
+
 class ControlResponse(BaseModel):
     status: RunStatus
     speed: float

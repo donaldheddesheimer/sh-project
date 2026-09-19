@@ -231,13 +231,15 @@ export type ScenarioStatus = 'queued' | 'proposing' | 'simulating' | 'recommendi
 
 export interface ScenarioRunRequest {
   incident_id?: string | null
+  incident_ids?: string[] | null // analyze several incidents together (overrides incident_id)
   horizon_s?: number
   ems_probe?: boolean
 }
 
 export interface ScenarioRun {
   id: string
-  incident_id: string
+  incident_id: string // the primary incident (earliest detected)
+  incident_ids: string[] // every incident analyzed together
   status: ScenarioStatus
   agent: string
   created_at: string
@@ -248,6 +250,141 @@ export interface ScenarioRun {
   candidates: SimulationCandidate[]
   recommendation: Recommendation | null
   error: string | null
+  rounds: number // simulation rounds (an MCP agent may run several)
+  recalled: string[] // remembered episodes given to the agent as lessons
+  implementation: Implementation | null // set once the recommendation was applied to the live city
+}
+
+// --- Autonomous episode (backend/app/models/episode.py) ---
+
+export interface Implementation {
+  run_id: string
+  candidate_id: string
+  candidate_name: string
+  implemented_by: string // agent | operator | coordinator
+  incident_ids: string[]
+  implemented_at: number // simulation time the plan went live
+  snapshot_sim_time: number | null
+  staleness_s: number | null // live time between the branch snapshot and the apply
+  policies: Record<string, string> // intersection -> program id now running
+  corridor: boolean
+  diverted: number
+  ems_dispatch_ids: string[] // responders dispatched with the plan
+  ems_en_route_ids: string[] // responders already on the way at the snapshot; the monitor times them too
+  notes: string[]
+}
+
+export type EpisodeStatus =
+  | 'armed'
+  | 'detected'
+  | 'analyzing'
+  | 'monitoring'
+  | 'reviewing'
+  | 'completed'
+  | 'superseded'
+  | 'aborted'
+  | 'failed'
+
+export type Outcome = 'effective' | 'ineffective' | 'inconclusive'
+
+export interface WindowStats {
+  samples: number
+  mean_delay: number
+  end_delay: number
+  peak_queue: number
+  mean_throughput: number
+  mean_speed_mps: number
+  incident_queue_end: number
+  ems_response_s: number | null
+}
+
+export interface Scorecard {
+  candidate_id: string
+  candidate_name: string
+  window_s: number
+  realised: WindowStats
+  predicted: WindowStats | null
+  predicted_baseline: WindowStats | null
+  pre: WindowStats | null
+  predicted_gain: Record<string, number | null>
+  prediction_error: Record<string, number | null> // realised minus predicted: delay_pct, queue, ems_s
+  realised_vs_baseline: Record<string, number | null> // realised minus the predicted do-nothing baseline
+  staleness_s: number | null
+  candidates_tried: number
+  rejected: number
+  picked_best: boolean | null
+  best_by_rubric: string | null
+  material: boolean
+  outcome: Outcome
+  notes: string[]
+}
+
+export interface Lesson {
+  verdict: Outcome
+  summary: string
+  what_worked: string[]
+  what_didnt: string[]
+  next_time: string[]
+  confidence: number
+  reviewer: string
+}
+
+export interface EpisodeStep {
+  status: EpisodeStatus
+  at: string
+  sim_time: number | null
+  message: string
+}
+
+export interface Episode {
+  id: string // "EP-0001"
+  script_id: string | null
+  status: EpisodeStatus
+  analyst: string
+  reviewer: string
+  created_at: string
+  completed_at: string | null
+  incident_ids: string[]
+  supersedes: string | null
+  superseded_by: string | null
+  run_id: string | null
+  rounds: number
+  candidates: number
+  analysis_wall_s: number | null
+  detected_sim_time: number | null
+  implemented_sim_time: number | null
+  monitor_s: number
+  monitor_progress_s: number
+  implementation: Implementation | null
+  scorecard: Scorecard | null
+  lesson: Lesson | null
+  recalled: string[]
+  memory_path: string | null
+  error: string | null
+  steps: EpisodeStep[]
+}
+
+export interface DemoScriptInfo {
+  id: string
+  name: string
+  description: string
+  crashes_at: number[]
+  monitor_s: number | null
+}
+
+export interface MemoryStats {
+  enabled: boolean
+  directory: string
+  episodes: number
+  latest: string[]
+}
+
+export interface DemoInfo {
+  scripts: DemoScriptInfo[]
+  armed: string | null // autonomous response is on while a script is armed
+  analyst: string
+  current: Episode | null
+  memory: MemoryStats
 }
 
 export type StreamMessage =
@@ -259,9 +396,11 @@ export type StreamMessage =
         events: OpsEvent[]
         history: MetricSample[]
         scenario?: ScenarioRun | null // latest analysis run
+        episode?: Episode | null // latest autonomous episode
       }
     }
   | { type: 'state'; data: CityState }
   | { type: 'status'; data: StatusInfo }
   | { type: 'event'; data: OpsEvent }
   | { type: 'scenario'; data: ScenarioRun } // any change to an analysis run
+  | { type: 'episode'; data: Episode } // any change to an episode

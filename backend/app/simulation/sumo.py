@@ -36,6 +36,7 @@ from app.models.domain import (
     IncidentType,
     IntersectionState,
     NetworkState,
+    ProgramLogic,
     RerouteAction,
     RoadSegmentState,
     Severity,
@@ -160,6 +161,7 @@ class SumoSimulation(TrafficSimulation):
         self._preemption: PreemptionController | None = None
         self._diversion: DiversionAdvisory | None = None
         self._programs: dict[tuple[str, str], SignalProgram] = {}  # active program per (tls, program id)
+        self._custom_programs: dict[tuple[str, str], list[tuple[float, str]]] = {}  # installed at runtime
         self._seq = itertools.count(1)
 
     # ------------------------------------------------------------ lifecycle
@@ -563,6 +565,7 @@ class SumoSimulation(TrafficSimulation):
             ]
             program_id = f"policy-{next(self._seq)}"
             c.trafficlight.setProgramLogic(tls_id, traci.trafficlight.Logic(program_id, 0, phase_index, phases))
+            self._custom_programs[(tls_id, program_id)] = [(p.duration, p.state) for p in phases]
             c.trafficlight.setPhase(tls_id, phase_index)
             # keep the running phase's progress; a shortened green ends promptly rather than restarting
             c.trafficlight.setPhaseDuration(tls_id, max(1.0, phases[phase_index].duration - elapsed))
@@ -775,6 +778,10 @@ class SumoSimulation(TrafficSimulation):
             created_at=datetime.now(UTC),
             disruptions=[d.model_copy(deep=True) for d in self._disruptions.values()],
             dispatches=[d.model_copy(deep=True) for d in self._dispatches.values()],
+            custom_programs=[
+                ProgramLogic(tls_id=tls_id, program_id=program_id, phases=phases)
+                for (tls_id, program_id), phases in self._custom_programs.items()
+            ],
         )
 
     def restore_snapshot(self, snapshot: SimulationSnapshot) -> None:
@@ -783,11 +790,18 @@ class SumoSimulation(TrafficSimulation):
         For comparable candidate runs, restore into a freshly started instance:
         fresh processes restored from one snapshot evolve identically, whereas
         re-loading into a process that has already run carries over internal
-        SUMO state and diverges. Snapshots capture base signal programs only;
-        programs installed by apply_signal_policy(), emergency corridors and
-        diversions must be re-applied.
+        SUMO state and diverges. Signal programs installed at runtime come back
+        where they were (see below); emergency corridors, diversions and pending
+        offsets live in Python and must be re-applied.
         """
+        # SUMO saves the state of every program variant by id and refuses to load an id it does not know, so a
+        # program installed at runtime (a timing policy applied to the live city) is re-created first. loadState
+        # then restores each program's phase and switches every signal back to the program it was running.
+        for logic in snapshot.custom_programs:
+            phases = [traci.trafficlight.Phase(duration, state) for duration, state in logic.phases]
+            self.conn.trafficlight.setProgramLogic(logic.tls_id, traci.trafficlight.Logic(logic.program_id, 0, 0, phases))
         self.conn.simulation.loadState(snapshot.path)
+        self._custom_programs = {(p.tls_id, p.program_id): list(p.phases) for p in snapshot.custom_programs}
         self._disruptions = {d.id: d.model_copy(deep=True) for d in snapshot.disruptions}
         self._dispatches = {d.id: d.model_copy(deep=True) for d in snapshot.dispatches}
         self._responder_speed = {}
@@ -797,7 +811,9 @@ class SumoSimulation(TrafficSimulation):
         self._diversion = None
         self._programs = {}
         self._collector.reset()
+        # ids stay unique: new EMS units and policy programs number on from the restored ones
         used = [int(m.group(1)) for d in self._dispatches.values() if (m := re.match(r"EMS-(\d+)$", d.id))]
+        used += [int(m.group(1)) for _, pid in self._custom_programs if (m := re.match(r"policy-(\d+)$", pid))]
         self._seq = itertools.count(max(used, default=0) + 1)
         self._subscribe_all()
         self._read_state()

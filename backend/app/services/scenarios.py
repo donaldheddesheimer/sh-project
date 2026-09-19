@@ -159,7 +159,7 @@ class ScenarioService:
         analysis = await self.open(
             request.incident_id, horizon, request.ems_probe, self.agent.name, incident_ids=request.incident_ids
         )
-        self._spawn(self._run_pipeline(analysis))
+        self._spawn(self.run_pipeline(analysis))
         return analysis.run
 
     async def _propose(self, a: Analysis) -> list[CandidatePlan]:
@@ -228,7 +228,12 @@ class ScenarioService:
             )
         return combined
 
-    async def _run_pipeline(self, a: Analysis) -> None:
+    async def run_pipeline(self, a: Analysis) -> None:
+        """Capture, propose, simulate and recommend with the configured AgentProvider; failures fail the run.
+
+        Awaited by the episode's mock analyst (so cancelling the analyst cancels the pipeline) or spawned by
+        ``start_run``.
+        """
         try:
             await self.capture(a)
             plans = await self._propose(a)
@@ -291,6 +296,7 @@ class ScenarioService:
             raise Conflict(f"{a.run.id} was abandoned")
         a.run.snapshot_sim_time = a.snapshot.sim_time
         a.context = self._context(a, state)
+        a.run.recalled = [lesson["id"] for lesson in a.context.lessons if "id" in lesson]
         a.probes = self._probes(a)
         self._set_status(a.run, ScenarioStatus.PROPOSING)
 
@@ -303,6 +309,8 @@ class ScenarioService:
         Returns this round's candidates, in order; the run keeps all rounds and
         moves to ``then`` (proposing: the agent may try another round).
         """
+        if a.closed:  # abandoned or failed meanwhile: its snapshot may already be gone
+            raise Conflict(f"{a.run.id} is {a.run.status.value}; start a new analysis")
         if a.busy:
             raise Conflict(f"{a.run.id} is already simulating")
         existing = {c.id for c in a.run.candidates}
@@ -331,6 +339,7 @@ class ScenarioService:
         )
 
         a.busy = True
+        a.run.rounds += 1
         self._set_status(a.run, ScenarioStatus.SIMULATING)
         # The round belongs to the service, not the caller: if a tool call is cancelled, the branches
         # still finish and are recorded, and the run stays busy until they have.
@@ -353,6 +362,8 @@ class ScenarioService:
 
     def finish(self, a: Analysis, recommendation: Recommendation) -> ScenarioRun:
         """Complete the run with a recommendation for a completed candidate."""
+        if a.closed:  # abandoned (e.g. superseded by a new crash) while the agent was still deciding
+            raise Conflict(f"{a.run.id} is {a.run.status.value}; its recommendation is discarded")
         chosen = next((c for c in a.run.candidates if c.id == recommendation.candidate_id), None)
         if chosen is None or chosen.status is not CandidateStatus.COMPLETED:
             state = chosen.status.value if chosen else "unknown"

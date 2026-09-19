@@ -1,4 +1,6 @@
 import type {
+  Episode,
+  EpisodeStatus,
   NetworkGeometry,
   RunStatus,
   ScenarioRun,
@@ -58,15 +60,22 @@ export interface AnalyzeState {
   progress: number | null // 0..1 while a run is in flight
 }
 
+// Episode statuses in which the autonomous agent owns the response (mirrors WORKING_STATUSES in models/episode.py).
+const WORKING: ReadonlySet<EpisodeStatus> = new Set(['detected', 'analyzing', 'monitoring'])
+
+export const episodeWorking = (episode: Episode | null): episode is Episode =>
+  episode != null && WORKING.has(episode.status)
+
 export function analyzeState(opts: {
   connected: boolean
   runStatus: RunStatus | null
   hasIncident: boolean
   busy: boolean
   scenario: ScenarioRun | null
+  episode: Episode | null
   fixture: boolean
 }): AnalyzeState {
-  const { connected, runStatus, hasIncident, busy, scenario, fixture } = opts
+  const { connected, runStatus, hasIncident, busy, scenario, episode, fixture } = opts
   if (isRunning(scenario)) {
     const { done, total } = branchProgress(scenario)
     const label = {
@@ -80,6 +89,14 @@ export function analyzeState(opts: {
     const steps = { queued: 0.05, proposing: 0.12, simulating: 0.2, recommending: 0.95, completed: 1, failed: 1 }
     const progress = scenario.status === 'simulating' && total ? 0.2 + 0.75 * (done / total) : steps[scenario.status]
     return { enabled: false, label, reason: `Analysis ${scenario.id} in progress`, progress }
+  }
+  if (episodeWorking(episode) && !fixture) {
+    return {
+      enabled: false,
+      label: 'Agent responding',
+      reason: `${episode.id}: the autonomous agent owns this response (${episode.status})`,
+      progress: null,
+    }
   }
   const base = { label: 'Analyze Response', progress: null }
   if (busy) return { ...base, enabled: false, reason: 'Waiting for the previous command' }

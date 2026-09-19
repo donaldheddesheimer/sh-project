@@ -2,7 +2,8 @@
 
 Proposes the classic incident-management responses for a blocked link (signal
 timing changes, an EMS green corridor, a diversion advisory) and recommends the
-best simulated outcome. No LLM involved.
+best simulated outcome. No LLM involved. Remembered episodes (``context.lessons``)
+reorder or prune the proposals, so a warm run tries what worked first.
 """
 
 from __future__ import annotations
@@ -32,6 +33,9 @@ DIVERT_COMPLIANCE = 0.3
 EMS_ETA_TOLERANCE = 1.10  # a plan may not slow responders by more than 10%
 EMS_GAIN_PREFERRED_S = 60.0  # an EMS improvement this large outweighs a small delay penalty...
 DELAY_TRADEOFF = 1.05  # ...as long as mean delay stays within 5% of the best eligible candidate
+CLOSE_MATCH = 0.75  # a remembered episode this similar (same segment and blockage) may prune the plan set...
+LOOSE_MATCH = 0.5  # ...one this similar only reorders it
+KEEP_WITH_LESSON = 2  # other plans still tried next to the one a close lesson found effective
 
 
 def _serves(phase: SignalPhase, by_label: bool) -> list[str]:
@@ -119,6 +123,45 @@ def _outcome_lines(base: TrafficMetrics, m: TrafficMetrics) -> list[str]:
     lines.append(f"Max queue {base.max_queue_length} -> {m.max_queue_length} vehicles")
     lines.append(f"Throughput {base.throughput:.0f} -> {m.throughput:.0f} veh/h")
     return lines
+
+
+def _by_plan(lessons: list[dict], verdict: str, min_similarity: float) -> dict[str, str]:
+    """Plan id -> the most similar lesson (lessons arrive most similar first) that found it ``verdict``."""
+    found: dict[str, str] = {}
+    for lesson in lessons:
+        if lesson.get("verdict") == verdict and lesson.get("similarity", 0.0) >= min_similarity:
+            found.setdefault(lesson.get("chosen", ""), lesson["id"])
+    return found
+
+
+def _noted(plan: CandidatePlan, note: str) -> CandidatePlan:
+    return plan.model_copy(update={"description": f"{plan.description} {note}"})
+
+
+def _apply_lessons(plans: list[CandidatePlan], lessons: list[dict]) -> list[CandidatePlan]:
+    """Use remembered episodes the way an operator uses experience: try what worked first, skip what did not.
+
+    Only a close match prunes: a plan it found ineffective is dropped, and a plan it found effective is simulated
+    with just ``KEEP_WITH_LESSON`` others (one wave of branches instead of two). A looser match only reorders.
+    Every plan that is left is still validated and simulated.
+    """
+    baseline, rest = plans[0], plans[1:]
+    rest = [p for p in rest if p.id not in _by_plan(lessons, "ineffective", CLOSE_MATCH)]
+    worked = _by_plan(lessons, "effective", CLOSE_MATCH)
+    first = next((p for p in rest if p.id in worked), None)
+    if first is not None:
+        others = [p for p in rest if p is not first][:KEEP_WITH_LESSON]
+        return [baseline, _noted(first, f"Tried first: {worked[first.id]} found it effective here."), *others]
+    liked = _by_plan(lessons, "effective", LOOSE_MATCH)
+    disliked = _by_plan(lessons, "ineffective", LOOSE_MATCH)
+    front = [_noted(p, f"Tried early: {liked[p.id]} found it effective in a similar situation.") for p in rest if p.id in liked]
+    back = [
+        _noted(p, f"Tried last: {disliked[p.id]} found it ineffective in a similar situation.")
+        for p in rest
+        if p.id in disliked and p.id not in liked
+    ]
+    middle = [p for p in rest if p.id not in liked and p.id not in disliked]
+    return [baseline, *front, *middle, *back]
 
 
 def _why_lost(chosen: SimulationCandidate, other: SimulationCandidate, other_eligible: bool) -> str:
@@ -258,6 +301,8 @@ class MockAgentProvider(AgentProvider):
                 ],
             )
         )
+        if context.lessons and len(context.all_incidents) == 1:  # several incidents: combined plans lead instead
+            plans = _apply_lessons(plans, context.lessons)
         return plans
 
     async def recommend(self, context: IncidentContext | None, results: list[SimulationCandidate]) -> Recommendation:

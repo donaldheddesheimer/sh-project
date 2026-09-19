@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client'
 import type { NetworkGeometry } from './api/types'
+import { EpisodePanel } from './components/EpisodePanel'
 import { IncidentPanel } from './components/IncidentPanel'
 import { CityMap, type Selection } from './components/map/CityMap'
 import { MapLegend } from './components/MapLegend'
@@ -25,7 +26,7 @@ const ACTIONS: Record<Action, () => Promise<unknown>> = {
 }
 
 export default function App() {
-  const { state, status, events, history, connected, scenario, phaseLabels, acceptScenario } = useCityStream()
+  const { state, status, events, history, connected, scenario, episode, phaseLabels, acceptScenario } = useCityStream()
   const [network, setNetwork] = useState<NetworkGeometry | null>(null)
   const [selection, setSelection] = useState<Selection | null>(null)
   const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null)
@@ -75,7 +76,11 @@ export default function App() {
   const latestIncident = activeIncidents.length
     ? activeIncidents.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
     : null
-  const scopedScenario = scenario && scenario.incident_id === latestIncident?.id ? scenario : null
+  // an analysis over several incidents belongs to each of them (its incident_id is only the primary one)
+  const scopedScenario =
+    scenario && latestIncident && (scenario.incident_ids ?? [scenario.incident_id]).includes(latestIncident.id)
+      ? scenario
+      : null
   const incidentTime = latestIncident?.sim_time ?? null
   // pre-incident reference for KPI deltas: the last trend sample before detection
   const reference = useMemo(
@@ -100,6 +105,7 @@ export default function App() {
     hasIncident: !!latestIncident,
     busy: !!busy,
     scenario: scopedScenario,
+    episode,
     fixture: !!FIXTURE_MODE,
   })
 
@@ -169,6 +175,7 @@ onAction={(action) => {
       </main>
 
       <aside className="side">
+        <EpisodePanel episode={episode} busy={busy} onRun={run} />
         <IncidentPanel
           incidents={incidents}
           segments={state?.segments ?? []}
@@ -188,12 +195,14 @@ onAction={(action) => {
           run={scopedScenario}
           incidentId={latestIncident?.id ?? null}
           fixture={!!FIXTURE_MODE}
+          busy={!!busy}
           colors={colors}
           phaseLabels={phaseLabels}
           activeId={activePlanId}
           selectedId={selectedPlanId}
           onHover={setHoveredPlanId}
           onSelect={selectPlan}
+          onImplement={(runId) => run('implement', () => api.implement(runId))}
         />
       </aside>
 

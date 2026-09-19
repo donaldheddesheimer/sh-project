@@ -62,7 +62,10 @@ class Implementation(BaseModel):
     policies: dict[str, str] = Field(default_factory=dict, description="Intersection -> program id now running")
     corridor: bool = False
     diverted: int = 0
-    ems_dispatch_ids: list[str] = Field(default_factory=list)
+    ems_dispatch_ids: list[str] = Field(default_factory=list, description="Responders dispatched with the plan")
+    ems_en_route_ids: list[str] = Field(
+        default_factory=list, description="Responders already on the way at the snapshot; the branches timed them too"
+    )
     notes: list[str] = Field(default_factory=list)
 
 
@@ -77,7 +80,7 @@ class LiveRecord(BaseModel):
     pre: list[LiveSample] = Field(default_factory=list, description="Live samples before the plan went live")
     post: list[LiveSample] = Field(default_factory=list, description="Live samples while the plan was in force")
     ems_response_s: float | None = Field(None, description="Realised response time; None if a responder never arrived")
-    ems_dispatch_ids: list[str] = Field(default_factory=list)
+    ems_timed_ids: list[str] = Field(default_factory=list, description="Responders this window timed")
     complete: bool = True
     abort_reason: str | None = None
 
@@ -117,6 +120,9 @@ class Scorecard(BaseModel):
     )
     prediction_error: dict[str, float | None] = Field(
         default_factory=dict, description="Realised minus predicted for the chosen plan: delay_pct, queue, ems_s"
+    )
+    realised_vs_baseline: dict[str, float | None] = Field(
+        default_factory=dict, description="Realised minus the predicted do-nothing baseline: delay_pct, queue, ems_s"
     )
     staleness_s: float | None = None
     candidates_tried: int = 0
@@ -174,6 +180,8 @@ class Experience(BaseModel):
     scorecard: Scorecard
     lesson: Lesson
     rounds: int = 0
+    recalled: list[str] = Field(default_factory=list, description="Remembered episodes the analyst was given")
+    analysis_wall_s: float | None = Field(None, description="Wall-clock seconds from detection to recommendation")
 
 
 class RecalledExperience(BaseModel):
@@ -182,7 +190,8 @@ class RecalledExperience(BaseModel):
     id: str
     similarity: float
     incidents: list[str] = Field(description="One line per incident, e.g. 'collision major, Main St EB, right lane blocked'")
-    chosen: str
+    chosen: str = Field(description="Plan family that was applied, e.g. 'divert-advisory' (incident prefix removed)")
+    chosen_name: str = ""
     kinds: list[str]
     verdict: Outcome
     summary: str
@@ -211,6 +220,9 @@ class Episode(BaseModel):
     supersedes: str | None = Field(None, description="Episode this one took over from when a new crash arrived")
     superseded_by: str | None = None
     run_id: str | None = None
+    rounds: int = 0
+    candidates: int = Field(0, description="Candidates in the analysis, baseline included")
+    analysis_wall_s: float | None = Field(None, description="Wall-clock seconds from detection to recommendation")
     detected_sim_time: float | None = None
     implemented_sim_time: float | None = None
     monitor_s: float = 600.0
@@ -225,6 +237,8 @@ class Episode(BaseModel):
 
 
 class DemoInfo(BaseModel):
-    scripts: list[dict]
+    scripts: list[dict] = Field(description="Every demos/*.json script: id, name, description, crash times, monitor_s")
+    armed: str | None = Field(None, description="Script currently armed (autonomous response is on while one is)")
+    analyst: str = Field("", description="Analyst new episodes use: mock or nemotron")
     current: Episode | None = None
     memory: dict

@@ -88,11 +88,12 @@ def run_branch(
     """
     candidate = candidate_from_plan(plan)
     candidate.status = CandidateStatus.RUNNING
-    if on_start:
-        on_start()
     wall_start = time.monotonic()
-    sim = factory()
+    sim: TrafficSimulation | None = None
     try:
+        if on_start:
+            on_start()
+        sim = factory()
         sim.start()
         sim.restore_snapshot(snapshot)
         if probe is not None:
@@ -114,6 +115,7 @@ def run_branch(
         candidate.status = CandidateStatus.FAILED
         candidate.notes.append(f"{type(exc).__name__}: {exc}")
     finally:
-        sim.close()
+        if sim is not None:
+            sim.close()
         candidate.wall_time_s = round(time.monotonic() - wall_start, 2)
     return candidate

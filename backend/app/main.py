@@ -29,7 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             async with mcp.session_manager.run():
                 yield
         finally:
-            scenarios.shutdown()
+            await scenarios.shutdown()
             await city.stop()
 
     app = FastAPI(title="Traffic Operations Center", version="0.1.0", lifespan=lifespan)

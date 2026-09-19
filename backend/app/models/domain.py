@@ -46,10 +46,10 @@ class IntersectionState(BaseModel):
     cycle_length: float | None = None
     program_id: str | None = None
     approach_signals: dict[str, SignalColor] = Field(
-        default_factory=dict, description="Through-movement signal per approach, keyed NB/SB/EB/WB (travel direction)"
+        default_factory=dict, description="Through-movement signal per approach, keyed by incoming segment id"
     )
     queue_lengths: dict[str, int] = Field(
-        default_factory=dict, description="Halting vehicles per approach, keyed NB/SB/EB/WB"
+        default_factory=dict, description="Halting vehicles per approach, keyed by incoming segment id"
     )
     average_speed: float = Field(0.0, description="Mean speed on the approaches (m/s)")
     vehicle_count: int = Field(0, description="Vehicles on the approaches")
@@ -213,7 +213,12 @@ class SignalPhase(BaseModel):
     state: str = Field(description="SUMO signal state string, one char per controlled link")
     kind: PhaseKind
     label: str
-    served_approaches: list[str] = Field(default_factory=list, description="Approaches whose through movement runs")
+    served_approaches: list[str] = Field(
+        default_factory=list, description="Compass labels (NB/SB/EB/WB) of the served approaches; display only"
+    )
+    served_segments: list[str] = Field(
+        default_factory=list, description="Approaches whose through movement runs, as incoming segment ids"
+    )
 
 
 class SignalProgram(BaseModel):

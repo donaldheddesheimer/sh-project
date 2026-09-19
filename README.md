@@ -135,10 +135,11 @@ make frontend
   `SCENARIO_WORKERS=6`, so a full run takes 40–60 s.
 - **The EMS figures are noisy here.** The probe often does not reach the scene within the
   10-minute horizon, and then the column shows no value.
-- **Map-model limits.** Approach directions are bucketed after a 45° rotation, because
-  Oakland's grid runs diagonally (`heading_offset_deg` in `scenario.json`). A five-leg
-  junction (Fifth Ave and Neville St) shows one fewer approach than it has. There is no
-  basemap under the road network.
+- **Map-model limits.** Compass labels (NB/SB/EB/WB) are assigned after a 45° rotation,
+  because Oakland's grid runs diagonally (`heading_offset_deg` in `scenario.json`). A label
+  is display only: an approach is identified by its incoming segment, so the five-leg
+  junction at Fifth Ave and Neville St keeps all its approaches even though two of them read
+  SB (the inspector adds the street name there). There is no basemap under the road network.
 
 ## Next stage: the autonomous, self-learning episode
 

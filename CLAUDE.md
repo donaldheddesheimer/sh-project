@@ -98,6 +98,11 @@ venv directly (this is what works in PowerShell or Git Bash):
   or branch-only. The one planned exception is a gated implementor that applies an agent's
   recommended, already-validated plan to the live twin (README, "Next stage"); until it
   exists this rule holds unchanged.
+- **An approach is its incoming segment.** `IntersectionInfo.approaches_by_segment`,
+  `SignalPhase.served_segments`, pre-emption targets and the live `approach_signals` /
+  `queue_lengths` are keyed by segment id. NB/SB/EB/WB is a display label and repeats at
+  off-grid junctions (Oakland's Fifth & Neville has two SB legs), so never key logic by it.
+  `IntersectionInfo.approaches` is a lossy label view kept only for `test_network.py`.
 - **`ScenarioRun` is mutated only on the event loop.** Workers return their own candidate
   object; publish changes with `publish_scenario`.
 - One analysis at a time (409 otherwise), and it needs an active, map-matched incident.

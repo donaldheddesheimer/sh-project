@@ -29,6 +29,7 @@ from app.simulation.scenario import Scenario
 
 EARTH_M_PER_DEG_LAT = 110_540.0
 EARTH_M_PER_DEG_LON_EQUATOR = 111_320.0
+COMPASS_ORDER = ("NB", "SB", "EB", "WB")
 
 
 def heading_direction(dx: float, dy: float, offset_deg: float = 0.0) -> str:
@@ -89,8 +90,8 @@ class SegmentInfo:
 
 @dataclass
 class ApproachInfo:
-    segment_id: str
-    direction: str  # travel direction of vehicles on the approach
+    segment_id: str  # the incoming segment, which identifies the approach
+    direction: str  # compass label of the travel direction; display only, it can repeat at one junction
     link_indices: list[int] = field(default_factory=list)
     through_link_indices: list[int] = field(default_factory=list)
 
@@ -102,8 +103,19 @@ class IntersectionInfo:
     x: float
     y: float
     tls_id: str | None
-    approaches: dict[str, ApproachInfo]  # keyed by direction
+    # Keyed by incoming segment id. Compass labels are not unique: after Oakland's 45° rotation two legs of
+    # Fifth Ave & Neville St both read SB, and keying by label dropped one of them.
+    approaches_by_segment: dict[str, ApproachInfo]
     outgoing: list[str]
+
+    @property
+    def approaches(self) -> dict[str, ApproachInfo]:
+        """Compass-label view (first approach per label), kept for tests/test_network.py. Lossy where a label
+        repeats: never use it for logic."""
+        view: dict[str, ApproachInfo] = {}
+        for approach in self.approaches_by_segment.values():
+            view.setdefault(approach.direction, approach)
+        return view
 
 
 @dataclass(frozen=True)
@@ -111,7 +123,7 @@ class RouteApproach:
     """A signalized approach that a vehicle's route will cross."""
 
     intersection_id: str
-    direction: str  # travel direction on the approach
+    segment_id: str  # the approach (its incoming segment)
     distance_m: float  # to the stop line
 
 
@@ -163,14 +175,14 @@ class RoadNetwork:
                         approach.link_indices.append(idx)
                         if conn.getDirection() == "s":
                             approach.through_link_indices.append(idx)
-                approaches[seg.direction] = approach
+                approaches[seg.id] = approach
             self.intersections[node.getID()] = IntersectionInfo(
                 id=node.getID(),
                 name=self._intersection_name(node),
                 x=node.getCoord()[0],
                 y=node.getCoord()[1],
                 tls_id=tls_id,
-                approaches=approaches,
+                approaches_by_segment=approaches,
                 outgoing=[e.getID() for e in node.getOutgoing()],
             )
 
@@ -196,26 +208,24 @@ class RoadNetwork:
 
     def describe_phase(self, intersection_id: str, index: int, duration: float, state: str) -> SignalPhase:
         kind = phase_kind(state)
-        served = [] if kind is PhaseKind.ALL_RED else self.served_directions(intersection_id, state)
+        segments = [] if kind is PhaseKind.ALL_RED else self.served_segments(intersection_id, state)
+        labels = [d for d in COMPASS_ORDER if any(self.segments[s].direction == d for s in segments)]
         if kind is PhaseKind.ALL_RED:
             label = "All red"
         else:
-            label = f"{'/'.join(served) if served else 'turns'} {'green' if kind is PhaseKind.GREEN else 'yellow'}"
-        return SignalPhase(index=index, duration=duration, state=state, kind=kind, label=label, served_approaches=served)
+            label = f"{'/'.join(labels) if labels else 'turns'} {'green' if kind is PhaseKind.GREEN else 'yellow'}"
+        return SignalPhase(
+            index=index, duration=duration, state=state, kind=kind, label=label, served_approaches=labels,
+            served_segments=segments,
+        )
 
-    def served_directions(self, intersection_id: str, state: str) -> list[str]:
-        """Approaches whose through movement is green or yellow in ``state``."""
-        info = self.intersections[intersection_id]
-        order = ["NB", "SB", "EB", "WB"]
-        served = []
-        for direction in order:
-            approach = info.approaches.get(direction)
-            if approach is None:
-                continue
-            links = approach.through_link_indices or approach.link_indices
-            if any(i < len(state) and state[i] in "GgyY" for i in links):
-                served.append(direction)
-        return served
+    def served_segments(self, intersection_id: str, state: str) -> list[str]:
+        """Approaches (incoming segment ids) whose through movement is green or yellow in ``state``."""
+        return [
+            segment_id
+            for segment_id, approach in self.intersections[intersection_id].approaches_by_segment.items()
+            if any(i < len(state) and state[i] in "GgyY" for i in approach.through_link_indices or approach.link_indices)
+        ]
 
     def base_program(self, intersection_id: str) -> SignalProgram | None:
         return self._base_programs.get(intersection_id)
@@ -236,8 +246,8 @@ class RoadNetwork:
             seg = self.segments[route[i]]
             distance += seg.length - (lane_position_m if i == route_index else 0.0)
             junction = self.intersections.get(seg.destination)
-            if junction is not None and junction.tls_id is not None and seg.direction in junction.approaches:
-                ahead.append(RouteApproach(junction.id, seg.direction, distance))
+            if junction is not None and junction.tls_id is not None and seg.id in junction.approaches_by_segment:
+                ahead.append(RouteApproach(junction.id, seg.id, distance))
         return ahead
 
     def point_along(self, segment_id: str, position_m: float, lateral_m: float = 0.0) -> tuple[float, float]:
@@ -275,7 +285,7 @@ class RoadNetwork:
         intersections = []
         for info in self.intersections.values():
             approaches = []
-            for approach in info.approaches.values():
+            for approach in info.approaches_by_segment.values():
                 seg = self.segments[approach.segment_id]
                 # signal head: just before the stop line, on the approach's side of the road
                 lateral = seg.lanes * 3.2 * 0.5 + 1.5

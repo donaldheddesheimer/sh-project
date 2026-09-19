@@ -190,7 +190,13 @@ def _context(a: Analysis, max_candidates: int) -> dict:
                 "program_id": program.program_id,
                 "cycle_s": program.cycle_length,
                 "phases": [
-                    {"index": p.index, "kind": p.kind.value, "duration_s": p.duration, "serves": p.served_approaches}
+                    {
+                        "index": p.index,
+                        "kind": p.kind.value,
+                        "duration_s": p.duration,
+                        "serves": p.served_approaches,  # compass labels, which can repeat at one junction
+                        "serves_segments": p.served_segments,  # the approaches themselves (incoming segment ids)
+                    }
                     for p in program.phases
                 ],
             }

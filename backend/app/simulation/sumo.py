@@ -392,7 +392,7 @@ class SumoSimulation(TrafficSimulation):
             if index < 0:
                 continue
             for a in self.network.signalized_approaches_ahead(route, index, lane_pos, on_junction):
-                approaches.append(ResponderApproach(vid, a.intersection_id, a.direction, a.distance_m))
+                approaches.append(ResponderApproach(vid, a.intersection_id, a.segment_id, a.distance_m))
         return approaches
 
     def _observe_tls(self, intersection_id: str) -> TlsObservation:
@@ -474,22 +474,22 @@ class SumoSimulation(TrafficSimulation):
         vehicles = 0
         speed_sum = 0.0
         congestion = 0.0
-        for direction, approach in info.approaches.items():
-            r = self._edges.get(approach.segment_id, {})
+        for segment_id, approach in info.approaches_by_segment.items():
+            r = self._edges.get(segment_id, {})
             n = r.get(tc.LAST_STEP_VEHICLE_NUMBER, 0)
-            queues[direction] = r.get(tc.LAST_STEP_VEHICLE_HALTING_NUMBER, 0)
+            queues[segment_id] = r.get(tc.LAST_STEP_VEHICLE_HALTING_NUMBER, 0)
             vehicles += n
             speed_sum += r.get(tc.LAST_STEP_MEAN_SPEED, 0.0) * n
-            congestion = max(congestion, self._congestion.get(approach.segment_id, 0.0))
+            congestion = max(congestion, self._congestion.get(segment_id, 0.0))
             if tls:
                 state = tls[tc.TL_RED_YELLOW_GREEN_STATE]
                 chars = [state[i] for i in (approach.through_link_indices or approach.link_indices) if i < len(state)]
                 if any(ch in "Gg" for ch in chars):
-                    signals[direction] = SignalColor.GREEN
+                    signals[segment_id] = SignalColor.GREEN
                 elif any(ch in "yY" for ch in chars):
-                    signals[direction] = SignalColor.YELLOW
+                    signals[segment_id] = SignalColor.YELLOW
                 else:
-                    signals[direction] = SignalColor.RED
+                    signals[segment_id] = SignalColor.RED
         phase = phase_label = remaining = cycle = program_id = None
         if tls:
             phase = tls[tc.TL_CURRENT_PHASE]

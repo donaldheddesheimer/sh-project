@@ -5,11 +5,14 @@
 | Layer | Module | Knows about | Never knows about |
 |---|---|---|---|
 | UI | `frontend/` | REST + WebSocket payloads | SUMO, providers |
-| API | `app/api/routes.py` | `CityService` | TraCI |
+| API | `app/api/routes.py` | `CityService`, `ScenarioService` | TraCI |
+| Agent tools | `app/api/mcp_tools.py` (MCP at `/mcp`) | `ScenarioService` | live signals |
 | Orchestration | `app/services/city.py` | provider **interfaces**, `TrafficSimulation`, runner | mock vs NVIDIA, SUMO specifics |
+| Scenario analysis | `app/services/scenarios.py` | `CityService`, `AgentProvider`, `SafetyValidator`, a branch factory | SUMO specifics, which agent drives it |
+| Branching | `app/simulation/branching.py` | `TrafficSimulation`, `CandidatePlan` | agents, the run it belongs to |
 | Incidents | `app/smart_city/` | its data source | how incidents are used |
 | Decisions | `app/agent/` | `IncidentContext` → `CandidatePlan` / `Recommendation` | signal hardware, TraCI |
-| Safety | `app/safety/validator.py` | `SignalPolicy` + base `SignalProgram` | who proposed the policy |
+| Safety | `app/safety/validator.py` | `SignalPolicy` / `EmergencyCorridor` + base `SignalProgram` | who proposed the plan |
 | Simulation | `app/simulation/` | SUMO / TraCI | agents, LLMs, providers |
 
 ## Live data flow
@@ -36,6 +39,56 @@ SUMO ──TraCI──► SumoSimulation.step()          (runner thread, paced t
 - New clients get a `hello` with the current state, the recent ops log and the metric
   trend, so a reload mid-incident still shows the pre-incident baseline.
 
+## Analyze Response pipeline
+
+One run is one snapshot of the live twin, branched into a baseline plus candidate
+responses. `ScenarioService` (`app/services/scenarios.py`) owns it, one run at a time, and
+broadcasts the `ScenarioRun` as a `scenario` WebSocket message on every change. Nothing in
+the pipeline touches live signals: plans only ever execute inside SUMO branches.
+
+```
+live twin ─► detect ─► trigger ─► capture ─► propose ─► validate ─► simulate ×N ─► recommend ─► UI
+  SUMO       Smart     REST or    snapshot    agent      safety     fresh SUMO     agent       advisory
+             City      MCP                                          processes
+```
+
+| # | Stage | Code | Input | Output |
+|---|---|---|---|---|
+| 0 | Live twin | `simulation/sumo.py`, `simulation/runner.py` | network, demand, operator commands (inject, dispatch, speed) | `NetworkState` frames (≤ 8 Hz) → `CityState` on `/ws/state` |
+| 1 | Detect | `smart_city/mock.py` | the disruptions in each frame (ground truth) | `Incident` (`INC-0001`: segment, lanes, position, severity, cameras) after a 4 s detection delay |
+| 2 | Trigger | `POST /api/scenarios/run` → `ScenarioService.open`, or MCP `start_analysis` | `ScenarioRunRequest {incident_id?, horizon_s=600, ems_probe=true}` | `ScenarioRun` `SCN-0001`, status `queued` (HTTP 202). 409 without an active, map-matched incident or while a run is open; 404 for an unknown incident; 503 before the simulation is ready |
+| 3 | Capture | `ScenarioService.capture`, on the live thread | the live simulation at one instant | `SimulationSnapshot` (SUMO state + RNG, disruptions, dispatches), every `SignalProgram`, the agent's `IncidentContext`, and an EMS `ProbeSpec` (Fire Station 3 → 20 m behind the crash) unless a live responder is already en route. Status `proposing` |
+| 4 | Propose | `AgentProvider.propose_candidates` (`agent/mock.py`) | `IncidentContext {incident, segments, intersections, signal_programs, emergency_vehicles, ems_origin_segment}` | `CandidatePlan[]`, each any mix of `SignalPolicy` timing changes, one `EmergencyCorridor` and `RerouteAction`s. Baseline forced first; at most 8 |
+| 5 | Validate | `validation_findings` → `RuleBasedSafetyValidator` | each plan and the captured programs | `violations[]`; a plan with any is `rejected` and never simulated |
+| 6 | Simulate | `branching.run_branch` on a 4-worker pool | snapshot, plan, probe, horizon | `SimulationCandidate`: `completed` with horizon `TrafficMetrics`, a 30 s `timeline`, `notes` and `wall_time_s`, or `failed` with the error in `notes`. Status `simulating` |
+| 7 | Recommend | `AgentProvider.recommend` | the context and every candidate | `Recommendation {candidate_id, summary, rationale[]}` naming a completed candidate (else the baseline). Status `completed`, a summary in the ops log, the snapshot file deleted |
+| 8 | Present | `frontend/src/components/plans/` | `scenario` messages and `hello.data.scenario` | plan cards with deltas against the baseline, rejection reasons, a KPI comparison, a horizon chart, map overlays. Advisory only |
+
+**A branch** (stage 6) is a brand-new SUMO process: restore the snapshot, dispatch the EMS
+probe (before the plan, so every branch sends it at the same moment), apply the timing
+policies, enable the corridor, activate the diversion, then run the horizon. A failure
+marks that candidate `failed` and never sinks the run.
+
+**Horizon metrics.** Mean delay is the time lost per vehicle served during the window,
+including time spent waiting to enter the network. Max queue counts halted vehicles on
+the worst segment. Throughput is completed trips per hour. EMS response is the probe's
+realised dispatch-to-arrival time, or `null` if it did not arrive within the horizon.
+
+**Safety runs twice.** Before simulation, the validator rejects plans (stage 5). Inside a
+branch, the pre-emption controller passes every signal command through
+`check_transition` (`simulation/preemption.py`), and a violation fails the branch.
+
+**Mock recommendation rule.** Drop candidates whose EMS response is more than 10% slower
+than the baseline's, then take the lowest mean delay. A candidate that improves EMS
+response by 60 s or more, with delay within 5% of the best, wins instead.
+
+**Two drivers, same steps.** The REST pipeline runs stages 2–7 once with the configured
+`AgentProvider`. An MCP agent runs them itself (see [MCP tools](#mcp-tools-for-agents)) and
+may simulate several rounds from the same snapshot before it recommends.
+
+**Measured on main** (2026-09-19, analysis started about 75 s after the crash): a full
+mock run took 26 s of wall time, with 7 branches simulated on 4 workers at 10–16 s each.
+
 ## Simulation model (`simulation/`)
 
 **Network.** `build_network.py` writes plain node/edge XML with real street names and
@@ -54,7 +107,9 @@ clears within a cycle.
 **Habitual routing.** `device.rerouting.adaptation-interval = 0`. By default SUMO routes
 each new trip with live travel times, which amounts to perfect-information diversion
 that dissolves incidents instantly. Drivers here take habitual free-flow routes, and
-diversion is left as an explicit response to simulate later (`simulate_reroute`).
+diversion is an explicit response: a `RerouteAction` advises a share of the drivers
+headed into the blocked segment to divert, now and for later departures
+(`simulation/reroute.py`).
 
 **Collision model.** `inject_collision()` inserts two stopped `crash` vehicles in the
 blocked lane (held by a SUMO stop, so it survives snapshots). Traffic on the open lanes
@@ -92,7 +147,10 @@ behavior:
   leaks.
 
 **So every candidate must run in a fresh process**, which also makes parallel candidate
-evaluation natural: a 600 s horizon takes about 0.5 s headless.
+evaluation natural. A 600 s horizon of the healthy network takes under 1 s headless, but
+the post-crash network takes 6–8 s alone and 10–16 s with 4 branches in parallel. About
+half of that is `_apply_rubbernecking`, which makes a TraCI position lookup per vehicle per
+step on the crash link's open lanes.
 
 ## Provider boundaries
 
@@ -112,29 +170,42 @@ and `list_cameras`.
   incident is matched, the digital twin can mirror it with `inject_collision()`.
 
 **Agent.** `AgentProvider` is `propose_candidates(IncidentContext)` and
-`recommend(context, results)`. The mock proposes the classic responses for a blocked
-link: downstream flush, upstream metering, and cross-street relief. The validator already
-caught one of its early plans shortening a green below the pedestrian minimum.
-`NemotronAgentProvider` will run a tool-calling loop over NIM.
+`recommend(context, results)`. For a blocked link the mock proposes:
+- timing: downstream flush, upstream metering and cross-street relief;
+- `ems-corridor` and `corridor-plus-meter` (pre-emption), when an EMS origin or responder exists;
+- `divert-advisory`, a 30% compliance diversion around the blocked segment;
+- `aggressive-flush`, which is deliberately unsafe (an 8 s green), so the demo always shows
+  the validator rejecting a plan.
+
+`NemotronAgentProvider` is a stub. In milestone 3, Nemotron drives the
+[MCP tools](#mcp-tools-for-agents) through a tool-calling loop over NIM.
 
 **Safety.** `RuleBasedSafetyValidator` checks min/max green (including a pedestrian
 floor), non-shortened yellow and all-red clearance, cycle bounds, and offset range.
 Incompatible movements can't arise, because a `SignalPolicy` changes durations and
-offsets only; phase states always come from the base program. A production version
-would load agency timing sheets and the conflict-monitor matrix.
+offsets only; phase states always come from the base program. `validate_corridor` bounds
+a pre-emption request: known signals, a served green of at least the pedestrian minimum
+before a green may be cut, a hold ceiling, a 30–400 m detection distance, and a program in
+which every green runs into a yellow and then an all-red. At runtime the controller checks
+every command with `check_transition`; an audit of 2,778 realised signal changes across all
+branches found none unsafe. A production version would load agency timing sheets and the
+conflict-monitor matrix.
 
-## Future MCP tools
+## MCP tools (for agents)
 
-| Tool | Backed by |
-|---|---|
-| `get_city_state()` | `CityService.state` |
-| `get_incident(id)` | `SmartCityProvider.get_incident` |
-| `get_congested_segments()` | `CityState.segments` filtered by `level` |
-| `snapshot_simulation()` | `TrafficSimulation.save_snapshot` (live runner) |
-| `validate_signal_plan(plan)` | `SafetyValidator.validate` |
-| `simulate_signal_plan(plan, horizon)` | fresh `SumoSimulation` → `restore_snapshot` → `apply_signal_policy` → `run_for` |
-| `simulate_emergency_corridor(...)` | same, plus a preemption controller |
-| `simulate_reroute(...)` | same, plus TraCI rerouting of a share of affected vehicles |
-| `compare_scenarios(ids)` | horizon `TrafficMetrics` of completed candidates |
+Served at `/mcp` (streamable HTTP, stateless, JSON responses). The server's `instructions`
+describe the workflow and the metrics and can serve as the agent's system prompt. Spec
+and client snippet: [docs/specs/scenario-engine-mcp.md](specs/scenario-engine-mcp.md).
 
-Nemotron gets read and simulate tools only. No tool changes live signals.
+| Tool | Pipeline stages | Returns |
+|---|---|---|
+| `start_analysis(incident_id?, horizon_s?, agent)` | trigger + capture | run id, the incident, segments (worst congestion first), every signal's phases |
+| `validate_plan(run_id, plan)` | validate | `{safe, violations}` without simulating |
+| `simulate_plans(run_id, plans[])` | validate + simulate, one round | this round's candidates with deltas against the baseline (blocks while the branches run; baseline added on the first round) |
+| `get_analysis(run_id)` | none | every candidate so far |
+| `submit_recommendation(run_id, candidate_id, summary, rationale[])` | recommend | the completed run |
+
+Tool runs mutate the same `ScenarioRun` the REST API exposes, so the UI streams an agent's
+analysis as it happens. An agent run that goes `SCENARIO_IDLE_TIMEOUT_S` (300 s) without a
+tool call is failed, releasing the one-run lock. Every tool is read-only or runs inside a
+SUMO branch; none changes live signals.

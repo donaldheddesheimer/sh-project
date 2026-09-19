@@ -168,7 +168,7 @@ def _context(a: Analysis, max_candidates: int) -> dict:
         # the same intersections replaces them
         "standing_responses": [_standing(p) for p in ctx.standing],
         "ems": {
-            "probe": a.probe is not None,
+            "probe": bool(a.probes),
             "origin_segment": ctx.ems_origin_segment,
             "en_route": [ev.id for ev in ctx.emergency_vehicles if ev.status.value == "en_route"],
         },

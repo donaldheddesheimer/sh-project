@@ -58,7 +58,12 @@ def validation_findings(
 ) -> list[str]:
     """Human-readable reasons the plan must not be simulated; empty = safe."""
     findings: list[str] = []
+    seen_intersections: set[str] = set()
     for policy in plan.policies:
+        if policy.intersection_id in seen_intersections:
+            findings.append(f"{policy.intersection_id}: multiple policies target this intersection")
+            continue
+        seen_intersections.add(policy.intersection_id)
         program = programs.get(policy.intersection_id)
         if program is None:
             findings.append(f"{policy.intersection_id}: no signal program at this intersection")

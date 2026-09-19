@@ -8,6 +8,7 @@ geometry, the safety validator and (later) agent tools.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import sumolib
@@ -99,6 +100,15 @@ class IntersectionInfo:
     tls_id: str | None
     approaches: dict[str, ApproachInfo]  # keyed by direction
     outgoing: list[str]
+
+
+@dataclass(frozen=True)
+class RouteApproach:
+    """A signalized approach that a vehicle's route will cross."""
+
+    intersection_id: str
+    direction: str  # travel direction on the approach
+    distance_m: float  # to the stop line
 
 
 class RoadNetwork:
@@ -203,6 +213,26 @@ class RoadNetwork:
 
     def base_program(self, intersection_id: str) -> SignalProgram | None:
         return self._base_programs.get(intersection_id)
+
+    def signalized_approaches_ahead(
+        self, route: Sequence[str], route_index: int, lane_position_m: float, on_junction: bool = False
+    ) -> list[RouteApproach]:
+        """Signalized approaches the vehicle will still cross, nearest first.
+
+        ``route_index`` is the edge being driven; while ``on_junction`` it is the edge being
+        left, and the junction underfoot is already committed, so it is skipped (as in
+        ``SumoSimulation._estimate_eta``). The junction at the end of the route's last edge is
+        never included: the vehicle stops or arrives on that edge without crossing it.
+        """
+        ahead: list[RouteApproach] = []
+        distance = 0.0
+        for i in range(route_index + 1 if on_junction else route_index, len(route) - 1):
+            seg = self.segments[route[i]]
+            distance += seg.length - (lane_position_m if i == route_index else 0.0)
+            junction = self.intersections.get(seg.destination)
+            if junction is not None and junction.tls_id is not None and seg.direction in junction.approaches:
+                ahead.append(RouteApproach(junction.id, seg.direction, distance))
+        return ahead
 
     def nearest_intersection(self, x: float, y: float) -> str | None:
         best, best_d = None, float("inf")

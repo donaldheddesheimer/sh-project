@@ -29,6 +29,7 @@ class TimingLimits(BaseModel):
     min_pedestrian_green_s: float = 12.0  # placeholder: walk + clearance for a ~15 m crossing
     min_cycle_s: float = 50.0
     max_cycle_s: float = 150.0
+    min_corridor_hold_s: float = 5.0  # placeholder: a pre-empted green held for less than this cannot clear a responder
 
 
 class Violation(BaseModel):
@@ -60,6 +61,14 @@ class RuleBasedSafetyValidator(SafetyValidator):
     durations and offsets only, and phase states always come from the
     certified base program. Clearance intervals may be lengthened but never
     shortened.
+
+    The same holds for an EmergencyCorridor: pre-emption only ever changes
+    WHEN a phase ends, never a phase's state string, and it never shortens a
+    yellow or all-red clearance. A running green is cut only after
+    ``min_served_green_s``, and the responder's green is reached through the
+    program's own clearance, so ``validate_corridor`` bounds those timing
+    parameters (and that a clearance exists to end each green through) rather
+    than any phase content.
     """
 
     def __init__(self, limits: TimingLimits | None = None):
@@ -120,8 +129,13 @@ class RuleBasedSafetyValidator(SafetyValidator):
         unknown = [i for i in corridor.intersection_ids if i not in programs]
         if unknown:
             violations.append(Violation(code="unknown_signal", message=f"no signal program for {', '.join(unknown)}"))
+        duplicates = sorted({i for i in corridor.intersection_ids if corridor.intersection_ids.count(i) > 1})
+        if duplicates:
+            violations.append(Violation(code="duplicate_signal", message=f"listed more than once: {', '.join(duplicates)}"))
+
+        # Bounds are written as negated comparisons so a NaN parameter fails them instead of slipping through.
         floor = max(lim.min_green_s, lim.min_pedestrian_green_s)
-        if corridor.min_served_green_s < floor:
+        if not corridor.min_served_green_s >= floor:
             violations.append(
                 Violation(
                     code="min_green",
@@ -129,10 +143,45 @@ class RuleBasedSafetyValidator(SafetyValidator):
                     f"< {floor:.0f}s (vehicle/pedestrian minimum)",
                 )
             )
-        if corridor.max_hold_s > lim.max_green_s:
+        if corridor.min_served_green_s > lim.max_green_s:
+            violations.append(
+                Violation(
+                    code="min_green_range",
+                    message=f"minimum served green {corridor.min_served_green_s:.0f}s exceeds the {lim.max_green_s:.0f}s maximum green",
+                )
+            )
+        if not corridor.max_hold_s <= lim.max_green_s:
             violations.append(
                 Violation(code="max_green", message=f"hold {corridor.max_hold_s:.0f}s > {lim.max_green_s:.0f}s")
             )
+        if corridor.max_hold_s < lim.min_corridor_hold_s:
+            violations.append(
+                Violation(
+                    code="min_hold",
+                    message=f"hold {corridor.max_hold_s:.0f}s < {lim.min_corridor_hold_s:.0f}s (too short to clear a responder)",
+                )
+            )
         if not 30.0 <= corridor.detection_distance_m <= 400.0:
             violations.append(Violation(code="detection_distance", message="detection distance must be 30-400 m"))
+
+        # Pre-emption ends a running green early and relies on the program's own clearance to follow it,
+        # so every green must run into at least one yellow and then an all-red before any other green
+        # (the same order check_transition enforces on each commanded change).
+        for intersection_id in corridor.intersection_ids or programs:
+            phases = programs[intersection_id].phases if intersection_id in programs else []
+            for i, phase in enumerate(phases):
+                if phase.kind is not PhaseKind.GREEN:
+                    continue
+                # Ends with the phase itself (a green), so a non-yellow phase is always found.
+                after = [phases[(i + k) % len(phases)].kind for k in range(1, len(phases) + 1)]
+                yellows = next(k for k, kind in enumerate(after) if kind is not PhaseKind.YELLOW)
+                if yellows == 0 or after[yellows] is not PhaseKind.ALL_RED:
+                    violations.append(
+                        Violation(
+                            code="no_clearance",
+                            message=f"{intersection_id} phase {phase.index}: green is not followed by yellow and then "
+                            "all-red before the next green (no clearance to end it through)",
+                            phase_index=phase.index,
+                        )
+                    )
         return violations

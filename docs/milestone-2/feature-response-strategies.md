@@ -206,6 +206,119 @@ Result section below includes the numbers table.
 
 ## Result
 
-_(Fill in when done: the results table from step 3, the safety-audit count, the
-determinism check, the recommendation rule as implemented, deviations from this
-handoff, contract change requests, and anything the integrator must know.)_
+**Status: implemented and statically reviewed, but not yet run.** All testing was deferred
+on request, so Verify steps 1–6, the numbers table, the safety-audit count and the
+determinism check are still **open**. Two independent read-only reviews traced the code by
+hand (pre-emption safety; reroute, mock agent, validator and the existing tests) and found
+no bugs. The work is committed on `feature/response-strategies` and open for review as PR #4.
+
+### What was built
+
+| File | Change |
+|---|---|
+| `backend/app/simulation/preemption.py` (new) | `check_transition` (the one statement of the safety rule), `UnsafeTransition`, the pure `PreemptionController` state machine, stats and `notes()` |
+| `backend/app/simulation/reroute.py` (new) | `DiversionAdvisory`: crc32 selection, per-vehicle adapted travel times plus `rerouteTraveltime`, counts only changed routes, persistent for later departures |
+| `backend/app/simulation/network.py` | `RoadNetwork.signalized_approaches_ahead` and `RouteApproach` (pure route walk) |
+| `backend/app/simulation/sumo.py` | `enable_emergency_corridor`, `reroute_vehicles`, `response_notes`; hooks in `_after_step`; `restore_snapshot` clears the new state; `resolve_sumo_binary` also finds `sumo.exe` on Windows |
+| `backend/app/agent/mock.py` | Four new plans and a new `recommend()` |
+| `backend/app/safety/validator.py` | `validate_corridor` tightened; `validate()` unchanged |
+| `simulation/controllers/README.md` | Where pre-emption lives and how it stays safe |
+
+`metrics.py` and `scenario.py` needed no change. With no corridor or diversion enabled,
+`_after_step` adds two `is not None` checks and no TraCI calls, so the live simulation is
+unchanged.
+
+### Results table (Verify step 3): pending
+
+| Plan | Delay (s) | Max queue | Throughput (veh/h) | EMS response | Wall (s) | Notes |
+|---|---|---|---|---|---|---|
+| baseline | – | – | – | – | – | |
+| flush-downstream | – | – | – | – | – | |
+| meter-upstream | – | – | – | – | – | |
+| relieve-cross-street | – | – | – | – | – | |
+| aggressive-flush | rejected by the validator (`min_green`, C2 phase 3: 8 s < 12 s), traced by hand | | | | | |
+| ems-corridor | – | – | – | – | – | |
+| corridor-plus-meter | – | – | – | – | – | |
+| divert-advisory | – | – | – | – | – | |
+
+Safety audit (step 4): pending (transitions checked: –). Determinism (step 5): pending.
+`make test` and the live-demo check (step 6): pending.
+
+### Recommendation rule (`MockAgentProvider.recommend`, also in its docstring)
+
+1. Only `completed` candidates with metrics count. None: keep the baseline.
+2. EMS filter: drop a candidate whose realised EMS response is more than 10% slower than
+   the baseline's. A baseline responder that never arrived means no filtering; a candidate
+   responder that never arrived is dropped. The baseline is always eligible.
+3. Take the lowest mean delay. But if an eligible candidate improves EMS response by 60 s
+   or more and its delay is within 5% of the best, the biggest EMS improvement wins (ties:
+   lower delay, then candidate order). If the baseline responder never arrived, its
+   response counts as the whole horizon, so a candidate that gets it there scores a gain.
+4. The rationale gives before/after lines (EMS response as m:ss with %, delay, max queue,
+   throughput) plus one line on why the runner-up lost. Traced by hand on the fixture
+   numbers, it picks `corridor-plus-meter` with the fixture's exact rationale text.
+
+### Deviations from this handoff
+
+- **Last junction not pre-empted.** The junction at the end of a responder's last route
+  edge is never crossed (it stops on that edge), so it is never pre-empted. On the demo
+  route the notes read "2 pre-emptions (A2, B2)", not the example's "(A2, B2, C2)".
+- **`aggressive-flush` and the corridor plans appear only when an EMS origin or responder
+  is present** (`ems_origin_segment` set, or a responder en route). The frozen test
+  `test_mock_agent_candidates_pass_safety_validation` asserts every proposed policy
+  passes the validator, in a context with no EMS. See the contract change requests.
+- **Hold clock.** `max_hold_s` bounds the time a green is extended past its natural end,
+  counted from the first top-up. A green that needed no top-up reports a 0 s hold.
+- **One activation per responder per junction.** After the hold cap, or after a timing
+  policy replaces the program mid-service, that responder is not pre-empted again at that
+  junction.
+- **Reroute.** Vehicles whose destination edge is an avoided segment are skipped (they
+  cannot avoid it). `total_diverted` counts distinct vehicles; `reroute_vehicles` returns
+  the route changes made at that activation.
+- **Second `enable_emergency_corridor` replaces the first** (the latest wins).
+- **Validator additions:** codes `duplicate_signal`, `min_green_range`, `min_hold`
+  (`TimingLimits.min_corridor_hold_s = 5`), `no_clearance` (a targeted program with a
+  green directly followed by another green). The default `EmergencyCorridor()` still
+  validates.
+- **Mock wording.** The `aggressive-flush` description adds a sentence saying it is
+  deliberately unsafe (the UI must not string-match descriptions). When the baseline wins,
+  the recommendation summary is "Keep current signal timing; no candidate beat it."
+
+### Contract change requests
+
+1. **Test.** Relax `test_mock_agent_candidates_pass_safety_validation` to also cover a
+   context with `ems_origin_segment` set. There `aggressive-flush` must be the only plan
+   whose policies fail the validator (`min_green` on C2 phase 3). Do not weaken the
+   validator to make it pass.
+2. **Scenario engine** must set `ems_origin_segment` in `IncidentContext` whenever
+   `ems_probe` is true, or the corridor plans and `aggressive-flush` will not be proposed.
+3. **Candidate cap.** The default proposal set is exactly 8 plans, equal to the engine's
+   default `SCENARIO_MAX_CANDIDATES`; any added plan would push `divert-advisory` off.
+4. `interface.py` says `reroute_vehicles` returns vehicles diverted "so far"; it returns
+   the count at activation (the running total is in `response_notes`).
+
+### For the integrator, and to verify first when testing resumes
+
+Unverified assumptions (the code was written without running SUMO):
+- `rerouteTraveltime(vid, currentTravelTimes=False)` honours per-vehicle adapted travel
+  times with `adaptation-interval=0`. If not, activation returns 0 while affected vehicles
+  exist. Assert `reroute_vehicles(...) > 0` in the first run.
+- `setPhaseDuration(tls, 0)` ends the phase on the next step, and `getRouteIndex` on an
+  internal edge names the edge being left.
+- The `setPhase` jump from an all-red's last step. It is rare on this grid (it fires only
+  when a responder is first detected while its own green is clearing) and it is the one
+  command path that has never run.
+
+Tuning left open:
+- The default `detection_distance_m` (150 m) gives about 8 s of warning at EMS speed, while
+  clearing a conflicting green can take up to about 16.5 s, so a responder can still meet
+  a red. Raising the mock corridor to about 300 m (the validator allows up to 400) is the
+  obvious lever, but the spec asked for default parameters and the fixture shows 150 m.
+- The corridor mainly removes signal waits. The responder also loses time in the
+  spill-back queue, so its gain may be smaller than the fixture's synthetic figures, and
+  the 60 s preference in `recommend()` may need tuning to the measured numbers.
+
+Environment (Windows): `python -m venv backend/.venv`, then
+`backend/.venv/Scripts/python.exe -m pip install -r backend/requirements-dev.txt`. The
+Makefile targets use `.venv/bin/`, so on Windows run pytest as
+`backend/.venv/Scripts/python.exe -m pytest` from `backend/`.

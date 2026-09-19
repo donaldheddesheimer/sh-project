@@ -105,7 +105,7 @@ export function useCityStream(): CityStream {
             setStatus(msg.data.status)
             setEvents(msg.data.events)
             setHistory(msg.data.history)
-            setScenario(msg.data.scenario ?? null)
+if (msg.data.scenario) acceptScenario(msg.data.scenario)
             lastSample.current = msg.data.history.at(-1)?.t ?? -Infinity
             if (msg.data.state) {
               setState(msg.data.state)

@@ -8,7 +8,9 @@ from app.agent.base import AgentProvider
 from app.agent.mock import MockAgentProvider
 from app.agent.nemotron import NemotronAgentProvider
 from app.config import Settings
+from app.safety.validator import RuleBasedSafetyValidator
 from app.services.city import CityService, FrameObserver
+from app.services.scenarios import ScenarioService
 from app.simulation.network import RoadNetwork
 from app.simulation.scenario import load_scenario
 from app.simulation.sumo import SumoSimulation
@@ -40,10 +42,11 @@ def build_agent_provider(settings: Settings) -> AgentProvider:
     return NemotronAgentProvider(settings.nemotron_base_url, settings.nemotron_model, api_key)
 
 
-def build_city_service(settings: Settings, hub: ConnectionHub) -> CityService:
+def build_services(settings: Settings, hub: ConnectionHub) -> tuple[CityService, ScenarioService]:
     scenario = load_scenario(settings.scenario_dir)
     network = RoadNetwork(scenario)
     instance = count(1)
+    branch = count(1)
 
     def live_simulation() -> SumoSimulation:
         return SumoSimulation(
@@ -55,14 +58,33 @@ def build_city_service(settings: Settings, hub: ConnectionHub) -> CityService:
             gui=settings.sumo_gui,
         )
 
+    def branch_simulation() -> SumoSimulation:
+        # a brand-new SUMO process per candidate branch (never reused; see branching.py)
+        return SumoSimulation(
+            scenario,
+            network,
+            label=f"branch-{next(branch)}",
+            snapshot_dir=settings.snapshot_dir,
+            sumo_binary=settings.sumo_binary,
+        )
+
     smart_city, observers = build_smart_city_provider(settings, network)
-    return CityService(
+    agent = build_agent_provider(settings)
+    city = CityService(
         settings=settings,
         scenario=scenario,
         network=network,
         sim_factory=live_simulation,
         smart_city=smart_city,
-        agent=build_agent_provider(settings),
+        agent=agent,
         frame_observers=observers,
         hub=hub,
     )
+    scenarios = ScenarioService(
+        settings=settings,
+        city=city,
+        agent=agent,
+        validator=RuleBasedSafetyValidator(),
+        branch_factory=branch_simulation,
+    )
+    return city, scenarios

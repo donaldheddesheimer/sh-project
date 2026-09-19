@@ -133,7 +133,13 @@ export default function App() {
         busy={busy}
         analyze={analyze}
         fixture={!!FIXTURE_MODE}
-        onAction={(action) => run(action, ACTIONS[action])}
+onAction={(action) => {
+  if (action === 'reset') {
+    cancelReplay.current?.()
+    cancelReplay.current = null
+  }
+  void run(action, ACTIONS[action])
+}}
         onSpeed={(speed) => run('speed', () => api.speed(speed))}
         onAnalyze={startAnalysis}
       />

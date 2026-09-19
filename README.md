@@ -13,7 +13,7 @@ exist.
 
 ## Quick start
 
-Requirements: Python ≥ 3.11, Node ≥ 20. SUMO is installed from PyPI (`eclipse-sumo`), so
+Requirements: Python ≥ 3.11, Node ≥ 22.12. SUMO is installed from PyPI (`eclipse-sumo`), so
 there is no system package, no GPU and no Docker.
 
 ```bash

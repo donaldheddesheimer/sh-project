@@ -1,4 +1,4 @@
-import type { DemoInfo, Episode, Implementation, NetworkGeometry, ScenarioRun, ScenarioRunRequest } from './types'
+import type { Camera, DemoInfo, Episode, Implementation, NetworkGeometry, ScenarioRun, ScenarioRunRequest } from './types'
 
 /** A non-2xx response; `message` is the server's `detail` when it sent one. */
 export class ApiError extends Error {
@@ -30,6 +30,7 @@ async function request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?
 
 export const api = {
   network: () => request<NetworkGeometry>('GET', '/api/network'),
+  cameras: () => request<Camera[]>('GET', '/api/cameras'),
   start: () => request('POST', '/api/simulation/start'),
   pause: () => request('POST', '/api/simulation/pause'),
   reset: () => request('POST', '/api/simulation/reset'),

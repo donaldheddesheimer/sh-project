@@ -5,9 +5,9 @@ backend and a React/MapLibre console. When an incident hits, candidate responses
 timing, EMS green corridor, diversion) are **simulated in parallel SUMO branches before
 anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged. Milestone 3,
 the autonomous, self-learning episode (agent responds, applies its plan to the live twin,
-measures it, stores a lesson), is built but not yet run end to end. Milestone 4 (NVIDIA Smart
-City input, a faster twin, a memory that transfers) is planned in
-[docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md) and not built.
+measures it, stores a lesson), is built but not yet run end to end. Milestone 4's NVIDIA Smart
+City input is built but not run; its faster-twin and transferable-memory parts remain planned in
+[docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md).
 Read [README.md](README.md) for the demos and the episode (its "The autonomous, self-learning
 episode" section), and [docs/architecture.md](docs/architecture.md) for the design and both
 pipelines stage by stage.
@@ -94,10 +94,11 @@ venv directly (this is what works in PowerShell or Git Bash):
 ## Rules the design depends on
 
 - **Providers are interfaces.** `CityService` sees `SmartCityProvider` and `AgentProvider`
-  only; `providers.py` picks mock vs NVIDIA/Nemotron. `NvidiaSmartCityProvider` and the REST
-  pipeline's `NemotronAgentProvider` are stubs that raise `NotImplementedError`:
-  `SMART_CITY_PROVIDER=nvidia` fails at startup, and with `AGENT_PROVIDER=nemotron` the REST
-  Analyze Response fails. Nemotron runs only as an episode's analyst (`EPISODE_ANALYST`).
+  only; `providers.py` picks mock vs NVIDIA/Nemotron. `NvidiaSmartCityProvider` polls VSS
+  over MCP (or a development replay file), map-matches reports and has `CityService` mirror
+  matched collisions into the twin. The REST pipeline's `NemotronAgentProvider` is still a
+  stub: with `AGENT_PROVIDER=nemotron` Analyze Response fails. Nemotron runs only as an
+  episode's analyst (`EPISODE_ANALYST`).
 - **One thread owns the live TraCI connection.** TraCI is blocking and not thread-safe.
   Touch the live simulation only through `CityService.run_on_live(fn)`; scripted crashes are
   fired by the runner thread itself (`set_scripted_events`).

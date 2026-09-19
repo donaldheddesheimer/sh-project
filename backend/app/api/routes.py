@@ -25,7 +25,7 @@ from app.models.episode import DemoInfo, Episode, Implementation
 from app.models.scenario import ScenarioRun, ScenarioRunRequest
 from app.services.city import CityService, Conflict, NotReady
 from app.services.scenarios import ScenarioService
-from app.smart_city.base import Camera
+from app.smart_city.base import Camera, SmartCityStatus
 
 router = APIRouter(prefix="/api")
 ws_router = APIRouter()
@@ -206,8 +206,10 @@ async def demo(episodes: Episodes) -> DemoInfo:
 
 
 @router.post("/demo/start", response_model=Episode, status_code=202)
-async def demo_start(episodes: Episodes, request: DemoStartRequest) -> Episode:
+async def demo_start(episodes: Episodes, city: City, request: DemoStartRequest) -> Episode:
     """Reset the city and arm a demo script; detected crashes then start autonomous episodes."""
+    if not city.smart_city.simulation_is_source:
+        raise HTTPException(409, "demo scripts require the mock Smart City provider; VSS incidents are operator-analyzed")
     try:
         return await episodes.start_demo(request.script)
     except KeyError as exc:
@@ -249,6 +251,11 @@ async def clear_memory(store: Memory) -> dict:
 @router.get("/cameras", response_model=list[Camera])
 async def cameras(city: City) -> list[Camera]:
     return await city.smart_city.list_cameras()
+
+
+@router.get("/smart-city/status", response_model=SmartCityStatus)
+async def smart_city_status(city: City) -> SmartCityStatus:
+    return city.smart_city.status()
 
 
 @router.get("/events", response_model=list[OpsEvent])

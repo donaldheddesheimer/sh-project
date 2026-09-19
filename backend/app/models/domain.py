@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -163,20 +164,33 @@ class IncidentStatus(StrEnum):
     CLEARED = "cleared"
 
 
+class IncidentMatch(BaseModel):
+    """How an external report was associated with the simulation network."""
+
+    method: Literal["geometry", "place", "sensor"] | None = None
+    distance_m: float | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    notes: list[str] = Field(default_factory=list)
+    lane_assumed: bool = True
+    mirrored: bool = False
+    reason: str | None = None
+
+
 class IncidentLocation(BaseModel):
     segment_id: str | None = Field(None, description="Road segment in the simulation network (map-matched)")
     intersection_id: str | None = Field(None, description="Nearest intersection")
     position_m: float | None = Field(None, description="Distance along the segment")
-    point: GeoPoint
+    point: GeoPoint | None = None
     description: str
+    match: IncidentMatch | None = None
 
 
 class Incident(BaseModel):
     """A traffic incident as reported by a SmartCityProvider.
 
-    Field choices mirror NVIDIA VSS incident documents (mdx-incidents-*):
-    sensor_ids <- sensorId, object_ids <- objectIds, confidence <-
-    analyticsModule.info.confidence, timestamp/cleared_at <- start/end.
+    Field choices mirror NVIDIA VSS incident documents: sensor_ids <- sensorId,
+    object_ids <- objectIds, confidence <- info/analyticsModule.info confidence,
+    timestamp/cleared_at <- timestamp/end (older start is accepted by the mapper).
     """
 
     id: str
@@ -190,9 +204,13 @@ class Incident(BaseModel):
     total_lanes: int | None = None
     description: str
     source: str = Field(description="Provider that reported the incident")
+    external_id: str | None = Field(None, description="Provider-native id retained for traceability")
+    external_category: str | None = None
+    type_mapping_note: str | None = None
     sensor_ids: list[str] = Field(default_factory=list)
     object_ids: list[str] = Field(default_factory=list)
     confidence: float | None = None
+    vlm_confirmed: bool | None = None
     cleared_at: datetime | None = None
 
 

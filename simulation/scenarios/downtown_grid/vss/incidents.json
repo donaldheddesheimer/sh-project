@@ -1,0 +1,61 @@
+{
+  "incidents": [
+    {
+      "id": "GRID-VSS-001",
+      "category": "collision",
+      "timestamp": "2026-09-19T16:00:00Z",
+      "sensorId": ["CAM-B2", "CAM-C2"],
+      "objectIds": ["veh-vss-1", "veh-vss-2"],
+      "place": { "name": "Central Avenue and Main Street", "location": { "lat": 37.372744, "lon": -121.965243 } },
+      "analyticsModule": { "info": { "confidence": 0.96 } },
+      "info": { "verdict": "confirmed" },
+      "description": "VLM-confirmed collision on Main Street eastbound.",
+      "replay": { "release_at_sim_s": 320 },
+      "_note": "B2_C2 midpoint: x=376.6 m, y=248.0 m; lon=-121.9695+376.6/(111320*cos(37.3705))=-121.965243, lat=37.3705+248/110540=37.372744."
+    },
+    {
+      "id": "GRID-VSS-002",
+      "category": "collision",
+      "timestamp": "2026-09-19T16:01:00Z",
+      "sensorId": "CAM-B2",
+      "place": { "name": "Harbor Street and Central Avenue", "location": { "lat": 37.371631, "lon": -121.966652 } },
+      "info": { "verdict": "confirmed", "confidence": 0.91 },
+      "description": "A second confirmed collision on Central Avenue northbound.",
+      "replay": { "release_at_sim_s": 420 },
+      "_note": "B1_B2 midpoint: x=252 m, y=125 m; lon=-121.9695+252/(111320*cos(37.3705))=-121.966652, lat=37.3705+125/110540=37.371631."
+    },
+    {
+      "id": "GRID-VSS-003",
+      "category": "collision",
+      "timestamp": "2026-09-19T16:02:00Z",
+      "sensorId": "CAM-C2",
+      "place": { "name": "Main Street and Pine Avenue", "location": { "lat": 37.372744, "lon": -121.965243 } },
+      "info": { "verdict": "rejected", "confidence": 0.55 },
+      "description": "Candidate collision rejected by the VLM.",
+      "replay": { "release_at_sim_s": 500 },
+      "_note": "Uses the same hand-computed B2_C2 point as GRID-VSS-001; it must be filtered before matching or mirroring."
+    },
+    {
+      "id": "GRID-VSS-004",
+      "category": "collision",
+      "timestamp": "2026-09-19T16:03:00Z",
+      "sensorId": "CAM-OFF-NETWORK",
+      "place": { "name": "Remote Road and Nowhere Street", "location": { "lat": 37.382744, "lon": -121.955243 } },
+      "info": { "verdict": "confirmed", "confidence": 0.88 },
+      "description": "Confirmed report outside the simulated road network.",
+      "replay": { "release_at_sim_s": 560 },
+      "_note": "Deliberately shifted about 1.4 km northeast from the B2_C2 calculation, beyond the 40 m match radius."
+    },
+    {
+      "id": "GRID-VSS-005",
+      "category": "collision",
+      "timestamp": "2026-09-19T16:04:00Z",
+      "sensorId": "CAM-B2",
+      "place": { "name": "Main Street and Central Avenue", "location": { "lat": 37.372789, "lon": -121.965243 } },
+      "info": { "verdict": "confirmed", "confidence": 0.94 },
+      "description": "Confirmed westbound collision that later clears.",
+      "replay": { "release_at_sim_s": 620, "clear_at_sim_s": 740 },
+      "_note": "C2_B2 midpoint: x=376.6 m, y=253 m; same longitude arithmetic, lat=37.3705+253/110540=37.372789."
+    }
+  ]
+}

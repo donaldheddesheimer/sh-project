@@ -2,7 +2,7 @@ import type { FeatureCollection, Geometry } from 'geojson'
 import { GeoJSONSource, Map as MapLibreMap, Marker, NavigationControl, setWorkerUrl } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useRef } from 'react'
-import type { CityState, Incident, NetworkGeometry } from '../../api/types'
+import type { Camera, CityState, Incident, NetworkGeometry } from '../../api/types'
 import { duration } from '../../lib/format'
 import type { PlanOverlay } from '../../lib/plans'
 import { baseStyle, layers } from './style'
@@ -17,6 +17,7 @@ const FIT_PADDING = { top: 56, bottom: 24, left: 24, right: 24 }
 interface Props {
   network: NetworkGeometry
   state: CityState | null
+  cameras: Camera[]
   selection: Selection | null
   planOverlay: PlanOverlay | null
   onSelect: (selection: Selection | null) => void
@@ -79,7 +80,7 @@ function markerElement(className: string, html: string): HTMLDivElement {
   return el
 }
 
-export function CityMap({ network, state, selection, planOverlay, onSelect }: Props) {
+export function CityMap({ network, state, cameras, selection, planOverlay, onSelect }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const ready = useRef(false)
@@ -146,6 +147,12 @@ export function CityMap({ network, state, selection, planOverlay, onSelect }: Pr
           .setLngLat([station.lon, station.lat])
           .addTo(map)
       }
+      for (const camera of cameras) {
+        if (!camera.location) continue
+        const marker = markerElement('camera-marker', '')
+        marker.title = `${camera.id} · ${camera.name}`
+        new Marker({ element: marker }).setLngLat([camera.location.lon, camera.location.lat]).addTo(map)
+      }
       ready.current = true
     })
 
@@ -175,7 +182,7 @@ export function CityMap({ network, state, selection, planOverlay, onSelect }: Pr
       map.remove()
       mapRef.current = null
     }
-  }, [network])
+  }, [network, cameras])
 
   // ---- live state -------------------------------------------------------------------------
   useEffect(() => {
@@ -285,6 +292,7 @@ export function CityMap({ network, state, selection, planOverlay, onSelect }: Pr
 function syncIncidentMarkers(map: MapLibreMap, markers: Map<string, Marker>, incidents: Incident[]) {
   const active = new Set(incidents.map((i) => i.id))
   for (const incident of incidents) {
+    if (!incident.location.point) continue
     if (markers.has(incident.id)) continue
     const el = markerElement(
       `incident-marker severity-${incident.severity}`,

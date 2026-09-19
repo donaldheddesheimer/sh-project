@@ -164,20 +164,22 @@ step on the crash link's open lanes.
 
 ## Provider boundaries
 
-**Smart City.** `SmartCityProvider` is `start(emit)`, `list_incidents`, `get_incident`
-and `list_cameras`.
+**Smart City.** `SmartCityProvider` is `start(emit)`, `list_incidents`, `get_incident`,
+`list_cameras` and `status`; `simulation_is_source` says whether reports originate in the twin.
 - `MockSmartCityProvider` stands in for video analytics. It watches the disruptions the
   simulation models (ground truth) and reports each as an `Incident` after a detection
   delay. It fills in named location text, sensor ids of the adjacent intersection
   cameras, and object ids. It receives frames through a factory-registered observer, so
   `CityService` doesn't know it exists.
-- `NvidiaSmartCityProvider` will consume the **VSS Video Analytics MCP server**, whose
-  Smart City profile exposes `get_incidents`, `get_incident`, `get_sensor_ids`,
-  `get_places`, `get_average_speeds`, `get_fov_histogram` and `analyze` over
-  Elasticsearch `mdx-*` indices. The planned field mapping is documented in
-  `app/smart_city/nvidia.py`. The missing piece is **map matching** of VSS lat/lon and
-  place names to a network segment and lane, which should be its own component. Once an
-  incident is matched, the digital twin can mirror it with `inject_collision()`.
+- `NvidiaSmartCityProvider` polls the **VSS Video Analytics MCP server** through the MCP SDK,
+  or a development-only VSS-shaped replay file on simulation time. `vss_mapping.py` contains
+  every document-field assumption; `matching.py` resolves geometry first, then normalized
+  place names and registered sensors, with an explicit confidence and lane-0 assumption.
+  `CityService` reconciles each active matched external collision to exactly one linked twin
+  disruption through the runner thread, clears it with the report, and restores it once after
+  reset warm-up. Non-collisions and unmatched reports remain visible but cannot be analyzed.
+  Provider failures back off without stopping frames; `/api/smart-city/status` exposes health.
+  This was checked against the published VSS 3.2 tool reference, not a running endpoint.
 
 **Agent.** `AgentProvider` is `propose_candidates(IncidentContext)` and
 `recommend(context, results)`. For a blocked link the mock proposes:

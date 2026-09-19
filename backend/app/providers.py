@@ -17,6 +17,7 @@ from app.learning.implementor import Implementor
 from app.learning.monitor import LiveMonitor
 from app.learning.reviewer import MockReviewer, NemotronReviewer
 from app.learning.store import ExperienceStore
+from app.models.domain import Severity
 from app.safety.validator import RuleBasedSafetyValidator
 from app.services.city import CityService, FrameObserver
 from app.services.scenarios import ScenarioService
@@ -25,7 +26,9 @@ from app.simulation.scenario import load_scenario
 from app.simulation.sumo import SumoSimulation
 from app.smart_city.base import SmartCityProvider
 from app.smart_city.mock import MockSmartCityProvider
+from app.smart_city.matching import RoadMatcher
 from app.smart_city.nvidia import NvidiaSmartCityProvider
+from app.smart_city.vss_client import McpVssClient, ReplayVssClient
 from app.websocket.hub import ConnectionHub
 
 
@@ -41,16 +44,30 @@ class Services:
 def build_smart_city_provider(settings: Settings, network: RoadNetwork) -> tuple[SmartCityProvider, list[FrameObserver]]:
     """Returns the provider plus any simulation-frame observers it needs.
 
-    Only the mock needs frames (it detects incidents from simulation ground
-    truth); the NVIDIA provider gets its data from VSS.
+    Both providers observe frames: the mock sees simulation truth, while VSS replay uses
+    simulation time so its timeline is reproducible at every live speed.
     """
     if settings.smart_city_provider == "mock":
         provider = MockSmartCityProvider(network, detection_delay_s=settings.incident_detection_delay_s)
         return provider, [provider.observe]
-    if not settings.nvidia_va_mcp_url:
-        raise RuntimeError("SMART_CITY_PROVIDER=nvidia requires NVIDIA_VA_MCP_URL")
+    if settings.demo_script:
+        raise RuntimeError("DEMO_SCRIPT cannot be used with SMART_CITY_PROVIDER=nvidia; use the mock provider")
+    if not settings.vss_replay_file and not settings.nvidia_va_mcp_url:
+        raise RuntimeError("SMART_CITY_PROVIDER=nvidia requires NVIDIA_VA_MCP_URL or VSS_REPLAY_FILE")
     api_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
-    return NvidiaSmartCityProvider(settings.nvidia_va_mcp_url, api_key), []
+    client = (
+        ReplayVssClient(settings.vss_replay_file)
+        if settings.vss_replay_file
+        else McpVssClient(settings.nvidia_va_mcp_url or "", api_key)
+    )
+    provider = NvidiaSmartCityProvider(
+        client,
+        RoadMatcher(network, settings.vss_match_max_dist_m),
+        settings.vss_poll_s,
+        settings.vss_require_vlm_confirmation,
+        Severity(settings.vss_default_severity),
+    )
+    return provider, [provider.observe]
 
 
 def build_agent_provider(settings: Settings) -> AgentProvider:

@@ -7,6 +7,7 @@ interface Props {
   incidents: Incident[]
   segments: RoadSegmentState[]
   responders: EmergencyVehicleState[]
+  cameraCount: number
   busy: string | null
   onDispatch: () => void
   onClear: (id: string) => void
@@ -26,7 +27,7 @@ function LaneDiagram({ total, blocked }: { total: number; blocked: number[] }) {
   )
 }
 
-export function IncidentPanel({ incidents, segments, responders, busy, onDispatch, onClear }: Props) {
+export function IncidentPanel({ incidents, segments, responders, cameraCount, busy, onDispatch, onClear }: Props) {
   const incident = incidents.length ? incidents.reduce((a, b) => (a.timestamp > b.timestamp ? a : b)) : null
 
   if (!incident) {
@@ -38,7 +39,9 @@ export function IncidentPanel({ incidents, segments, responders, busy, onDispatc
           </span>
           <div>
             <div className="object-title">No active incidents</div>
-            <div className="muted small">Network operating normally. Camera analytics monitoring 9 intersections.</div>
+            <div className="muted small">
+              Network operating normally. Camera analytics monitoring {cameraCount} {cameraCount === 1 ? 'camera' : 'cameras'}.
+            </div>
           </div>
         </div>
       </Section>
@@ -93,6 +96,27 @@ export function IncidentPanel({ incidents, segments, responders, busy, onDispatc
           </dd>
           <dt>Source</dt>
           <dd>Smart City · {incident.source}</dd>
+          {incident.confidence != null && (
+            <>
+              <dt>Confidence</dt>
+              <dd>{Math.round(incident.confidence * 100)}%</dd>
+            </>
+          )}
+          {incident.vlm_confirmed != null && (
+            <>
+              <dt>VLM</dt>
+              <dd>{incident.vlm_confirmed ? 'confirmed' : 'not confirmed'}</dd>
+            </>
+          )}
+          <dt>Map match</dt>
+          <dd>
+            {incident.location.match?.method
+              ? `${incident.location.match.method}${incident.location.match.distance_m == null ? '' : ` · ${incident.location.match.distance_m.toFixed(0)} m`} · ${Math.round(incident.location.match.confidence * 100)}%${incident.location.match.mirrored ? ' · mirrored' : ''}`
+              : 'not matched to the road network'}
+          </dd>
+          {incident.location.match?.notes.map((note) => (
+            <dd className="muted small" key={note}>{note}</dd>
+          ))}
         </dl>
 
         <div className="object-actions">

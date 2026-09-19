@@ -291,22 +291,74 @@ committed on `feature/vss-input`.
 
 ## Result
 
-_To be filled in by whoever implements this branch._
+**Built.** `McpVssClient` (streamable HTTP, optional bearer token) and the development-only
+simulation-clock `ReplayVssClient`; the polling/cache/status `NvidiaSmartCityProvider`; isolated
+VSS mapping and VLM filtering; geometry/place/sensor map matching; inverse geo projection and
+deterministic nearest-road queries; external-incident reconciliation into the live twin; reset,
+analysis and demo guards; camera and match UI; provider status API; both replay timelines; four
+Oakland demo scripts; settings and documentation.
 
-**Built.**
+**How it hooks in.** `build_smart_city_provider` chooses MCP or replay when
+`SMART_CITY_PROVIDER=nvidia`, registers the provider's frame observer for simulation time, and
+leaves the mock branch unchanged. A poll maps an external id to stable `INC-NNNN`, emits a Smart
+City event, and `CityService` reconciles the provider's active matched collisions on the live
+runner thread while holding `live_change_lock`. The provider cache backs incident/camera routes;
+`GET /api/smart-city/status` is read-only. Reconciliation clears ended reports and restores active
+ones once after reset warm-up. The twin's crash vehicle count, spacing and pass speed remain model
+assumptions, never observations attributed to VSS.
 
-**How it hooks in.**
+**Schema source.** Checked against NVIDIA's published VSS 3.2 Video Analytics MCP reference:
+[`vss-query-analytics`](https://github.com/nvidia/skills/blob/main/skills/vss-query-analytics/SKILL.md)
+and the [VSS alert-verification documentation](https://docs.nvidia.com/vss/3.1.0/alert-verification-service.html).
+They establish the `video_analytics__*` tool names, `timestamp`/`end`, `category`, `sensorId`,
+`place.name`, `objectIds`, and `info.verdict`. The compatibility mapper also accepts the older
+docstring's `start` and nested analytics-module fields. No running Blueprint server was available.
 
-**Schema source** (the Blueprint's docs, or the docstring).
+**Verified by reading.** Traced the confirmed fixtures through release → mapping → geometry match
+→ event → one mirrored disruption → cached incident → analyzable scenario. The second confirmed
+collision becomes a separate internal incident/disruption. An unconfirmed collision stops in the
+mapper and increments the status count. An off-network report remains listed with the reason, is
+not mirrored, and reaches the existing 409 path. At `clear_at_sim_s`, replay adds `end`, the provider
+emits clear, and reconciliation removes only its linked disruption. After reset, stale disruption
+ids are checked against `list_disruptions()` and each still-active report is injected once after
+warm-up. Non-collisions remain visible but unmirrored and fail the same analysis guard. Confirmed
+all reflection/analysis/demo changes are gated by `simulation_is_source=False`; the mock provider's
+construction, detection and cache paths are unchanged. Read both `GeoProjector` branches: the
+synthetic inverse is algebraically paired with `to_lonlat`, and projected networks use SUMO's paired
+`convertLonLat2XY`/`convertXY2LonLat` calls. Read every owned shared-file edit against MASTER.
 
-**Verified by reading.**
-
-**Not run / not verified.**
+**Not run / not verified.** No tests, backend, SUMO, replay, demo, MCP endpoint or real VSS endpoint
+was run, as required by the repository hard rule. Neither VSS client was exercised. Fixture
+coordinates and lane choices were read from XML/OSM and remain runtime-unverified. Frontend lint
+and build were attempted but did not run: this checkout has no `node_modules`, so `oxlint` and
+`tsc` were not found. No dependencies were added.
 
 **Checks for the user to run** (commands, and what to look for).
 
-**Measured** (only numbers the user reported).
+1. Grid replay: `SMART_CITY_PROVIDER=nvidia VSS_REPLAY_FILE=simulation/scenarios/downtown_grid/vss/incidents.json make backend`, then `npm --prefix frontend run dev -- --port 5176`. At sim 320,
+   confirm source `vss-replay`, a geometry match, one crash marker/queue, then run Analyze Response.
+2. Filters: after sim 560, run `curl -s http://127.0.0.1:8000/api/smart-city/status` and
+   `curl -s http://127.0.0.1:8000/api/incidents`. Confirm one filtered unconfirmed report and an
+   unmatched off-network incident. POST it to `/api/scenarios/run`; expect 409.
+3. Clear/reset: let sim 740 pass and confirm the clearing fixture reopens its lane. Reset between
+   release and clear with `curl -X POST http://127.0.0.1:8000/api/simulation/reset`; confirm every
+   still-active mirrored crash returns exactly once after warm-up.
+4. Oakland replay: `SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland SMART_CITY_PROVIDER=nvidia VSS_REPLAY_FILE=simulation/scenarios/pittsburgh_oakland/vss/incidents.json make backend`; repeat the
+   match/mirror/analyze checks. For scripts, restart with `SMART_CITY_PROVIDER=mock` and POST each of
+   `crash-ahead`, `crash-already`, `double-crash`, `varied-crash` to `/api/demo/start`. With VSS,
+   the same POST must return 409.
+5. Failure: `SMART_CITY_PROVIDER=nvidia NVIDIA_VA_MCP_URL=http://127.0.0.1:9/mcp make backend`.
+   Confirm the app stays up, one warning is logged until recovery, and `/api/smart-city/status`
+   reports the connection error while simulation frames continue.
+6. Real endpoint, if one exists: set `NVIDIA_VA_MCP_URL` (and `NVIDIA_API_KEY` if required), leave
+   `VSS_REPLAY_FILE` unset, compare returned documents with `vss_mapping.py`, and record any field
+   correction. After `npm install`, run `npm --prefix frontend run lint` and
+   `npm --prefix frontend run build`.
 
-**Contract change requests.**
+**Measured.** None; no user-reported runs or numbers were available.
 
-**Deviations.**
+**Contract change requests.** None.
+
+**Deviations.** No lateral lane inference was attempted: every VSS match explicitly assumes lane
+0 because the published contract supplies no lane-grade accuracy. The published VSS 3.2 reference,
+not an available `va_mcp_server_config.yml` or live response, was the schema authority.

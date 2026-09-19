@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <input>
+        <net-file value="../../networks/grid3x3/grid3x3.net.xml"/>
+        <additional-files value="vtypes.add.xml"/>
+        <route-files value="demand.rou.xml"/>
+    </input>
+    <time>
+        <begin value="0"/>
+        <step-length value="0.5"/>
+    </time>
+    <processing>
+        <time-to-teleport value="300"/>
+        <collision.action value="warn"/>
+    </processing>
+    <routing>
+        <!-- Drivers take habitual (free-flow fastest) routes. Without this, SUMO routes
+             each new vehicle with live travel times - perfect-information diversion that
+             hides incidents. Diversion is modelled explicitly as a response instead. -->
+        <device.rerouting.adaptation-interval value="0"/>
+    </routing>
+    <random_number>
+        <seed value="42"/>
+    </random_number>
+    <report>
+        <no-step-log value="true"/>
+        <no-warnings value="true"/>
+        <duration-log.disable value="true"/>
+    </report>
+</configuration>

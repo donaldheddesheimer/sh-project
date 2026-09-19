@@ -1,0 +1,16 @@
+{
+  "id": "downtown_grid",
+  "name": "Downtown Grid",
+  "description": "Synthetic 3x3 signalized downtown grid with continuous background demand.",
+  "sumocfg": "scenario.sumocfg",
+  "geo_origin": { "lat": 37.3705, "lon": -121.9695 },
+  "ems_stations": [
+    { "id": "EMS-3", "name": "Fire Station 3", "edge": "W2_A2" }
+  ],
+  "default_collision": {
+    "edge": "B2_C2",
+    "lanes": [0],
+    "position_fraction": 0.55,
+    "severity": "major"
+  }
+}

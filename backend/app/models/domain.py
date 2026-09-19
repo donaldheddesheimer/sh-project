@@ -1,0 +1,349 @@
+"""Core domain models shared by the simulation, providers, API and (later) MCP tools.
+
+Units: distances in metres, speeds in m/s, durations and simulation times in
+seconds. Wall-clock timestamps are timezone-aware UTC datetimes.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from enum import StrEnum
+
+from pydantic import BaseModel, Field
+
+
+class GeoPoint(BaseModel):
+    lat: float
+    lon: float
+
+
+# --------------------------------------------------------------------------
+# Live network state
+# --------------------------------------------------------------------------
+
+
+class SignalColor(StrEnum):
+    GREEN = "green"
+    YELLOW = "yellow"
+    RED = "red"
+
+
+class CongestionLevel(StrEnum):
+    FREE = "free"
+    MODERATE = "moderate"
+    HEAVY = "heavy"
+    SEVERE = "severe"
+
+
+class IntersectionState(BaseModel):
+    id: str
+    name: str
+    location: GeoPoint
+    signalized: bool
+    current_phase: int | None = None
+    phase_label: str | None = Field(None, description='Human-readable phase, e.g. "N-S green"')
+    phase_remaining: float | None = Field(None, description="Seconds until the next phase change")
+    cycle_length: float | None = None
+    program_id: str | None = None
+    approach_signals: dict[str, SignalColor] = Field(
+        default_factory=dict, description="Through-movement signal per approach, keyed NB/SB/EB/WB (travel direction)"
+    )
+    queue_lengths: dict[str, int] = Field(
+        default_factory=dict, description="Halting vehicles per approach, keyed NB/SB/EB/WB"
+    )
+    average_speed: float = Field(0.0, description="Mean speed on the approaches (m/s)")
+    vehicle_count: int = Field(0, description="Vehicles on the approaches")
+    congestion: float = Field(0.0, ge=0.0, le=1.0)
+
+
+class RoadSegmentState(BaseModel):
+    id: str
+    name: str
+    source: str
+    destination: str
+    direction: str = Field(description="Travel direction: NB/SB/EB/WB")
+    average_speed: float
+    speed_limit: float
+    vehicle_count: int
+    halting_count: int = Field(description="Vehicles with speed < 0.1 m/s (queue)")
+    occupancy: float = Field(ge=0.0, le=1.0)
+    congestion: float = Field(ge=0.0, le=1.0, description="Smoothed congestion index")
+    level: CongestionLevel
+    blocked_lanes: list[int] = Field(default_factory=list)
+
+
+class VehicleKind(StrEnum):
+    CAR = "car"
+    TRUCK = "truck"
+    BUS = "bus"
+    EMERGENCY = "emergency"
+    DISABLED = "disabled"
+
+
+class VehicleState(BaseModel):
+    id: str
+    lat: float
+    lon: float
+    angle: float = Field(description="Heading in degrees, 0 = north, clockwise")
+    speed: float
+    kind: VehicleKind
+
+
+class EmergencyStatus(StrEnum):
+    EN_ROUTE = "en_route"
+    ON_SCENE = "on_scene"
+    COMPLETED = "completed"
+
+
+class EmergencyVehicleState(BaseModel):
+    id: str
+    status: EmergencyStatus
+    location: GeoPoint | None
+    speed: float
+    origin_segment: str
+    destination_segment: str
+    dispatched_at: float = Field(description="Simulation time of dispatch")
+    arrived_at: float | None = None
+    eta_s: float | None = Field(None, description="Estimated seconds to scene (None once arrived)")
+
+
+class TrafficMetrics(BaseModel):
+    """Network performance indicators.
+
+    Live metrics (window_s is None) describe the current instant:
+      mean_vehicle_delay = mean accumulated time loss of vehicles now in the network.
+    Horizon metrics (window_s set) summarise a simulated run of that length:
+      mean_vehicle_delay = time loss accrued during the window per vehicle served,
+      including time spent waiting to enter the network.
+    """
+
+    sim_time: float
+    window_s: float | None = None
+    mean_vehicle_delay: float = Field(description="Seconds")
+    max_queue_length: int = Field(description="Vehicles halted on the worst segment")
+    max_queue_segment: str | None = None
+    throughput: float = Field(description="Completed trips per hour")
+    mean_speed: float = Field(description="m/s")
+    emergency_vehicle_eta: float | None = Field(None, description="Seconds until the responder reaches the scene")
+    vehicles_in_network: int = 0
+    vehicles_waiting_to_enter: int = 0
+
+
+# --------------------------------------------------------------------------
+# Incidents
+# --------------------------------------------------------------------------
+
+
+class IncidentType(StrEnum):
+    COLLISION = "collision"
+    STALLED_VEHICLE = "stalled_vehicle"
+    WRONG_WAY = "wrong_way"
+    CONGESTION = "congestion"
+
+
+class Severity(StrEnum):
+    MINOR = "minor"
+    MAJOR = "major"
+    CRITICAL = "critical"
+
+
+class IncidentStatus(StrEnum):
+    ACTIVE = "active"
+    CLEARED = "cleared"
+
+
+class IncidentLocation(BaseModel):
+    segment_id: str | None = Field(None, description="Road segment in the simulation network (map-matched)")
+    intersection_id: str | None = Field(None, description="Nearest intersection")
+    position_m: float | None = Field(None, description="Distance along the segment")
+    point: GeoPoint
+    description: str
+
+
+class Incident(BaseModel):
+    """A traffic incident as reported by a SmartCityProvider.
+
+    Field choices mirror NVIDIA VSS incident documents (mdx-incidents-*):
+    sensor_ids <- sensorId, object_ids <- objectIds, confidence <-
+    analyticsModule.info.confidence, timestamp/cleared_at <- start/end.
+    """
+
+    id: str
+    type: IncidentType
+    status: IncidentStatus = IncidentStatus.ACTIVE
+    severity: Severity
+    location: IncidentLocation
+    timestamp: datetime = Field(description="When the incident was detected (UTC)")
+    sim_time: float | None = Field(None, description="Simulation time of detection")
+    affected_lanes: list[int] = Field(default_factory=list, description="0 = rightmost lane")
+    total_lanes: int | None = None
+    description: str
+    source: str = Field(description="Provider that reported the incident")
+    sensor_ids: list[str] = Field(default_factory=list)
+    object_ids: list[str] = Field(default_factory=list)
+    confidence: float | None = None
+    cleared_at: datetime | None = None
+
+
+# --------------------------------------------------------------------------
+# Signal control and candidate evaluation
+# --------------------------------------------------------------------------
+
+
+class PhaseKind(StrEnum):
+    GREEN = "green"
+    YELLOW = "yellow"
+    ALL_RED = "all_red"
+
+
+class SignalPhase(BaseModel):
+    index: int
+    duration: float
+    state: str = Field(description="SUMO signal state string, one char per controlled link")
+    kind: PhaseKind
+    label: str
+    served_approaches: list[str] = Field(default_factory=list, description="Approaches whose through movement runs")
+
+
+class SignalProgram(BaseModel):
+    intersection_id: str
+    program_id: str
+    phases: list[SignalPhase]
+
+    @property
+    def cycle_length(self) -> float:
+        return sum(p.duration for p in self.phases)
+
+
+class SignalPolicy(BaseModel):
+    """A proposed timing change for one intersection.
+
+    Policies only change timing (splits via phase durations, and offset). Phase
+    states - which movements run together - always come from the base program,
+    so a policy can never create conflicting green movements.
+    """
+
+    intersection_id: str
+    phase_durations: dict[int, float] = Field(default_factory=dict, description="Phase index -> new duration (s)")
+    offset_s: float | None = Field(None, description="New cycle offset (s)")
+    reason: str
+
+
+class CandidateStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
+class SimulationCandidate(BaseModel):
+    id: str
+    description: str
+    policy: list[SignalPolicy] = Field(default_factory=list, description="Empty for the do-nothing baseline")
+    metrics: TrafficMetrics | None = None
+    status: CandidateStatus = CandidateStatus.PENDING
+    notes: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Simulation ground truth (what the digital twin is modelling)
+# --------------------------------------------------------------------------
+
+
+class Disruption(BaseModel):
+    """A physical disruption modelled in the simulation (e.g. crashed vehicles)."""
+
+    id: str
+    kind: IncidentType
+    segment_id: str
+    lanes: list[int]
+    total_lanes: int
+    position_m: float
+    severity: Severity
+    started_at: float = Field(description="Simulation time")
+    point: GeoPoint
+    vehicle_ids: list[str] = Field(default_factory=list)
+    pass_speed: float | None = Field(None, description="Speed limit past the scene on open lanes (m/s)")
+
+
+class EmergencyDispatch(BaseModel):
+    id: str
+    origin_segment: str
+    destination_segment: str
+    destination_position: float
+    destination_lane: int
+    dispatched_at: float
+    arrived_at: float | None = None
+    status: EmergencyStatus = EmergencyStatus.EN_ROUTE
+
+
+class SimulationSnapshot(BaseModel):
+    """A saved simulation state that candidate runs can branch from."""
+
+    id: str
+    sim_time: float
+    path: str
+    created_at: datetime
+    disruptions: list[Disruption] = Field(default_factory=list)
+    dispatches: list[EmergencyDispatch] = Field(default_factory=list)
+
+
+class NetworkState(BaseModel):
+    sim_time: float
+    intersections: list[IntersectionState]
+    segments: list[RoadSegmentState]
+    vehicles: list[VehicleState]
+    emergency_vehicles: list[EmergencyVehicleState]
+    metrics: TrafficMetrics
+    disruptions: list[Disruption] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Static network geometry (sent once to map clients)
+# --------------------------------------------------------------------------
+
+
+class SegmentGeometry(BaseModel):
+    id: str
+    name: str
+    source: str
+    destination: str
+    direction: str
+    lanes: int
+    length: float
+    speed_limit: float
+    coordinates: list[tuple[float, float]] = Field(description="[lon, lat] centreline of the road")
+
+
+class ApproachGeometry(BaseModel):
+    segment_id: str
+    approach: str
+    signal_point: tuple[float, float] = Field(description="[lon, lat] of the signal head marker")
+
+
+class IntersectionGeometry(BaseModel):
+    id: str
+    name: str
+    lon: float
+    lat: float
+    signalized: bool
+    approaches: list[ApproachGeometry]
+
+
+class StationGeometry(BaseModel):
+    id: str
+    name: str
+    segment_id: str
+    lon: float
+    lat: float
+
+
+class NetworkGeometry(BaseModel):
+    id: str
+    name: str
+    center: tuple[float, float]
+    bounds: tuple[tuple[float, float], tuple[float, float]]
+    segments: list[SegmentGeometry]
+    intersections: list[IntersectionGeometry]
+    stations: list[StationGeometry]

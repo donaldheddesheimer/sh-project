@@ -1,5 +1,10 @@
 # Milestone 2: Analyze Response (parallel work plan)
 
+> **Historical record.** Milestone 2 is merged. The rules below (file ownership, "frozen"
+> files, "no new test files", worktree paths and ports) governed that parallel-agent effort
+> and do not apply to current work. For how the system works now, read
+> [../architecture.md](../architecture.md) and the repo-root `CLAUDE.md`.
+
 **Goal.** When an incident is active, the operator clicks **Analyze Response**. The
 backend then:
 

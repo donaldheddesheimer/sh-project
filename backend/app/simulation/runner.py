@@ -60,8 +60,13 @@ class LiveSimulationRunner:
         self._status = RunStatus.STARTING
         self._error: str | None = None
         self._dirty = True
+        self._boot_events: list[tuple[float, Callable[[TrafficSimulation], object]]] = []
 
     # ------------------------------------------------------------ public API
+
+    def set_boot_events(self, events: list[tuple[float, Callable[[TrafficSimulation], object]]]) -> None:
+        """Events to fire at simulation times inside every warm-up (this boot's and each later reset's)."""
+        self._boot_events = sorted(events, key=lambda e: e[0])
 
     @property
     def status(self) -> RunStatus:
@@ -168,10 +173,23 @@ class LiveSimulationRunner:
         sim = self._factory()
         self._sim = sim
         sim.start()
-        if self._warmup_s > 0:
-            sim.run_for(self._warmup_s)
+        self._warm_up(sim)
         self._status = RunStatus.RUNNING if self._want_running else RunStatus.PAUSED
         self._dirty = True
+
+    def _warm_up(self, sim: TrafficSimulation) -> None:
+        """Run the warm-up, firing each boot event at its simulation time (a scripted crash that has already
+        happened by the time the console opens)."""
+        now = 0.0
+        for at, fn in self._boot_events:
+            if at >= self._warmup_s:
+                continue  # after warm-up: whoever scheduled it fires it while the demo runs
+            if at > now:
+                sim.run_for(at - now)
+                now = at
+            fn(sim)
+        if self._warmup_s > now:
+            sim.run_for(self._warmup_s - now)
 
     def _drain(self, wait: float) -> None:
         try:

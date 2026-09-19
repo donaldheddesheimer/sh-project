@@ -56,10 +56,6 @@ class DiversionAdvisory:
         self._diverted: set[str] = set()
 
     @property
-    def is_active(self) -> bool:
-        return bool(self._advisories)
-
-    @property
     def total_diverted(self) -> int:
         """Distinct vehicles whose route was changed by any advisory so far."""
         return len(self._diverted)

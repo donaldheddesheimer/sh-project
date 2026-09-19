@@ -71,20 +71,36 @@ def _sample(m: TrafficMetrics) -> MetricSample:
     )
 
 
+def apply_plan(sim: TrafficSimulation, plan: CandidatePlan) -> dict[str, str]:
+    """Install a plan's policies, corridor and reroutes on ``sim``; returns intersection -> program id.
+
+    The same steps run in a branch and on the live simulation, so what was tested is what goes live.
+    """
+    programs = {policy.intersection_id: sim.apply_signal_policy(policy) for policy in plan.policies}
+    if plan.corridor is not None:
+        sim.enable_emergency_corridor(plan.corridor)
+    for action in plan.reroutes:
+        sim.reroute_vehicles(action)
+    return programs
+
+
 def run_branch(
     factory: Callable[[], TrafficSimulation],
     snapshot: SimulationSnapshot,
     plan: CandidatePlan,
-    probe: ProbeSpec | None,
+    probes: list[ProbeSpec],
     horizon_s: float,
     sample_every_s: float,
     on_start: Callable[[], None] | None = None,
+    standing: list[CandidatePlan] | None = None,
 ) -> SimulationCandidate:
     """Simulate ``plan`` for ``horizon_s`` from ``snapshot``; never raises.
 
-    The probe is dispatched before the plan is applied, so every branch sends
-    its responder at the same simulation time. Failures come back as a
-    ``failed`` candidate with the error in ``notes``.
+    The probes are dispatched before the plan is applied, so every branch sends
+    its responders at the same simulation time. ``standing`` are responses already
+    in force on the live city (snapshots capture base signal programs only), re-applied
+    first so the branch starts from the live city's real state; ``plan`` is then applied
+    on top of them. Failures come back as a ``failed`` candidate with the error in ``notes``.
     """
     candidate = candidate_from_plan(plan)
     candidate.status = CandidateStatus.RUNNING
@@ -96,14 +112,11 @@ def run_branch(
         sim = factory()
         sim.start()
         sim.restore_snapshot(snapshot)
-        if probe is not None:
+        for probe in probes:
             sim.spawn_emergency_vehicle(probe.origin_segment, probe.destination_segment, probe.position_m, probe.lane)
-        for policy in plan.policies:
-            sim.apply_signal_policy(policy)
-        if plan.corridor is not None:
-            sim.enable_emergency_corridor(plan.corridor)
-        for action in plan.reroutes:
-            sim.reroute_vehicles(action)
+        for response in standing or []:
+            apply_plan(sim, response)
+        apply_plan(sim, plan)
         candidate.metrics = sim.run_for(
             horizon_s,
             on_sample=lambda m: candidate.timeline.append(_sample(m)),

@@ -1,0 +1,9 @@
+{
+  "id": "crash-already",
+  "name": "Crash already happened",
+  "description": "The console opens on a city where a collision on Main St eastbound has already happened and a queue is forming.",
+  "crashes": [
+    { "at_sim_s": 240 }
+  ],
+  "monitor_s": 600
+}

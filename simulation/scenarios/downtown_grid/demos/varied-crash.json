@@ -1,0 +1,9 @@
+{
+  "id": "varied-crash",
+  "name": "Different crash (generalization)",
+  "description": "A left-lane collision on Main St westbound. Use after crash-ahead to see whether lessons from the first incident transfer to a different one.",
+  "crashes": [
+    { "at_sim_s": 420, "segment_id": "C2_B2", "lanes": [1], "position_fraction": 0.4, "severity": "major" }
+  ],
+  "monitor_s": 600
+}

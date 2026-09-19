@@ -706,11 +706,15 @@ class SumoSimulation(TrafficSimulation):
         return total
 
     def _realised_emergency_eta(self, window_start: float) -> float | None:
-        arrivals = [d for d in self._dispatches.values() if d.arrived_at is not None and d.arrived_at >= window_start]
-        if not arrivals:
+        """Response time of the responders that matter to this window: the last one to reach its scene.
+
+        Responders that reached their scene before the window began are not counted. None if none did, or if
+        any responder still has not arrived (with one responder this is simply its response time).
+        """
+        relevant = [d for d in self._dispatches.values() if d.arrived_at is None or d.arrived_at >= window_start]
+        if not relevant or any(d.arrived_at is None for d in relevant):
             return None
-        d = min(arrivals, key=lambda x: x.arrived_at)
-        return d.arrived_at - max(window_start, d.dispatched_at)
+        return max(d.arrived_at - max(window_start, d.dispatched_at) for d in relevant)
 
     def _emergency_state(self, d: EmergencyDispatch) -> EmergencyVehicleState:
         r = self._veh.get(d.id)

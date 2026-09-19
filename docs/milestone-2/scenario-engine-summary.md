@@ -1,5 +1,11 @@
 # Scenario engine: what's built
 
+> **Snapshot from before `feature/response-strategies` merged.** The "Known limitations"
+> and "For the integration pass" sections below are out of date: the EMS corridor and
+> diversion now exist and the integration pass is done. The sample numbers are from that
+> earlier build. For the current pipeline, measurements and limitations see
+> [../architecture.md](../architecture.md#analyze-response-pipeline) and the README.
+
 Branch `feature/scenario-engine`. Details: [handoff](feature-scenario-engine.md) · [MCP spec](../specs/scenario-engine-mcp.md)
 
 ## In one paragraph

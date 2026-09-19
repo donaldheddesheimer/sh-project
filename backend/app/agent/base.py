@@ -28,16 +28,6 @@ from app.models.domain import (
 __all__ = ["AgentProvider", "CandidatePlan", "IncidentContext", "Recommendation"]
 
 
-class IncidentContext(BaseModel):
-    incident: Incident
-    sim_time: float
-    segments: list[RoadSegmentState]
-    intersections: list[IntersectionState]
-    signal_programs: dict[str, SignalProgram] = Field(description="Active program per signalized intersection")
-    emergency_vehicles: list[EmergencyVehicleState] = Field(default_factory=list, description="Responders in the network")
-    ems_origin_segment: str | None = Field(None, description="Segment an EMS probe/dispatch departs from")
-
-
 class CandidatePlan(BaseModel):
     id: str
     name: str
@@ -46,6 +36,27 @@ class CandidatePlan(BaseModel):
     corridor: EmergencyCorridor | None = None
     reroutes: list[RerouteAction] = Field(default_factory=list)
     # a plan with no policies, corridor or reroutes is the do-nothing baseline
+
+
+class IncidentContext(BaseModel):
+    incident: Incident = Field(description="The primary incident")
+    incidents: list[Incident] = Field(
+        default_factory=list, description="Every incident to solve together (empty = just `incident`)"
+    )
+    sim_time: float
+    segments: list[RoadSegmentState]
+    intersections: list[IntersectionState]
+    signal_programs: dict[str, SignalProgram] = Field(description="Active program per signalized intersection")
+    emergency_vehicles: list[EmergencyVehicleState] = Field(default_factory=list, description="Responders in the network")
+    ems_origin_segment: str | None = Field(None, description="Segment an EMS probe/dispatch departs from")
+    standing: list[CandidatePlan] = Field(
+        default_factory=list, description="Responses already in force on the live city (every branch starts with them)"
+    )
+    lessons: list[dict] = Field(default_factory=list, description="Remembered episodes recalled for this situation")
+
+    @property
+    def all_incidents(self) -> list[Incident]:
+        return self.incidents or [self.incident]
 
 
 class AgentProvider(ABC):

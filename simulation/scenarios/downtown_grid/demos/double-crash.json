@@ -1,0 +1,10 @@
+{
+  "id": "double-crash",
+  "name": "Second crash mid-response",
+  "description": "A collision on Main St eastbound triggers an agent. About a simulated minute later a second collision on Central Ave northbound (feeding the same intersection) happens while that agent is still working: the first agent and its implementor are stopped and a new agent takes over with both crashes as context.",
+  "crashes": [
+    { "at_sim_s": 400 },
+    { "at_sim_s": 460, "segment_id": "B1_B2", "lanes": [0], "position_fraction": 0.6, "severity": "major" }
+  ],
+  "monitor_s": 600
+}

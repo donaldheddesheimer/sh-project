@@ -132,9 +132,10 @@ def find_netconvert() -> str:
     try:
         import sumo  # type: ignore  # provided by `pip install eclipse-sumo`
 
-        candidate = Path(sumo.SUMO_HOME) / "bin" / "netconvert"
-        if candidate.exists():
-            return str(candidate)
+        # `which` with an explicit path also resolves netconvert.exe on Windows
+        exe = shutil.which("netconvert", path=str(Path(sumo.SUMO_HOME) / "bin"))
+        if exe:
+            return exe
     except ImportError:
         pass
     sys.exit("netconvert not found: `pip install eclipse-sumo` or install SUMO and add it to PATH")

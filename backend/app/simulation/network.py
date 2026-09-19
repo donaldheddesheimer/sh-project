@@ -234,14 +234,6 @@ class RoadNetwork:
                 ahead.append(RouteApproach(junction.id, seg.direction, distance))
         return ahead
 
-    def nearest_intersection(self, x: float, y: float) -> str | None:
-        best, best_d = None, float("inf")
-        for info in self.intersections.values():
-            d = math.hypot(info.x - x, info.y - y)
-            if d < best_d:
-                best, best_d = info.id, d
-        return best
-
     def point_along(self, segment_id: str, position_m: float, lateral_m: float = 0.0) -> tuple[float, float]:
         """x/y at a distance along a segment's centreline, shifted right by ``lateral_m``."""
         seg = self.segments[segment_id]

@@ -46,11 +46,23 @@ npm --prefix frontend install
 npm --prefix frontend run dev
 ```
 
+On **Windows** the Makefile and `scripts/dev.sh` don't work (they assume `.venv/bin/`). Run
+the pieces directly in PowerShell instead, the backend and frontend in separate terminals:
+
+```powershell
+python -m venv backend\.venv
+backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
+npm --prefix frontend install
+cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+npm --prefix frontend run dev
+cd backend; .venv\Scripts\python.exe -m pytest -q      # tests
+```
+
 Other commands:
 
 | | |
 |---|---|
-| `make test` | backend test suite (spawns real SUMO processes, ~20 s) |
+| `make test` | backend test suite (spawns real SUMO processes, 20–40 s) |
 | `make build` | type-check and production-build the UI |
 | http://localhost:5173/?fixture=scenario | Analyze Response replays a recorded run (synthetic numbers) instead of calling `POST /api/scenarios/run`; `?fixture=scenario-failed` replays the failure path. Only the analysis call is replaced: the backend must still be running and a collision active, because the map and the button's prerequisites come from the live stream |
 | `make network` | regenerate the SUMO network and demand from their build scripts |
@@ -89,6 +101,55 @@ Nothing in the analysis changes the live signals: recommendations are advisory.
 
 Use the speed buttons (1×–16×) to fast-forward. Click an intersection or road to inspect
 its phase, queues and speed.
+
+## Autonomous demo episode (in progress)
+
+The next demo runs itself. The "live city" is a SUMO simulation standing in for real
+camera data, and an agent responds to it end to end, then remembers what happened:
+
+```
+scripted crash ─► live sim plays it as "real data" ─► crash detected, state sent to the agent
+   ─► agent tests alternatives in parallel branches (the live view keeps running)
+   ─► agent's chosen plan is IMPLEMENTED on the live sim (really applied)
+   ─► live data is cached for a fixed number of simulated seconds
+   ─► reviewer agent condenses it into a lesson ─► live collection stops
+   ─► lesson stored in the RAG memory ─► episode finished
+   ─► next episode: remembered lessons are handed to the agent (the self-learning part)
+```
+
+A demo script says when the crash happens: **already happened** (injected during warm-up,
+so a queue is forming when the console opens) or **will happen** (at a later simulation
+time). Scripts live in `simulation/scenarios/downtown_grid/demos/`: `crash-ahead`,
+`crash-already`, `double-crash` and `varied-crash` (a different crash, to test whether a
+lesson transfers instead of being memorised).
+
+### When a second crash happens
+
+One agent works at a time, and it always works on **every active incident**:
+
+| Situation when a crash is detected | What happens |
+|---|---|
+| Nothing is running | Normal workflow: one crash triggers one agent. |
+| Another crash arrived while the first agent is still responding (analyzing, or its plan is being monitored) | The first agent and its implementor are **stopped completely**: the open analysis is abandoned and its queued branches dropped, its monitor stops, and no lesson is stored for it (the second crash contaminates it). A **new agent starts with the context of both crashes** and solves them at the same time. |
+| The first episode is already reviewing or finished | The review finishes normally. The new crash starts a new episode whose context still includes any incident that has not been cleared. |
+
+What the new agent inherits from the stopped one:
+
+- **The plan that was already applied stays on the live signals.** There is no automatic
+  revert yet. The new agent is told about it (`standing_responses` in `start_analysis`),
+  every branch it simulates starts with those responses re-applied, and a plan that
+  changes the same intersections replaces them.
+- **One EMS responder per incident.** Realised EMS response now means the *last* scene
+  reached (unchanged when there is a single responder).
+- The mock analyst, used offline, proposes combined plans (metering, diversion, corridor
+  for all crashes at once) plus each incident's own plans.
+
+Already in the code (groundwork, not yet triggered by anything): demo scripts and the
+boot-time crash hook (`simulation/scenario.py`, `simulation/runner.py`); analyses over several
+incidents (`ScenarioRun.incident_ids`, `POST /api/scenarios/run` with `incident_ids`, MCP
+`start_analysis` defaulting to all active incidents, standing responses re-applied in
+branches, `ScenarioService.abandon`); and the episode, scorecard, lesson and memory
+records in `backend/app/models/episode.py`. The remaining work is the roadmap below.
 
 ## Architecture
 
@@ -147,8 +208,9 @@ backend/app/
   api/mcp_tools.py      the scenario engine as MCP tools at /mcp
   models/domain.py      IntersectionState, RoadSegmentState, Incident, TrafficMetrics,
                         SignalPolicy, EmergencyCorridor, RerouteAction, SimulationCandidate,
-                        snapshots, geometry
-  models/scenario.py    ScenarioRun, ScenarioRunRequest, Recommendation (analysis contract)
+                        Recommendation, snapshots, geometry
+  models/scenario.py    ScenarioRun, ScenarioRunRequest, ScenarioStatus (analysis contract)
+  models/episode.py     demo-episode records: Episode, Scorecard, Lesson, Experience (not wired yet)
   models/api.py         CityState, requests/responses, ops events
   services/city.py      CityService: frames → CityState, commands, ops log
   services/scenarios.py ScenarioService: the Analyze Response pipeline (REST and MCP drivers)
@@ -164,7 +226,7 @@ backend/app/
   agent/                AgentProvider: base, mock (8 rule-based plans), nemotron (stub)
   safety/validator.py   SafetyValidator (signal policies + corridors) and rule-based MVP limits
   websocket/hub.py      non-blocking WebSocket fan-out
-backend/tests/          network, simulation, safety/agent, mock provider, API tests
+backend/tests/          network, simulation, runner, safety/agent, mock provider, API tests
 frontend/src/
   App.tsx               layout + actions
   hooks/useCityStream.ts   WebSocket client (reconnect, trend backfill, scenario runs)
@@ -175,7 +237,8 @@ frontend/src/
   dev/                  ?fixture=scenario replay of a recorded run
 simulation/
   networks/grid3x3/     build_network.py → grid3x3.net.xml (named streets, 9 signals)
-  scenarios/downtown_grid/  scenario.sumocfg, demand, vehicle types, scenario.json
+  scenarios/downtown_grid/  scenario.sumocfg, demand, vehicle types, scenario.json,
+                        demos/*.json scripted crash scenarios (loaded, not yet triggered)
   controllers/          how pre-emption plugs in (the code lives in backend/app/simulation/)
 docs/
   architecture.md       design notes, the pipeline stage by stage, MCP tools
@@ -198,11 +261,11 @@ docs/
 | POST | `/api/emergency/dispatch` | send EMS to the latest incident |
 | GET | `/api/signals/{intersection}` | active signal program |
 | GET | `/api/cameras`, `/api/events` | camera registry, ops log |
-| POST | `/api/scenarios/run` | start Analyze Response: `{"incident_id"?, "horizon_s": 600, "ems_probe": true}` → `ScenarioRun` (202; 409 if no active incident or a run is open) |
+| POST | `/api/scenarios/run` | start Analyze Response: `{"incident_id"?, "incident_ids"?, "horizon_s": 600, "ems_probe": true}` → `ScenarioRun` (202; 409 if no active incident or a run is open). `incident_ids` analyzes several crashes together |
 | GET | `/api/scenarios` | recent runs (newest first, last 10) |
 | GET | `/api/scenarios/{id}` | one run with candidates, metrics, timelines and the recommendation |
 | WS | `/ws/state` | `hello` (state, events, trend, latest run) then `state` / `status` / `event` / `scenario` messages |
-| MCP | `/mcp` | streamable HTTP: `start_analysis`, `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation` ([spec](docs/specs/scenario-engine-mcp.md)) |
+| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, default all active incidents), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation` ([spec](docs/specs/scenario-engine-mcp.md)) |
 
 ## Current limitations
 
@@ -238,10 +301,154 @@ docs/
    `simulate_plans` (one or more rounds) → `submit_recommendation`. The mock stays the
    default and the fallback. See [nemotron.py](backend/app/agent/nemotron.py) and the
    [MCP spec](docs/specs/scenario-engine-mcp.md).
-2. **Operator-approved apply.** A recommended plan reaches the live twin only after the
-   operator approves it. It is re-validated against the live signal programs first and
-   goes through the same runtime transition check. The agent never gets a tool for this.
+2. **Implement on the live twin.** *(Changed from "operator-approved only": the autonomous
+   episode needs the agent to implement its own choice.)* An `implement_recommendation`
+   MCP tool and a matching REST endpoint apply a plan to the live simulation. They accept
+   **no plan payload**: only the recommended, completed candidate of a finished run, which
+   is re-validated against the live signal programs first and refused if the incident is
+   already cleared. The operator path and the agent path share one code path, and a setting
+   can turn the agent path off. This replaces the rule "agents never touch live signals",
+   so update that rule in this README, in `CLAUDE.md` and in the UI's "Advisory" footer
+   when it lands.
 3. **NVIDIA Smart City input, prepared but not faked.** The `NvidiaSmartCityProvider`
    mapping onto the VSS Video Analytics MCP tools, plus a map-matching component (lat/lon
    and place names → segment and lane). This milestone does not install or run the full
    Blueprint; until a real VSS endpoint exists, the mock stays the provider.
+
+### Task list for the autonomous, self-learning episode
+
+Ordered so each step is demoable with the **mock** analyst and reviewer (no NIM key needed)
+before Nemotron is involved. `[x]` = the groundwork described under
+[Completed in this pass](#completed-in-this-pass-for-review).
+
+- [x] Demo scripts (crash already happened / will happen / second crash / different crash)
+- [x] Scenario engine solves several incidents together; branches replay standing responses
+  (written, not yet exercised)
+- [x] Two-crash mechanics in the engine (`abandon`, per-incident EMS probes, combined mock
+  plans) (written, not yet exercised)
+- [ ] **1. Episode orchestration** (`backend/app/learning/episode.py`). Trigger on incident
+  detection through a new `CityService` incident listener; register the crash injector
+  (runtime crashes) and the boot events (already-happened crashes) from the armed script;
+  `POST /api/demo/start {script}`, `POST /api/demo/stop`, `GET /api/demo`,
+  `GET /api/episodes[/{id}]`; a WebSocket `episode` message; `DEMO_SCRIPT` to arm at startup.
+  Statuses: `armed → detected → analyzing → monitoring → reviewing → completed`, plus
+  `superseded`, `aborted`, `failed`.
+- [ ] **2. The two-crash rule** (see above). A new detection while an episode is `detected`,
+  `analyzing` or `monitoring` cancels its agent task, calls `ScenarioService.abandon`, stops
+  its monitor, marks it `superseded`, and starts an episode over all active incidents.
+  A `reset` aborts the episode.
+- [ ] **3. Implementor** (`learning/implementor.py`). `implement_recommendation(run_id)` as an
+  MCP tool and `POST /api/scenarios/{id}/implement`. Applies the recommended candidate to
+  the live sim with `apply_plan` through `CityService.run_on_live`, dispatches the EMS
+  probes at that moment, re-validates on the live programs, keeps the registry of standing
+  responses (`ScenarioService.standing_source`, cleared on reset), and writes ops events.
+- [ ] **4. Live monitor and scorecard** (`learning/monitor.py`, `scorecard.py`). A frame
+  observer caches live samples before and after implementation for `EPISODE_MONITOR_S`
+  **simulation** seconds. Code (not the LLM) computes realised vs predicted, vs the predicted
+  baseline, the delay/queue slope before and after, prediction error, staleness and a
+  materiality flag, reusing the mock's recommend rubric.
+- [ ] **5. Reviewer and memory** (`learning/reviewer.py`, `store.py`). The reviewer sees only
+  the scorecard and the condensed episode, never the solver's reasoning. Episodes are stored
+  as markdown with JSON front matter under `memory/episodes/`, plus a generated
+  `memory/playbook.md`. Mock reviewer first, Nemotron reviewer second.
+- [ ] **6. Finish step.** Stop the monitor, pause the live sim (`EPISODE_PAUSE_ON_FINISH`),
+  store the lesson, mark the episode `completed`.
+- [ ] **7. Nemotron analyst** (`learning/analysts.py`, `agent/nemotron.py`). An MCP client of
+  `/mcp` driving NIM tool calling, with a step cap and timeout, and a fallback to the mock
+  analyst. Needs `NEMOTRON_MODEL` and `NVIDIA_API_KEY`.
+- [ ] **8. Recall and injection.** `start_analysis` returns an `experience` block (playbook
+  plus similar past episodes), a `recall_experience` tool, `IncidentContext.lessons`
+  (`ScenarioService.lessons_source`). Lessons seed round one; they never replace
+  `validate_plan` and `simulate_plans`.
+- [ ] **9. Frontend.** An episode panel (timeline, monitor progress, lessons used and
+  recorded, which agent was superseded), `frontend/src/api/types.ts` in sync (`incident_ids`,
+  `episode`), and the "advisory only" wording updated once plans are really applied.
+- [ ] **10. Config and docs.** New settings in `config.py` **and** `.env.example`
+  (`MEMORY_ENABLED`, `MEMORY_DIR`, `DEMO_SCRIPT`, `EPISODE_MONITOR_S`,
+  `EPISODE_AGENT_TIMEOUT_S`, `EPISODE_FALLBACK_TO_MOCK`, `EPISODE_PAUSE_ON_FINISH`,
+  `EPISODE_ANALYST`, `MCP_URL`); update `docs/architecture.md`; revise the "agents never
+  touch live signals" rule everywhere it appears.
+- [ ] **Measure the learning.** Run the same script cold (empty memory) and warm, and the
+  `varied-crash` script, comparing rounds and candidates used, wall time and recommendation
+  quality. Same-script gains are memorisation; only the varied script shows transfer.
+
+Later: embedding-based recall (NVIDIA embedding NIM behind `ExperienceStore.recall`);
+automatic revert of an applied plan when the scene clears; per-responder EMS metrics;
+verifying the corridor and diversion results before trusting their lessons (the
+[limitations](#current-limitations) above show the corridor often loses); the branch
+speed-up in `sumo.py`; a slower live speed during analysis to reduce snapshot staleness;
+tests for `ScenarioService`, the MCP tools and the learning package (the team convention so
+far is no new test files, so agree on this before adding them).
+
+Decisions already made by the team: the implementor really applies the plan to the live
+sim; the crash is scripted (already there, or later); the reviewer runs after a fixed number
+of simulated seconds; the lesson goes to a RAG memory; the live collection stops at the
+end; and the two-crash rule above. Decisions made in the plan that still need a yes:
+pausing the live sim at the end of an episode, markdown-backed memory with structured
+recall first (embeddings optional), no lesson stored for a superseded episode, a standing
+plan staying on the signals after its agent is superseded, and a fallback to the mock
+analyst if NIM fails.
+
+## Completed in this pass (for review)
+
+Scope: the multi-crash groundwork and the records the episode will use. **Nothing in this
+list is triggered yet**: there is no episode service, implementor, monitor, reviewer or
+memory (see the task list). Existing behavior with a single crash is meant to be unchanged.
+
+### What changed
+
+| File | Change |
+|---|---|
+| `simulation/scenarios/downtown_grid/demos/*.json` (new) | Four scripts: `crash-ahead` (crash at sim 420 s), `crash-already` (240 s, inside warm-up so it has already happened), `double-crash` (400 s on Main St EB, then 460 s on Central Ave NB `B1_B2`, which feeds the same intersection), `varied-crash` (left lane, Main St WB). |
+| `backend/app/simulation/scenario.py` | `DemoCrash`, `DemoScript`, `load_demo_scripts`; `Scenario.demos` is filled from `demos/*.json`. |
+| `backend/app/simulation/runner.py` | `set_boot_events` and `_warm_up`: events fire at their simulation time inside every warm-up (boot and reset), so a crash can already have happened when the console opens. Nothing calls `set_boot_events` yet. |
+| `backend/app/simulation/branching.py` | New `apply_plan(sim, plan)` (policies, corridor, reroutes; the step a live apply will reuse). `run_branch` now takes `probes: list[ProbeSpec]` (was a single `probe`) and an optional `standing` list, replayed before the candidate because snapshots keep only base signal programs. |
+| `backend/app/simulation/sumo.py` | `_realised_emergency_eta` is now the response time of the **last** responder to reach its scene, and `None` while any relevant responder has not arrived. Unchanged for one responder. |
+| `backend/app/models/scenario.py` | `ScenarioRun.incident_ids` and `ScenarioRunRequest.incident_ids`. `incident_id` stays as the primary (earliest detected). |
+| `backend/app/agent/base.py` | `IncidentContext.incidents`, `.standing`, `.lessons`, `.all_incidents`. `CandidatePlan` moved above `IncidentContext`. |
+| `backend/app/agent/mock.py` | `recommend` accepts `context=None` (it never used it), so the scorecard can reuse the rubric. |
+| `backend/app/services/scenarios.py` | Several incidents per analysis (`open(..., incident_ids=)`, `_resolve_incidents`); one EMS probe per incident without a responder already en route (`_probes`); `standing_source` and `lessons_source` hooks (default: nothing); `_propose` and `_combined_plans` for the mock with several incidents; `abandon()`; `_close` cancels queued branch tasks and defers deleting the snapshot until the running round ends; `fail` is idempotent; the ops-log line names every incident. |
+| `backend/app/api/mcp_tools.py` | `start_analysis(incident_ids?)` defaults to **all** active incidents (**renamed from `incident_id`**); the payload gains `incidents` and `standing_responses`; the instructions tell the agent to solve several incidents together. |
+| `docs/specs/scenario-engine-mcp.md` | The `start_analysis` row matches. |
+| `backend/app/models/episode.py` (new) | `Episode`, `EpisodeStatus` (with `superseded`), `Implementation`, `LiveSample`, `LiveRecord`, `Scorecard`, `Lesson`, `Experience`, `RecalledExperience`. Unused so far. |
+| `README.md` | This section, the episode section, the task list, and the API and layout rows. |
+
+### What was and was not checked
+
+- **Checked:** the app and the new models import; the four demo scripts parse and load
+  (`crash-ahead [420]`, `crash-already [240]`, `double-crash [400, 460]`,
+  `varied-crash [420]`); the existing backend suite passed (19 tests, 37.6 s) against the
+  code as of the scenario-service and MCP edits.
+- **Not checked, so please review by reading or by trying:** the existing suite does not
+  exercise `ScenarioService`, the MCP tools, branching or the runner boot path, so
+  a green run says nothing about these changes. No test or scratch script was run against them: an
+  analysis over two crashes (REST and MCP), standing responses replayed in a branch,
+  `abandon` while branches are queued or running, a crash injected during warm-up, the
+  multi-responder EMS metric, and the mock's combined plans. To try the two-crash analysis
+  by hand: `POST /api/incidents/inject` twice (`{}` and
+  `{"segment_id":"B1_B2"}`), wait for both to be detected, then `POST /api/scenarios/run`
+  with `{"incident_ids": ["INC-0001","INC-0002"]}`.
+- The frontend was not touched. `frontend/src/api/types.ts` still lacks `incident_ids` (an
+  extra field the UI ignores) and needs the sync listed in the task list.
+
+### Where a reviewer should look hardest
+
+1. **`_realised_emergency_eta`** (`sumo.py`). A dispatch that never arrives now makes the
+   whole metric `None`. Check that nothing else relies on the old "first arrival wins".
+2. **Closing an analysis while branches run** (`scenarios.py`: `_close`, `_run_round`,
+   `_drop_snapshot`). Look for a path where the snapshot is deleted too early or never, and
+   for a cancelled branch leaving a candidate stuck in `running`.
+3. **Probes.** Before, any responder en route suppressed the probe for the whole run. Now
+   only a responder already heading to that incident's segment does.
+4. **The `start_analysis` change** is breaking for any MCP client that passed `incident_id`
+   (none exist in the repo). With one active incident the behavior is the same.
+5. **Mock proposals with several incidents.** `_combined_plans` keeps the first policy per
+   intersection. The run is capped at 8 candidates (`SCENARIO_MAX_CANDIDATES`), so the
+   cap truncates the per-incident plans at the tail (the combined plans come first).
+   `aggressive-flush` is dropped in this case.
+6. **`run_branch`'s signature changed** (list of probes, optional `standing`). The only
+   caller is `ScenarioService._simulate`.
+7. **Unrelated uncommitted edits.** Before this pass the working tree already held small
+   dead-code removals in `network.py`, `preemption.py`, `reroute.py`, `build_network.py` and
+   two docs under `docs/milestone-2/`, and an untracked `CLAUDE.md`. They are not part of this
+   work and were left as they were.

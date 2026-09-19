@@ -27,13 +27,15 @@ class ScenarioStatus(StrEnum):
 
 class ScenarioRunRequest(BaseModel):
     incident_id: str | None = Field(None, description="Defaults to the most recent active incident")
+    incident_ids: list[str] | None = Field(None, description="Analyze several incidents together (overrides incident_id)")
     horizon_s: float = Field(600.0, ge=120.0, le=1800.0, description="Simulated seconds per branch")
     ems_probe: bool = Field(True, description="Dispatch an EMS unit in every branch unless one is already en route")
 
 
 class ScenarioRun(BaseModel):
     id: str = Field(description='e.g. "SCN-0001"')
-    incident_id: str
+    incident_id: str = Field(description="The primary incident (the first of incident_ids)")
+    incident_ids: list[str] = Field(default_factory=list, description="Every incident analyzed together in this run")
     status: ScenarioStatus
     agent: str = Field(description="AgentProvider that proposed the candidates")
     created_at: datetime

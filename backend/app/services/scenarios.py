@@ -91,13 +91,17 @@ class Analysis:
     """Working state of the one open run: its snapshot and everything branches need."""
 
     run: ScenarioRun
-    incident: Incident
+    incident: Incident  # the primary incident
+    incidents: list[Incident] = field(default_factory=list)  # everything analyzed together (includes the primary)
     idle_timeout_s: float | None = None  # agent-driven runs are failed after this long without a call
     snapshot: SimulationSnapshot | None = None
     programs: dict[str, SignalProgram] = field(default_factory=dict)
     context: IncidentContext | None = None
-    probe: ProbeSpec | None = None
+    probes: list[ProbeSpec] = field(default_factory=list)  # one EMS probe per incident that has no responder yet
+    standing: list[CandidatePlan] = field(default_factory=list)  # responses already in force on the live city
     busy: bool = False
+    closed: bool = False
+    branch_tasks: list[asyncio.Task] = field(default_factory=list)
     touched: float = field(default_factory=time.monotonic)
 
 
@@ -121,6 +125,9 @@ class ScenarioService:
         self._ids = itertools.count(1)
         self._open: Analysis | None = None
         self._tasks: set[asyncio.Task] = set()
+        # Wired by the learning services (None/empty = nothing implemented on the live city, no memory).
+        self.standing_source: Callable[[], list[CandidatePlan]] = list
+        self.lessons_source: Callable[[list[Incident]], list[dict]] | None = None
 
     # ------------------------------------------------------------ read side
 
@@ -149,14 +156,82 @@ class ScenarioService:
     async def start_run(self, request: ScenarioRunRequest) -> ScenarioRun:
         """Queue a full mock-agent analysis and return it; the work continues in the background."""
         horizon = request.horizon_s if "horizon_s" in request.model_fields_set else None
-        analysis = await self.open(request.incident_id, horizon, request.ems_probe, self.agent.name)
+        analysis = await self.open(
+            request.incident_id, horizon, request.ems_probe, self.agent.name, incident_ids=request.incident_ids
+        )
         self._spawn(self._run_pipeline(analysis))
         return analysis.run
+
+    async def _propose(self, a: Analysis) -> list[CandidatePlan]:
+        """The mock agent's proposals. With several incidents: a combined plan first, then each incident's own."""
+        if len(a.incidents) == 1:
+            return await self.agent.propose_candidates(a.context)
+        per_incident: list[CandidatePlan] = []
+        for incident in a.incidents:
+            context = a.context.model_copy(update={"incident": incident})
+            for plan in await self.agent.propose_candidates(context):
+                if plan.id == BASELINE.id or plan.id.startswith("aggressive"):
+                    continue  # the unsafe validator demo belongs to the single-incident story
+                per_incident.append(
+                    plan.model_copy(update={"id": f"{incident.id}:{plan.id}", "name": f"{incident.id} {plan.name}"})
+                )
+        return [*self._combined_plans(per_incident), *per_incident]
+
+    @staticmethod
+    def _combined_plans(plans: list[CandidatePlan]) -> list[CandidatePlan]:
+        """Merge one incident's timing/corridor/diversion ideas into plans that address every incident at once.
+
+        Each intersection gets at most one policy (the first proposed), so the merged plan never has two
+        policies for one intersection (the validator's rule).
+        """
+        def family(plan: CandidatePlan) -> str:
+            return plan.id.split(":", 1)[1]
+
+        combined: list[CandidatePlan] = []
+        timing = [p for p in plans if family(p) == "meter-upstream"]
+        diversion = [p for p in plans if family(p) == "divert-advisory"]
+        corridor = next((p for p in plans if family(p) == "ems-corridor"), None)
+        if timing:
+            policies, seen = [], set()
+            for plan in timing:
+                for policy in plan.policies:
+                    if policy.intersection_id not in seen:
+                        seen.add(policy.intersection_id)
+                        policies.append(policy)
+            combined.append(
+                CandidatePlan(
+                    id="combined-metering",
+                    name="Meter inflow toward every blocked link",
+                    description="Upstream metering for each incident in one plan.",
+                    policies=policies,
+                )
+            )
+        if diversion:
+            combined.append(
+                CandidatePlan(
+                    id="combined-diversion",
+                    name="Divert around every blocked link",
+                    description="One diversion advisory that avoids all blocked segments.",
+                    reroutes=[a for p in diversion for a in p.reroutes],
+                )
+            )
+        if corridor is not None and (timing or diversion):
+            combined.append(
+                CandidatePlan(
+                    id="combined-all",
+                    name="Corridor + metering + diversion for every incident",
+                    description="EMS green corridor, upstream metering and diversion together.",
+                    policies=[p for c in combined for p in c.policies],
+                    corridor=corridor.corridor,
+                    reroutes=[a for c in combined for a in c.reroutes],
+                )
+            )
+        return combined
 
     async def _run_pipeline(self, a: Analysis) -> None:
         try:
             await self.capture(a)
-            plans = await self.agent.propose_candidates(a.context)
+            plans = await self._propose(a)
             plans = [BASELINE, *(p for p in plans if p.id != BASELINE.id)][: self.settings.scenario_max_candidates]
             await self.evaluate(a, plans, then=ScenarioStatus.RECOMMENDING)
             recommendation = await self.agent.recommend(a.context, a.run.candidates)
@@ -174,24 +249,32 @@ class ScenarioService:
         ems_probe: bool,
         driver: str,
         idle_timeout_s: float | None = None,
+        *,
+        incident_ids: list[str] | None = None,
     ) -> Analysis:
-        """Guard, resolve the incident and create the run (status queued). One open run at a time."""
+        """Guard, resolve the incident(s) and create the run (status queued). One open run at a time.
+
+        ``incident_ids`` analyzes several incidents together (the first, by detection time, is the primary);
+        otherwise ``incident_id`` (default: the most recent active one) is analyzed alone.
+        """
         if self.city.status.status in (RunStatus.STARTING, RunStatus.ERROR):
             raise NotReady(f"simulation is {self.city.status.status.value}")
         self.city.state  # raises NotReady before the first frame
         self._ensure_no_open_run()
-        incident = await self._resolve_incident(incident_id)
+        incidents = await self._resolve_incidents(incident_id, incident_ids)
         self._ensure_no_open_run()  # another start may have claimed it while we awaited
+        incident = incidents[0]
         run = ScenarioRun(
             id=f"SCN-{next(self._ids):04d}",
             incident_id=incident.id,
+            incident_ids=[i.id for i in incidents],
             status=ScenarioStatus.QUEUED,
             agent=driver,
             created_at=datetime.now(UTC),
             horizon_s=horizon_s if horizon_s is not None else self.settings.scenario_horizon_s,
             ems_probe=ems_probe,
         )
-        analysis = Analysis(run=run, incident=incident, idle_timeout_s=idle_timeout_s)
+        analysis = Analysis(run=run, incident=incident, incidents=incidents, idle_timeout_s=idle_timeout_s)
         self._open = analysis
         self._runs.append(run)
         self.city.publish_scenario(run)
@@ -201,10 +284,14 @@ class ScenarioService:
 
     async def capture(self, a: Analysis) -> None:
         """Snapshot the live network, its state and every signal program at one instant (status proposing)."""
+        a.standing = self.standing_source()  # what is in force on the live city right now
         a.snapshot, a.programs, state = await self.city.run_on_live(self._capture)
+        if a.closed:  # abandoned while the snapshot was being taken
+            Path(a.snapshot.path).unlink(missing_ok=True)
+            raise Conflict(f"{a.run.id} was abandoned")
         a.run.snapshot_sim_time = a.snapshot.sim_time
         a.context = self._context(a, state)
-        a.probe = self._probe(a)
+        a.probes = self._probes(a)
         self._set_status(a.run, ScenarioStatus.PROPOSING)
 
     async def evaluate(
@@ -237,7 +324,7 @@ class ScenarioService:
         rejected = sum(c.status is CandidateStatus.REJECTED for c in a.run.candidates[start:])
         self.city.events.add(
             EventLevel.INFO,
-            f"Analyzing {a.incident.id}: {len(plans)} candidate{'s' if len(plans) != 1 else ''}, "
+            f"Analyzing {' + '.join(i.id for i in a.incidents)}: {len(plans)} candidate{'s' if len(plans) != 1 else ''}, "
             f"{rejected} rejected by safety validator",
             a.snapshot.sim_time,
             a.incident.id,
@@ -253,10 +340,14 @@ class ScenarioService:
     async def _run_round(self, a: Analysis, start: int, plans: list[CandidatePlan], then: ScenarioStatus) -> None:
         try:
             accepted = [i for i in range(start, len(a.run.candidates)) if a.run.candidates[i].status is CandidateStatus.PENDING]
-            await asyncio.gather(*(self._simulate(a, i, plans[i - start]) for i in accepted))
+            a.branch_tasks = [asyncio.ensure_future(self._simulate(a, i, plans[i - start])) for i in accepted]
+            # a cancelled branch (the analysis was abandoned) is not an error of this round
+            await asyncio.gather(*a.branch_tasks, return_exceptions=True)
         finally:
             a.busy = False
             a.touched = time.monotonic()
+            if a.closed:
+                self._drop_snapshot(a)  # the run was closed while branches still read it
         if a.run.status is ScenarioStatus.SIMULATING:  # not failed meanwhile
             self._set_status(a.run, then)
 
@@ -274,6 +365,8 @@ class ScenarioService:
         return a.run
 
     def fail(self, a: Analysis, error: str) -> None:
+        if a.closed:  # already finished, failed or abandoned
+            return
         a.run.error = error
         a.run.completed_at = datetime.now(UTC)
         self._set_status(a.run, ScenarioStatus.FAILED)
@@ -295,21 +388,26 @@ class ScenarioService:
         if self._open is not None:
             raise Conflict(f"{self._open.run.id} is still running")
 
-    async def _resolve_incident(self, incident_id: str | None) -> Incident:
-        if incident_id is not None:
-            incident = await self.city.smart_city.get_incident(incident_id)
+    async def _resolve_incidents(self, incident_id: str | None, incident_ids: list[str] | None) -> list[Incident]:
+        """The incidents to analyze, earliest first. Explicit ids must all be active and map-matched."""
+        wanted = list(dict.fromkeys(incident_ids)) if incident_ids else ([incident_id] if incident_id else [])
+        found: list[Incident] = []
+        for wanted_id in wanted:
+            incident = await self.city.smart_city.get_incident(wanted_id)
             if incident is None:
-                raise KeyError(incident_id)
+                raise KeyError(wanted_id)
             if incident.status is not IncidentStatus.ACTIVE:
-                raise Conflict(f"{incident_id} is {incident.status.value}")
-        else:
+                raise Conflict(f"{wanted_id} is {incident.status.value}")
+            found.append(incident)
+        if not found:
             active = await self.city.smart_city.list_incidents()
             if not active:
                 raise Conflict("no active incident to analyze")
-            incident = max(active, key=lambda i: i.timestamp)
-        if incident.location.segment_id not in self.city.network.segments:
-            raise Conflict(f"{incident.id} is not matched to a road segment")
-        return incident
+            found = [max(active, key=lambda i: i.timestamp)]
+        for incident in found:
+            if incident.location.segment_id not in self.city.network.segments:
+                raise Conflict(f"{incident.id} is not matched to a road segment")
+        return sorted(found, key=lambda i: i.timestamp)
 
     def _capture(self, sim: TrafficSimulation) -> tuple[SimulationSnapshot, dict[str, SignalProgram], NetworkState]:
         """Snapshot, signal programs and network state from one instant (runs on the live simulation thread)."""
@@ -325,21 +423,29 @@ class ScenarioService:
         stations = self.city.scenario.ems_stations
         return IncidentContext(
             incident=a.incident,
+            incidents=a.incidents,
             sim_time=a.snapshot.sim_time,
             segments=state.segments,
             intersections=state.intersections,
             signal_programs=a.programs,
             emergency_vehicles=state.emergency_vehicles,
             ems_origin_segment=stations[0].edge if stations else None,
+            standing=a.standing,
+            lessons=self.lessons_source(a.incidents) if self.lessons_source else [],
         )
 
-    def _probe(self, a: Analysis) -> ProbeSpec | None:
+    def _probes(self, a: Analysis) -> list[ProbeSpec]:
+        """One EMS probe per incident that has no responder on the way yet (every branch dispatches the same ones)."""
         stations = self.city.scenario.ems_stations
         if not a.run.ems_probe or not stations:
-            return None
-        if any(d.status is EmergencyStatus.EN_ROUTE for d in a.snapshot.dispatches):
-            return None  # a live responder is already en route; every branch measures that one
-        return probe_for_incident(a.incident, stations[0].edge)
+            return []
+        # a live responder already en route to an incident's segment is measured by every branch as it is
+        covered = {d.destination_segment for d in a.snapshot.dispatches if d.status is EmergencyStatus.EN_ROUTE}
+        return [
+            probe_for_incident(incident, stations[0].edge)
+            for incident in a.incidents
+            if incident.location.segment_id not in covered
+        ]
 
     async def _simulate(self, a: Analysis, index: int, plan: CandidatePlan) -> None:
         loop = asyncio.get_running_loop()
@@ -354,10 +460,11 @@ class ScenarioService:
             self._branch_factory,
             a.snapshot,
             plan,
-            a.probe,
+            a.probes,
             run.horizon_s,
             self.settings.scenario_sample_s,
             on_start,
+            a.standing,
         )
         run.candidates[index] = result
         self.city.publish_scenario(run)
@@ -400,11 +507,34 @@ class ScenarioService:
             if self._open is a and not a.busy and time.monotonic() - a.touched > a.idle_timeout_s:
                 self.fail(a, f"agent abandoned the run (idle > {a.idle_timeout_s:.0f}s)")
 
+    def abandon(self, reason: str) -> str | None:
+        """Fail the open analysis so another can start (e.g. a new crash changed the situation).
+
+        Branches still queued are dropped; ones already running finish on their own. Returns the run id.
+        """
+        a = self._open
+        if a is None:
+            return None
+        self.fail(a, reason)
+        return a.run.id
+
     def _close(self, a: Analysis) -> None:
+        a.closed = True
         if self._open is a:
             self._open = None
-        if a.snapshot is not None:
+        for task in a.branch_tasks:
+            task.cancel()  # queued branches never start; a branch already running finishes and is discarded
+        if not a.busy:
+            self._drop_snapshot(a)  # otherwise the round's last branch deletes it (see _run_round)
+
+    @staticmethod
+    def _drop_snapshot(a: Analysis) -> None:
+        if a.snapshot is None:
+            return
+        try:
             Path(a.snapshot.path).unlink(missing_ok=True)
+        except OSError:  # a branch that was already running may still hold the file open (Windows)
+            log.warning("could not delete snapshot %s", a.snapshot.path)
 
     def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)

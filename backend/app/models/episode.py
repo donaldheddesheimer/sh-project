@@ -1,0 +1,230 @@
+"""Autonomous demo-episode records: detect -> analyze -> implement -> monitor -> review -> remember.
+
+One episode = one agent working one set of active incidents. If another incident is detected while the
+agent is still working, the episode is superseded by a new one that carries every active incident.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from enum import StrEnum
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class EpisodeStatus(StrEnum):
+    ARMED = "armed"  # script loaded, waiting for the crash to be detected
+    DETECTED = "detected"  # incident(s) reported; the agent has been handed the state
+    ANALYZING = "analyzing"  # agent is testing alternatives in parallel branches
+    MONITORING = "monitoring"  # the chosen plan is applied to the live sim; live data is being cached
+    REVIEWING = "reviewing"  # window closed; reviewer agent is condensing the data
+    COMPLETED = "completed"  # lesson stored in memory, live collection stopped
+    SUPERSEDED = "superseded"  # another crash arrived mid-response; a new episode took over
+    ABORTED = "aborted"  # reset, or the scene was cleared before the window closed
+    FAILED = "failed"  # agent, implementor or reviewer error
+
+
+ACTIVE_STATUSES = (
+    EpisodeStatus.DETECTED,
+    EpisodeStatus.ANALYZING,
+    EpisodeStatus.MONITORING,
+    EpisodeStatus.REVIEWING,
+)
+# the statuses in which the agent or the implementor is still working (a new crash supersedes these)
+WORKING_STATUSES = (EpisodeStatus.DETECTED, EpisodeStatus.ANALYZING, EpisodeStatus.MONITORING)
+
+
+class LiveSample(BaseModel):
+    """One cached observation of the live city."""
+
+    t: float = Field(description="Simulation time")
+    delay: float
+    queue: int
+    throughput: float
+    speed: float
+    vehicles: int
+    incident_queue: int = Field(description="Halted vehicles summed over the incident segments")
+    incident_speed: float = Field(description="Mean speed over the incident segments (m/s)")
+
+
+class Implementation(BaseModel):
+    """A recommended plan applied to the live simulation."""
+
+    run_id: str
+    candidate_id: str
+    candidate_name: str
+    implemented_by: str = Field(description="agent | operator | coordinator")
+    incident_ids: list[str]
+    implemented_at: float = Field(description="Simulation time the plan went live")
+    snapshot_sim_time: float | None = None
+    staleness_s: float | None = Field(None, description="Live time that passed between the branch snapshot and the apply")
+    policies: dict[str, str] = Field(default_factory=dict, description="Intersection -> program id now running")
+    corridor: bool = False
+    diverted: int = 0
+    ems_dispatch_ids: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class LiveRecord(BaseModel):
+    """What the monitor cached around an implementation."""
+
+    run_id: str
+    incident_ids: list[str]
+    started_at: float
+    ended_at: float
+    monitor_s: float
+    pre: list[LiveSample] = Field(default_factory=list, description="Live samples before the plan went live")
+    post: list[LiveSample] = Field(default_factory=list, description="Live samples while the plan was in force")
+    ems_response_s: float | None = Field(None, description="Realised response time; None if a responder never arrived")
+    ems_dispatch_ids: list[str] = Field(default_factory=list)
+    complete: bool = True
+    abort_reason: str | None = None
+
+
+class WindowStats(BaseModel):
+    """Aggregates of a set of samples (same definition for predicted and realised)."""
+
+    samples: int
+    mean_delay: float
+    end_delay: float
+    peak_queue: int
+    mean_throughput: float
+    mean_speed_mps: float
+    incident_queue_end: int = 0
+    ems_response_s: float | None = None
+
+
+Outcome = Literal["effective", "ineffective", "inconclusive"]
+
+
+class Scorecard(BaseModel):
+    """Deterministic numbers the reviewer interprets. Computed by code, never by the LLM."""
+
+    candidate_id: str
+    candidate_name: str
+    window_s: float = Field(description="Sim seconds compared (shorter of the monitor and branch horizons)")
+    realised: WindowStats
+    predicted: WindowStats | None = None
+    predicted_baseline: WindowStats | None = None
+    pre: WindowStats | None = Field(None, description="The unmanaged period before the plan went live")
+    delay_slope_pre_per_min: float | None = None
+    delay_slope_post_per_min: float | None = None
+    queue_slope_pre_per_min: float | None = None
+    queue_slope_post_per_min: float | None = None
+    predicted_gain: dict[str, float | None] = Field(
+        default_factory=dict, description="Predicted plan vs predicted baseline: delay_pct, queue, ems_s"
+    )
+    prediction_error: dict[str, float | None] = Field(
+        default_factory=dict, description="Realised minus predicted for the chosen plan: delay_pct, queue, ems_s"
+    )
+    staleness_s: float | None = None
+    candidates_tried: int = 0
+    rejected: int = 0
+    picked_best: bool | None = Field(None, description="Did the recommendation match the rubric's pick among the simulated plans")
+    best_by_rubric: str | None = None
+    material: bool = Field(False, description="The predicted gain exceeded the noise thresholds")
+    outcome: Outcome = "inconclusive"
+    notes: list[str] = Field(default_factory=list)
+
+
+class Lesson(BaseModel):
+    verdict: Outcome
+    summary: str
+    what_worked: list[str] = Field(default_factory=list)
+    what_didnt: list[str] = Field(default_factory=list)
+    next_time: list[str] = Field(default_factory=list)
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    reviewer: str = "mock"
+
+
+class IncidentFeatures(BaseModel):
+    """What memory recall matches on."""
+
+    incident_id: str
+    type: str
+    severity: str
+    segment_id: str
+    street: str
+    direction: str
+    upstream: str
+    downstream: str
+    blocked_lanes: list[int] = Field(default_factory=list)
+    total_lanes: int | None = None
+
+
+class PlanSummary(BaseModel):
+    id: str
+    name: str
+    kinds: list[str] = Field(description="timing | corridor | diversion | none")
+    outcome: str = Field(description="One line of predicted numbers or the rejection reason")
+    status: str
+
+
+class Experience(BaseModel):
+    """One remembered episode: what was faced, what was tried, what happened, what was learned."""
+
+    id: str
+    created_at: datetime
+    script_id: str | None = None
+    analyst: str
+    incidents: list[IncidentFeatures]
+    chosen: PlanSummary
+    tried: list[PlanSummary] = Field(default_factory=list)
+    scorecard: Scorecard
+    lesson: Lesson
+    rounds: int = 0
+
+
+class RecalledExperience(BaseModel):
+    """The compact view of an Experience injected into the agent's context."""
+
+    id: str
+    similarity: float
+    incidents: list[str] = Field(description="One line per incident, e.g. 'collision major, Main St EB, right lane blocked'")
+    chosen: str
+    kinds: list[str]
+    verdict: Outcome
+    summary: str
+    what_worked: list[str] = Field(default_factory=list)
+    what_didnt: list[str] = Field(default_factory=list)
+    next_time: list[str] = Field(default_factory=list)
+    numbers: dict[str, float | None] = Field(default_factory=dict)
+
+
+class EpisodeStep(BaseModel):
+    status: EpisodeStatus
+    at: datetime
+    sim_time: float | None = None
+    message: str
+
+
+class Episode(BaseModel):
+    id: str = Field(description='e.g. "EP-0001"')
+    script_id: str | None = None
+    status: EpisodeStatus = EpisodeStatus.ARMED
+    analyst: str = ""
+    reviewer: str = ""
+    created_at: datetime
+    completed_at: datetime | None = None
+    incident_ids: list[str] = Field(default_factory=list)
+    supersedes: str | None = Field(None, description="Episode this one took over from when a new crash arrived")
+    superseded_by: str | None = None
+    run_id: str | None = None
+    detected_sim_time: float | None = None
+    implemented_sim_time: float | None = None
+    monitor_s: float = 600.0
+    monitor_progress_s: float = 0.0
+    implementation: Implementation | None = None
+    scorecard: Scorecard | None = None
+    lesson: Lesson | None = None
+    recalled: list[str] = Field(default_factory=list, description="Ids of remembered episodes given to the agent")
+    memory_path: str | None = None
+    error: str | None = None
+    steps: list[EpisodeStep] = Field(default_factory=list)
+
+
+class DemoInfo(BaseModel):
+    scripts: list[dict]
+    current: Episode | None = None
+    memory: dict

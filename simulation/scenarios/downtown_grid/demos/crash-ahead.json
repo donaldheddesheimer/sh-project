@@ -1,0 +1,9 @@
+{
+  "id": "crash-ahead",
+  "name": "Crash ahead",
+  "description": "Normal traffic, then a major collision on Main St eastbound about two simulated minutes after the console opens. The agent responds live.",
+  "crashes": [
+    { "at_sim_s": 420 }
+  ],
+  "monitor_s": 600
+}

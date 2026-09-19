@@ -154,11 +154,6 @@ class PreemptionController:
         self._longest_hold_s = 0.0
         self._capped: list[str] = []
 
-    @property
-    def preempted_intersections(self) -> list[str]:
-        """Intersections pre-empted so far, in order of first activation."""
-        return list(self._preempted)
-
     def notes(self) -> list[str]:
         if not self._activations:
             return ["no pre-emptions"]

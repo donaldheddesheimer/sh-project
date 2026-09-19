@@ -220,8 +220,11 @@ class MockAgentProvider(AgentProvider):
         )
         return plans
 
-    async def recommend(self, context: IncidentContext, results: list[SimulationCandidate]) -> Recommendation:
+    async def recommend(self, context: IncidentContext | None, results: list[SimulationCandidate]) -> Recommendation:
         """Pick one candidate with a deterministic rule.
+
+        The choice depends only on the simulated outcomes, so ``context`` may be None (the learning
+        scorecard reuses this rule as its "what should have won" reference).
 
         1. Only ``completed`` candidates with metrics count. None -> keep the baseline.
         2. EMS filter: a candidate is eligible only if the realised EMS response (``emergency_vehicle_eta``) is at

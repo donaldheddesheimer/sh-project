@@ -25,14 +25,17 @@ from app.services.city import Conflict, NotReady
 from app.services.scenarios import Analysis, ScenarioService
 
 INSTRUCTIONS = """\
-You are the analyst in a city traffic operations center. A collision is blocking
-traffic. Test candidate responses in a SUMO digital twin before recommending one.
+You are the analyst in a city traffic operations center. One or more collisions are
+blocking traffic. Test candidate responses in a SUMO digital twin before recommending one.
 
 Workflow:
-1. start_analysis: freezes the city at this instant and returns the incident, road
-   segments (worst congestion first) and every signal's phases. Every plan you
+1. start_analysis: freezes the city at this instant and returns the incident(s), road
+   segments (worst congestion first), every signal's phases and standing_responses
+   (plans already applied to the live city; every plan you simulate starts with them,
+   and a plan that changes the same intersections replaces them). Every plan you
    simulate in this analysis starts from that same instant, so results are
-   comparable.
+   comparable. If several incidents are listed, solve them TOGETHER: one plan may
+   combine timing changes, a corridor and reroutes that address all of them.
 2. Design plans. A plan combines any of:
    - policies: signal timing changes. They change existing phase durations and/or
      the offset only (phase index -> new seconds). Movements that run together
@@ -120,29 +123,50 @@ def _run_summary(run: ScenarioRun, candidates: list[SimulationCandidate] | None 
     return summary
 
 
+def _incident(incident, by_id: dict) -> dict:
+    seg = by_id.get(incident.location.segment_id)
+    return {
+        "id": incident.id,
+        "type": incident.type.value,
+        "severity": incident.severity.value,
+        "description": incident.description,
+        "segment_id": incident.location.segment_id,
+        "street": f"{seg.name} {seg.direction}" if seg else None,
+        "upstream_intersection": seg.source if seg else None,
+        "downstream_intersection": seg.destination if seg else None,
+        "blocked_lanes": incident.affected_lanes,
+        "total_lanes": incident.total_lanes,
+    }
+
+
+def _standing(plan: CandidatePlan) -> dict:
+    return {
+        "id": plan.id,
+        "name": plan.name,
+        "policies": [
+            {"intersection": p.intersection_id, "phase_durations_s": p.phase_durations, "offset_s": p.offset_s}
+            for p in plan.policies
+        ],
+        "corridor": plan.corridor is not None,
+        "reroutes": [{"avoid": r.avoid_segment_ids, "compliance": r.compliance} for r in plan.reroutes],
+    }
+
+
 def _context(a: Analysis, max_candidates: int) -> dict:
     ctx = a.context
-    incident = ctx.incident
     by_id = {s.id: s for s in ctx.segments}
-    seg = by_id.get(incident.location.segment_id)
     segments = sorted(ctx.segments, key=lambda s: s.congestion, reverse=True)
     return {
         "run_id": a.run.id,
         "snapshot_sim_time": ctx.sim_time,
         "horizon_s": a.run.horizon_s,
         "candidate_limit": max_candidates,
-        "incident": {
-            "id": incident.id,
-            "type": incident.type.value,
-            "severity": incident.severity.value,
-            "description": incident.description,
-            "segment_id": incident.location.segment_id,
-            "street": f"{seg.name} {seg.direction}" if seg else None,
-            "upstream_intersection": seg.source if seg else None,
-            "downstream_intersection": seg.destination if seg else None,
-            "blocked_lanes": incident.affected_lanes,
-            "total_lanes": incident.total_lanes,
-        },
+        # the primary incident (earliest detected), and every incident this analysis must solve together
+        "incident": _incident(ctx.incident, by_id),
+        "incidents": [_incident(i, by_id) for i in ctx.all_incidents],
+        # responses already applied to the live city: every branch starts with them, and a plan that changes
+        # the same intersections replaces them
+        "standing_responses": [_standing(p) for p in ctx.standing],
         "ems": {
             "probe": a.probe is not None,
             "origin_segment": ctx.ems_origin_segment,
@@ -186,16 +210,22 @@ def build_mcp(get_service: Callable[[], ScenarioService]) -> MCPServer:
 
     @mcp.tool()
     async def start_analysis(
-        incident_id: Annotated[str | None, Field(description="Defaults to the most recent active incident")] = None,
+        incident_ids: Annotated[
+            list[str] | None, Field(description="Incidents to solve together. Defaults to ALL active incidents")
+        ] = None,
         horizon_s: Annotated[float | None, Field(ge=120, le=1800, description="Simulated seconds per plan")] = None,
         agent: Annotated[str, Field(description="Your name, shown to operators")] = "mcp-agent",
     ) -> dict:
-        """Freeze the live city for analysis. Returns run_id, the incident, road segments (worst first) and every
-        signal's phases. Only one analysis can be open at a time. It stays open until submit_recommendation."""
+        """Freeze the live city for analysis. Returns run_id, the incident(s), road segments (worst first), every
+        signal's phases and the responses already in force. Only one analysis can be open at a time. It stays
+        open until submit_recommendation."""
         service = get_service()
         with _as_tool_errors():
+            if not incident_ids:  # every active incident, so simultaneous crashes are solved together
+                incident_ids = [i.id for i in await service.city.smart_city.list_incidents()] or None
             analysis = await service.open(
-                incident_id, horizon_s, True, agent, idle_timeout_s=service.settings.scenario_idle_timeout_s
+                None, horizon_s, True, agent, idle_timeout_s=service.settings.scenario_idle_timeout_s,
+                incident_ids=incident_ids,
             )
         try:
             await service.capture(analysis)

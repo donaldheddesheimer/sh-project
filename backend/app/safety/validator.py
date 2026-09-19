@@ -164,16 +164,23 @@ class RuleBasedSafetyValidator(SafetyValidator):
         if not 30.0 <= corridor.detection_distance_m <= 400.0:
             violations.append(Violation(code="detection_distance", message="detection distance must be 30-400 m"))
 
-        # Pre-emption ends a running green early and relies on the program's own clearance to follow it.
+        # Pre-emption ends a running green early and relies on the program's own clearance to follow it,
+        # so every green must run into at least one yellow and then an all-red before any other green
+        # (the same order check_transition enforces on each commanded change).
         for intersection_id in corridor.intersection_ids or programs:
             phases = programs[intersection_id].phases if intersection_id in programs else []
             for i, phase in enumerate(phases):
-                if phase.kind is PhaseKind.GREEN and phases[(i + 1) % len(phases)].kind is PhaseKind.GREEN:
+                if phase.kind is not PhaseKind.GREEN:
+                    continue
+                # Ends with the phase itself (a green), so a non-yellow phase is always found.
+                after = [phases[(i + k) % len(phases)].kind for k in range(1, len(phases) + 1)]
+                yellows = next(k for k, kind in enumerate(after) if kind is not PhaseKind.YELLOW)
+                if yellows == 0 or after[yellows] is not PhaseKind.ALL_RED:
                     violations.append(
                         Violation(
                             code="no_clearance",
-                            message=f"{intersection_id} phase {phase.index}: green is followed directly by another green "
-                            "(no yellow/all-red to end it through)",
+                            message=f"{intersection_id} phase {phase.index}: green is not followed by yellow and then "
+                            "all-red before the next green (no clearance to end it through)",
                             phase_index=phase.index,
                         )
                     )

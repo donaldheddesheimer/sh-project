@@ -207,7 +207,7 @@ class MockAgentProvider(AgentProvider):
             CandidatePlan(
                 id="divert-advisory",
                 name=f"Divert via {' / '.join(parallels)}" if parallels else f"Divert around {segment.name} {approach}",
-                description=f"Advise {DIVERT_COMPLIANCE:.0%} of drivers headed through the blocked block to divert "
+                description=f"Advise {DIVERT_COMPLIANCE:.0%} of drivers headed through the blocked segment to divert "
                 "(DMS sign + navigation alert).",
                 reroutes=[
                     RerouteAction(

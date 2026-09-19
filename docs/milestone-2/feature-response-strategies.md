@@ -210,7 +210,7 @@ Result section below includes the numbers table.
 on request, so Verify steps 1–6, the numbers table, the safety-audit count and the
 determinism check are still **open**. Two independent read-only reviews traced the code by
 hand (pre-emption safety; reroute, mock agent, validator and the existing tests) and found
-no bugs. Nothing is committed yet.
+no bugs. The work is committed on `feature/response-strategies` and open for review as PR #4.
 
 ### What was built
 

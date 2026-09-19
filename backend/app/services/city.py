@@ -11,6 +11,7 @@ import asyncio
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from app.agent.base import AgentProvider
 from app.config import Settings
@@ -34,7 +35,9 @@ from app.models.domain import (
     NetworkState,
     SignalProgram,
 )
+from app.models.scenario import ScenarioRun
 from app.services.events import EventLog
+from app.simulation.branching import probe_for_incident
 from app.simulation.interface import TrafficSimulation
 from app.simulation.network import RoadNetwork
 from app.simulation.runner import LiveFrame, LiveSimulationRunner
@@ -45,6 +48,7 @@ from app.websocket.hub import ConnectionHub
 log = logging.getLogger(__name__)
 
 FrameObserver = Callable[[NetworkState], Awaitable[None]]
+T = TypeVar("T")
 
 TREND_SAMPLE_S = 5.0  # simulated seconds between trend samples
 TREND_SAMPLES = 180  # 15 simulated minutes
@@ -101,6 +105,7 @@ class CityService:
         self._error: str | None = None
         self._ems_status: dict[str, EmergencyStatus] = {}
         self._trend: deque[MetricSample] = deque(maxlen=TREND_SAMPLES)
+        self.latest_scenario: ScenarioRun | None = None
 
     # ------------------------------------------------------------ lifecycle
 
@@ -145,8 +150,11 @@ class CityService:
         events = ",".join(e.model_dump_json() for e in self.events.recent())
         state = self._state.model_dump_json() if self._state else "null"
         trend = ",".join(s.model_dump_json() for s in self._trend)
+        scenario = self.latest_scenario.model_dump_json() if self.latest_scenario else "null"
         return envelope(
-            "hello", f'{{"status":{self.status_json()},"state":{state},"events":[{events}],"history":[{trend}]}}'
+            "hello",
+            f'{{"status":{self.status_json()},"state":{state},"events":[{events}],"history":[{trend}],'
+            f'"scenario":{scenario}}}',
         )
 
     async def incidents(self, include_cleared: bool = False) -> list[Incident]:
@@ -156,6 +164,14 @@ class CityService:
         if intersection_id not in self.network.intersections:
             raise KeyError(intersection_id)
         return await self._runner.call(lambda sim: sim.get_signal_program(intersection_id))
+
+    async def run_on_live(self, fn: Callable[[TrafficSimulation], T]) -> T:
+        """Run ``fn(sim)`` on the live simulation thread, between steps."""
+        return await self._runner.call(fn)
+
+    def publish_scenario(self, run: ScenarioRun) -> None:
+        self.latest_scenario = run
+        self.hub.broadcast(envelope("scenario", run.model_dump_json()))
 
     # ------------------------------------------------------------- commands
 
@@ -221,10 +237,8 @@ class CityService:
                 raise Conflict("no active incident to respond to")
             incident = max(active, key=lambda i: i.timestamp)
             incident_id = incident.id
-            destination_segment = incident.location.segment_id
-            if incident.location.position_m is not None:
-                position = incident.location.position_m - 20.0  # stage behind the crash, shielding the scene
-            lane = incident.affected_lanes[0] if incident.affected_lanes else 0
+            probe = probe_for_incident(incident, origin)
+            destination_segment, position, lane = probe.destination_segment, probe.position_m, probe.lane
         if destination_segment not in self.network.segments:
             raise KeyError(destination_segment)
         dispatch = await self._runner.call(

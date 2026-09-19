@@ -52,7 +52,7 @@ Other commands:
 |---|---|
 | `make test` | backend test suite (spawns real SUMO processes, ~20 s) |
 | `make build` | type-check and production-build the UI |
-| http://localhost:5173/?fixture=scenario | UI only: Analyze Response replays a recorded run (synthetic numbers, no backend needed; `?fixture=scenario-failed` for the failure path) |
+| http://localhost:5173/?fixture=scenario | Analyze Response replays a recorded run (synthetic numbers) instead of calling `POST /api/scenarios/run`; `?fixture=scenario-failed` replays the failure path. Only the analysis call is replaced: the backend must still be running and a collision active, because the map and the button's prerequisites come from the live stream |
 | `make network` | regenerate the SUMO network and demand from their build scripts |
 | `SUMO_GUI=true make backend` | watch the live simulation in sumo-gui as well |
 | http://127.0.0.1:8000/docs | interactive API docs |

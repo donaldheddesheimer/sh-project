@@ -195,6 +195,56 @@ the Result section below is filled in.
 
 ## Result
 
-_(Fill in when done: what was built, measured timings per run and per branch, the
-determinism check output, deviations from this handoff, contract change requests, and
-anything the integrator must know.)_
+**Built.**
+- `services/scenarios.py`: `ScenarioService` runs guard → snapshot → propose → validate → parallel branches → recommend. Each run keeps a history of the last `SCENARIO_HISTORY` runs, and ops-log entries are made on start, recommendation and failure.
+- `simulation/branching.py`: the pure `run_branch()`, plus `ProbeSpec` and `probe_for_incident()`. `CityService.dispatch_emergency` now uses the same staging helper.
+- `/api/scenarios/run` (202), `/api/scenarios` and `/api/scenarios/{id}`.
+- WebSocket `scenario` messages, and `hello.data.scenario`.
+- The `SCENARIO_*` settings in `config.py` and `.env.example`.
+
+**How it hooks in.**
+- `ScenarioService` depends on `CityService`, not the other way around. `CityService` gained three small public hooks: `run_on_live(fn)` (wraps `runner.call`), `latest_scenario`, and `publish_scenario(run)`.
+- `providers.build_city_service` became `build_services()`. It returns `(city, scenarios)` and builds the branch factory (labels `branch-N`) and the `RuleBasedSafetyValidator`.
+- `main.py` stores `app.state.scenarios` and shuts the worker pool down on exit.
+- The `ScenarioRun` is only mutated on the event loop. Workers return their own candidate object, and "running" is signalled with `call_soon_threadsafe`, so broadcasts never race a worker.
+
+**Verified** (scratch scripts, no new test files):
+1. `make test`: 19 passed.
+2. End to end on :8001 (inject, 16×, about 120 s, run). `SCN-0001` completed; snapshot at t=430, 600 s horizon, 20 timeline samples per candidate:
+
+   | candidate | status | delay (s) | max queue | throughput (veh/h) | EMS | wall (s) |
+   |---|---|---|---|---|---|---|
+   | baseline | completed | 100.2 | 60 | 2658 | 4:29 | 13.1 |
+   | flush-downstream | completed | 99.7 | 60 | 2610 | 4:26 | 16.7 |
+   | meter-upstream | completed | 100.1 | 60 | 2646 | 4:28 | 14.7 |
+   | relieve-cross-street | completed | 101.2 | 59 | 2640 | 4:13 | 15.8 |
+
+   The whole run took 16.7 s of wall time with 4 workers. The ops log reads: "Analyzing INC-0001: 4 candidates, 0 rejected by safety validator" and "Recommendation: Extend EB green at C2 (delay 100s → 100s, EMS 4:29 → 4:26)".
+3. Determinism: two `run_branch(baseline)` calls from one snapshot gave identical metrics (delay 101.98, queue 59, throughput 2574, EMS 405 s) and identical timelines.
+4. WebSocket: `hello.data.scenario` is `null` before the first run. One run produced 13 `scenario` messages, going queued → proposing → simulating → recommending → completed.
+5. Guards:
+   - no incident: 409;
+   - second run while one is in progress: 409;
+   - unknown incident: 404;
+   - `horizon_s=5`: 422.
+   With a stub agent:
+   - the 8 s green at C2 was `rejected` with "C2 phase 0: green 8s < 12s (vehicle/pedestrian minimum)";
+   - a reroute avoiding an unknown segment was `rejected`;
+   - the corridor plan was `failed` with a `NotImplementedError` note while the run completed;
+   - the stub recommending the failed corridor fell back to `baseline` with a rationale line;
+   - an agent that raises gave a `failed` run with `error` set and an `alert` ops event.
+6. Live isolation: during the run the live `sim_time` went 428 → 696 at 16× (16.7 s wall), so the live simulation didn't stall. Snapshot files are deleted after each run.
+
+**Deviations.**
+- A missing `baseline` is inserted before the candidate cap is applied.
+- The handoff did not specify what happens when `incident_id` names a cleared incident. It returns 409, as does an incident with no matched segment.
+
+**For response-strategies and the integrator: branches are about 10× slower than this handoff estimated.**
+- A 600 s branch of the *post-crash* network takes about 8 s alone and 13–17 s with 4 in parallel. The 0.5–1 s estimate holds for the healthy network (300 s of warm-up takes 0.87 s).
+- The same slowdown happens without branching: 600 s in the original process takes 6.8 s.
+- Profile: about half the time is `SumoSimulation._apply_rubbernecking`, which calls `vehicle.getLanePosition` per vehicle per step on the incident link (about 20k TraCI round trips per branch).
+- `start()` also spends about 1 s in a TraCI connect retry per branch.
+- Both are in `sumo.py`, which response-strategies owns. Subscribing lane position (`VAR_LANEPOSITION`) and reading it from `self._veh` would probably fix most of it. Until then, an 8-candidate run takes about 30 s. The UI shows progress, but lowering `SCENARIO_HORIZON_S` is the quick lever for the demo.
+
+**Contract change requests:** none.
+

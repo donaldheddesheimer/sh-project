@@ -36,7 +36,9 @@ export default function App() {
       api
         .network()
         .then((n) => !cancelled && setNetwork(n))
-        .catch(() => (timer = setTimeout(load, 1500)))
+        .catch(() => {
+          if (!cancelled) timer = setTimeout(load, 1500)
+        })
     load()
     return () => {
       cancelled = true

@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     scenario_sample_s: float = 30.0  # simulated seconds between a candidate's timeline samples
     scenario_max_candidates: int = 8  # including the baseline
     scenario_history: int = 10  # runs kept in memory for GET /api/scenarios
+    scenario_idle_timeout_s: float = 300.0  # an MCP agent's open run fails after this long without a tool call
 
     # --- mock Smart City provider ------------------------------------------
     incident_detection_delay_s: float = 4.0  # simulated seconds between a crash and its detection

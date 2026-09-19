@@ -75,6 +75,7 @@ export default function App() {
   const latestIncident = activeIncidents.length
     ? activeIncidents.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
     : null
+  const scopedScenario = scenario && scenario.incident_id === latestIncident?.id ? scenario : null
   const incidentTime = latestIncident?.sim_time ?? null
   // pre-incident reference for KPI deltas: the last trend sample before detection
   const reference = useMemo(
@@ -82,9 +83,9 @@ export default function App() {
     [history, incidentTime],
   )
   const markers = incidents.filter((i) => i.sim_time != null).map((i) => ({ t: i.sim_time!, label: i.id }))
-  const colors = useMemo(() => (scenario ? candidateColors(scenario) : {}), [scenario])
+  const colors = useMemo(() => (scopedScenario ? candidateColors(scopedScenario) : {}), [scopedScenario])
   const activePlanId = hoveredPlanId ?? selectedPlanId
-  const activeCandidate = scenario?.candidates.find((candidate) => candidate.id === activePlanId) ?? null
+  const activeCandidate = scopedScenario?.candidates.find((candidate) => candidate.id === activePlanId) ?? null
   const incidentSegmentId = latestIncident?.location.segment_id ?? null
   const overlay = useMemo(
     () =>
@@ -98,7 +99,7 @@ export default function App() {
     runStatus: status?.status ?? null,
     hasIncident: !!latestIncident,
     busy: !!busy,
-    scenario,
+    scenario: scopedScenario,
     fixture: !!FIXTURE_MODE,
   })
 
@@ -183,7 +184,7 @@ onAction={(action) => {
         />
         <SelectionPanel selection={selection} state={state} />
         <ResponsePlans
-          run={scenario}
+          run={scopedScenario}
           incidentId={latestIncident?.id ?? null}
           fixture={!!FIXTURE_MODE}
           colors={colors}
@@ -199,7 +200,7 @@ onAction={(action) => {
         history={history}
         events={events}
         markers={markers}
-        run={scenario}
+        run={scopedScenario}
         colors={colors}
         activeId={activePlanId}
         selectedId={selectedPlanId}

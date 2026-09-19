@@ -15,7 +15,7 @@ export type PhaseLabels = Record<string, Record<number, string>>
 
 // Categorical series slots (dataviz reference palette, dark steps), in their validated order.
 // Validated against the panel surface with the dataviz skill's validate_palette.js.
-export const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9']
+export const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#00a000', '#9085e9']
 export const BASELINE_COLOR = '#8f99a8'
 const OVERFLOW_COLOR = '#5f6b7c' // never generate a hue past the palette
 

@@ -29,12 +29,14 @@ from traci import constants as tc
 from app.models.domain import (
     CongestionLevel,
     Disruption,
+    EmergencyCorridor,
     EmergencyDispatch,
     EmergencyStatus,
     EmergencyVehicleState,
     IncidentType,
     IntersectionState,
     NetworkState,
+    RerouteAction,
     RoadSegmentState,
     Severity,
     SignalColor,
@@ -48,6 +50,8 @@ from app.models.domain import (
 from app.simulation.interface import TrafficSimulation
 from app.simulation.metrics import MetricsCollector, StepObservation
 from app.simulation.network import PhaseKind, RoadNetwork, phase_kind
+from app.simulation.preemption import PreemptionController, ResponderApproach, SetPhase, TlsObservation
+from app.simulation.reroute import DiversionAdvisory
 from app.simulation.scenario import Scenario
 
 VEHICLE_VARS = (tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED, tc.VAR_TYPE, tc.VAR_TIMELOSS)
@@ -99,8 +103,9 @@ def resolve_sumo_binary(explicit: str | None = None, gui: bool = False) -> str:
     if os.environ.get("SUMO_HOME"):
         candidates.append(Path(os.environ["SUMO_HOME"]) / "bin" / name)
     for candidate in candidates:
-        if candidate.exists():
-            return str(candidate)
+        for path in (candidate, candidate.with_name(candidate.name + ".exe")):  # ".exe" on Windows
+            if path.exists():
+                return str(path)
     found = shutil.which(name)
     if found:
         return found
@@ -152,6 +157,9 @@ class SumoSimulation(TrafficSimulation):
         self._responder_speed: dict[str, float] = {}
         self._rubbernecking: set[str] = set()
         self._pending_offsets: dict[str, float] = {}
+        self._preemption: PreemptionController | None = None
+        self._diversion: DiversionAdvisory | None = None
+        self._programs: dict[tuple[str, str], SignalProgram] = {}  # active program per (tls, program id)
         self._seq = itertools.count(1)
 
     # ------------------------------------------------------------ lifecycle
@@ -255,11 +263,15 @@ class SumoSimulation(TrafficSimulation):
             c.vehicle.subscribe(vid, VEHICLE_VARS)
         if departed:
             self._veh = c.vehicle.getAllSubscriptionResults()
+        if self._diversion is not None:
+            self._diversion.on_departed(departed)
 
         self._update_congestion()
         self._apply_rubbernecking()
         self._update_dispatches(arrived)
         self._apply_pending_offsets()
+        if self._preemption is not None:  # after offsets: the last setPhaseDuration on a signal wins
+            self._preempt_signals()
 
         speeds = []
         time_loss = {}
@@ -351,6 +363,51 @@ class SumoSimulation(TrafficSimulation):
                 remaining = r[tc.TL_NEXT_SWITCH] - self._time
                 self.conn.trafficlight.setPhaseDuration(tls_id, remaining + shift)
                 del self._pending_offsets[tls_id]
+
+    def _preempt_signals(self) -> None:
+        commands = self._preemption.step(self._time, self._responder_approaches(), self._observe_tls)
+        for command in commands:  # UnsafeTransition from the controller propagates on purpose
+            tls_id = self._tls_id(command.intersection_id)
+            if isinstance(command, SetPhase):
+                self.conn.trafficlight.setPhase(tls_id, command.phase_index)
+            else:
+                self.conn.trafficlight.setPhaseDuration(tls_id, command.seconds)
+
+    def _responder_approaches(self) -> list[ResponderApproach]:
+        """Signalized approaches still ahead of every en-route responder (a stopped one is on scene)."""
+        v = self.conn.vehicle
+        approaches = []
+        for vid, r in self._veh.items():
+            if r[tc.VAR_TYPE] != EMS_TYPE:
+                continue
+            try:
+                if v.isStopped(vid):
+                    continue
+                route = v.getRoute(vid)
+                index = v.getRouteIndex(vid)
+                on_junction = v.getRoadID(vid).startswith(":")
+                lane_pos = v.getLanePosition(vid)
+            except traci.TraCIException:
+                continue  # arrived after the subscriptions were read
+            if index < 0:
+                continue
+            for a in self.network.signalized_approaches_ahead(route, index, lane_pos, on_junction):
+                approaches.append(ResponderApproach(vid, a.intersection_id, a.direction, a.distance_m))
+        return approaches
+
+    def _observe_tls(self, intersection_id: str) -> TlsObservation:
+        tls_id = self._tls_id(intersection_id)
+        r = self._tls[tls_id]
+        key = (tls_id, r[tc.TL_CURRENT_PROGRAM])
+        program = self._programs.get(key)
+        if program is None:
+            program = self._programs[key] = self.get_signal_program(intersection_id)
+        return TlsObservation(
+            state=r[tc.TL_RED_YELLOW_GREEN_STATE],
+            phase_index=r[tc.TL_CURRENT_PHASE],
+            remaining_s=max(0.0, r[tc.TL_NEXT_SWITCH] - self._time),
+            program=program,
+        )
 
     # ------------------------------------------------------------ observation
 
@@ -670,6 +727,36 @@ class SumoSimulation(TrafficSimulation):
             eta_s=self._estimate_eta(d) if d.status is EmergencyStatus.EN_ROUTE else None,
         )
 
+    # -------------------------------------------------------- incident responses
+
+    def enable_emergency_corridor(self, corridor: EmergencyCorridor) -> None:
+        """Pre-empt signals ahead of every en-route EMS vehicle for the rest of the run.
+
+        Responders are found by scanning the vehicles each step, so ones dispatched later
+        are covered too. Enabling a second corridor replaces the first: the latest wins.
+        """
+        for intersection_id in corridor.intersection_ids:
+            self._tls_id(intersection_id)  # raises for an unknown or unsignalized intersection
+        self._preemption = PreemptionController(corridor, self._step_length)
+
+    def reroute_vehicles(self, action: RerouteAction) -> int:
+        for segment_id in action.avoid_segment_ids:
+            if segment_id not in self.network.segments:
+                raise ValueError(f"unknown segment {segment_id}")
+        if self._diversion is None:
+            self._diversion = DiversionAdvisory(self.conn, self._vehicle_type)
+        return self._diversion.activate(action, list(self._veh))
+
+    def response_notes(self) -> list[str]:
+        notes = self._preemption.notes() if self._preemption is not None else []
+        if self._diversion is not None:
+            notes += self._diversion.notes()
+        return notes
+
+    def _vehicle_type(self, vehicle_id: str) -> str | None:
+        r = self._veh.get(vehicle_id)
+        return r[tc.VAR_TYPE] if r else None
+
     # ---------------------------------------------------------------- branching
 
     def save_snapshot(self) -> SimulationSnapshot:
@@ -693,7 +780,8 @@ class SumoSimulation(TrafficSimulation):
         fresh processes restored from one snapshot evolve identically, whereas
         re-loading into a process that has already run carries over internal
         SUMO state and diverges. Snapshots capture base signal programs only;
-        programs installed by apply_signal_policy() must be re-applied.
+        programs installed by apply_signal_policy(), emergency corridors and
+        diversions must be re-applied.
         """
         self.conn.simulation.loadState(snapshot.path)
         self._disruptions = {d.id: d.model_copy(deep=True) for d in snapshot.disruptions}
@@ -701,6 +789,9 @@ class SumoSimulation(TrafficSimulation):
         self._responder_speed = {}
         self._rubbernecking = set()
         self._pending_offsets = {}
+        self._preemption = None
+        self._diversion = None
+        self._programs = {}
         self._collector.reset()
         used = [int(m.group(1)) for d in self._dispatches.values() if (m := re.match(r"EMS-(\d+)$", d.id))]
         self._seq = itertools.count(max(used, default=0) + 1)

@@ -35,7 +35,7 @@ from app.config import Settings
 from app.learning.implementor import Implementor
 from app.learning.monitor import LiveMonitor
 from app.learning.reviewer import condense
-from app.learning.scorecard import build_scorecard
+from app.learning.scorecard import PROVISIONAL_CONFIDENCE_CAP, build_scorecard
 from app.learning.store import ExperienceStore, incident_features
 from app.models.api import EventLevel
 from app.models.domain import Incident
@@ -313,13 +313,27 @@ class EpisodeService:
             self._working = None  # a crash from now on starts a new episode while this one finishes
         self._step(ep, EpisodeStatus.REVIEWING, "monitor window closed; scoring the outcome and writing the lesson")
         try:
+            response_notes_available = False
+            try:
+                ep.implementation.notes = await self._city.run_on_live(lambda sim: sim.response_notes())
+                response_notes_available = True
+            except Exception as exc:  # noqa: BLE001 - missing notes make response checks unknown, not the review fail
+                log.warning("%s could not read live response notes: %s", ep.id, exc)
             run = self._scenarios.get(ep.run_id)
-            scorecard = await build_scorecard(run, ep.implementation, record, ep.detected_sim_time or record.started_at)
+            scorecard = await build_scorecard(
+                run,
+                ep.implementation,
+                record,
+                ep.detected_sim_time or record.started_at,
+                response_notes_available=response_notes_available,
+            )
             ep.scorecard = scorecard
             found = [await self._city.smart_city.get_incident(i) for i in ep.incident_ids]
             incidents = [incident_features(i, self._city.network) for i in found if i is not None]
             chosen, tried = condense(run, ep.implementation.candidate_id)
             lesson = await self._reviewer.review(incidents, chosen, tried, scorecard)
+            if scorecard.provisional and lesson.confidence > PROVISIONAL_CONFIDENCE_CAP:
+                lesson = lesson.model_copy(update={"confidence": PROVISIONAL_CONFIDENCE_CAP})
             ep.lesson, ep.reviewer = lesson, lesson.reviewer
             if self._store.enabled:
                 experience = Experience(

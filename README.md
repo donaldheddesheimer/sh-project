@@ -392,7 +392,14 @@ about how far to trust the twin.
 - how many plans were tried and rejected;
 - whether the recommendation matched the mock's rubric among the simulated plans
   (`agent/mock.py`, reused as the "what should have won" reference);
-- a `material` flag and an outcome.
+- a `material` flag and an outcome;
+- typed response checks for an applied corridor or diversion, plus a `provisional` flag when
+  an applicable check failed or its evidence was unavailable.
+
+The monitor reads the live simulation's response notes as its window closes. A corridor
+passes only after at least one pre-emption; a diversion passes only after at least one
+vehicle was diverted. Explicitly idle or disabled behavior fails, while missing evidence is
+unknown. Either result makes the lesson provisional without changing its verdict.
 
 Materiality thresholds, chosen in this pass (constants in `scorecard.py`): **5% mean delay,
 5 vehicles of peak queue, 30 s of EMS response**. Timing plans move delay by about 1%, so
@@ -410,7 +417,8 @@ what did not, what to try next time, and a confidence. It is given only the scor
 the condensed episode (the situation, one line per plan tried, the plan applied). The mock
 reviewer uses templates. The Nemotron reviewer asks NIM for the prose as JSON and falls back
 to the mock. Either way the verdict is the scorecard's outcome: the model explains it and
-cannot overrule it. The raw samples are condensed into the scorecard and discarded.
+cannot overrule it. A provisional lesson's confidence is capped at 0.4 after either reviewer
+returns. The raw samples are condensed into the scorecard and discarded.
 
 **Memory** (`learning/store.py`). Each completed episode becomes
 `memory/episodes/EP-NNNN.md`: a JSON front-matter block holding the whole `Experience` (so
@@ -425,7 +433,7 @@ files survive restarts. Illustrative shape, placeholders instead of numbers:
  "incidents": [{"type": "collision", "severity": "major", "street": "Main St",
                 "direction": "EB", "blocked_lanes": [0], "total_lanes": 2, ...}],
  "chosen": {"id": "<plan id>", "kinds": ["<timing | corridor | diversion>"]},
- "tried": [...], "scorecard": {...},
+ "tried": [...], "scorecard": {"checks": [...], "provisional": false, ...},
  "lesson": {"verdict": "<effective | ineffective | inconclusive>", "next_time": [...]}}
 ---
 # EP-0004: <one-line summary>
@@ -435,10 +443,13 @@ What was tried, the numbers, and the lesson, in prose.
 `memory/playbook.md` is a generated digest of the 20 most recent lessons. Both it and
 `memory/episodes/` are git-ignored; `DELETE /api/memory` forgets everything for a cold run.
 
-Recall ranks past episodes by how similar the situation is, then by recency, then by the
-lesson's confidence, and hands the top 3 to the agent. Past episodes below 0.3 similarity are
-not recalled. Each current incident is matched to its most alike past incident with these
-weights (sum 1.0):
+Recall records a structured, semantic, combined and final ranking score for each result.
+Semantic recall is not active yet, so the semantic score is null and the combined score is
+exactly the structured score. Trusted lessons rank exactly as before; an unconfirmed
+provisional lesson is discounted to 75% of its combined score. Results then sort by ranking
+score, recency and confidence, and the top 3 are handed to the agent. Results below a 0.3
+ranking score are not recalled. Each current incident is matched to its most alike past
+incident with these structured weights (sum 1.0):
 
 | Feature | Weight |
 |---|---|
@@ -450,9 +461,13 @@ weights (sum 1.0):
 | the same lane(s) blocked | 0.1 |
 | as many incidents at once | 0.1 |
 
+Legacy markdown remains readable. If an older corridor or diversion experience has no
+response checks, it is treated in memory as unknown and provisional (including the 0.4
+confidence cap) without rewriting the stored file.
+
 So another crash on the same segment scores 1.0 and `varied-crash` against a `crash-ahead`
-lesson about 0.65. Embedding-based recall (an NVIDIA embedding NIM) can later replace this
-behind the same `recall` call.
+lesson about 0.65. Embedding-based recall (an NVIDIA embedding NIM) can later complement
+this ranking behind the same `recall` call, but cannot grant pruning authority.
 
 **Injection.** Recalled lessons go into the agent's context (`IncidentContext.lessons`) and
 are listed on the run (`ScenarioRun.recalled`). Over MCP, `start_analysis` returns an
@@ -461,12 +476,20 @@ returns more. The instructions say lessons only seed the first round: they never
 `validate_plan` and `simulate_plans`, so memory advises while the validator and the simulator
 stay the gate.
 
+At recall time, a provisional lesson becomes trusted for that query only when two distinct
+other experiences have structured scores of at least 0.75, the same plan family and verdict,
+and successful applicable response checks. Confirmation does not rewrite memory.
+
 **The mock acts on lessons** (`_apply_lessons` in `agent/mock.py`), for a single incident only:
 
-- A close match (similarity 0.75 or more) that found a plan `effective` makes the mock
-  simulate that plan first with just two others: 4 candidates, one wave of branches.
-- A close match that found a plan `ineffective` drops that plan.
+- A trusted close structured match (0.75 or more) that found a plan `effective` makes the
+  mock simulate that plan first with just two others: 4 candidates, one wave of branches.
+- A trusted close structured match that found a plan `ineffective` drops that plan.
 - A looser match (0.5 to 0.75) only reorders: effective plans first, ineffective last.
+
+Provisional lessons can participate in the harmless reorder band, but never remove
+candidates unless the recall-time replication rule confirms them. Semantic similarity will
+likewise never grant pruning authority.
 
 A warm `crash-ahead` run therefore uses fewer candidates and less wall time. That is
 memorisation, not transfer; `varied-crash` (about 0.65) shows only a reordering.
@@ -545,10 +568,11 @@ reviewer, so no NIM key is needed except for step 7.
 
 The items this list used to defer are taken up in [milestone 4](#next-milestone-4). The branch
 speed-up, the slower live speed during analysis, per-responder EMS metrics on the twin side and
-the `revert_response()` primitive are built in part 1 (not run, not measured). Embedding-based
+the `revert_response()` primitive are built in part 1 (not run, not measured). Response checks
+now verify corridor and diversion lessons before they can prune candidates. Embedding-based
 recall, reverting an applied plan when the scene clears, per-responder EMS in the scorecard,
-verifying corridor and diversion lessons and the REST `NemotronAgentProvider` are still planned
-(part 2). Still later: tests for `ScenarioService`, the MCP tools and
+and the REST `NemotronAgentProvider` are still planned (part 2). Still later: tests for
+`ScenarioService`, the MCP tools and
 the learning package (the convention so far is no new test files, so agree on this first).
 
 ### Decisions and open questions
@@ -581,8 +605,8 @@ analysis and reduce staleness.
 
 - **The learnable signal is thin.** Timing plans move delay by about 1%, and the EMS
   corridor often loses once a queue has formed (see [limitations](#current-limitations)),
-  so many lessons will be `inconclusive`. The high-impact plans (corridor, diversion) have
-  the least verification, so check them before trusting their lessons.
+  so many lessons will be `inconclusive`. Corridor and diversion response checks prevent
+  unverified lessons from pruning, but do not make the underlying signal stronger.
 - **Live-apply paths have never run on the live sim.** The corridor's `setPhase` jump in
   particular was never exercised. A pre-emption command that fails the runtime transition
   check no longer stops the live twin: it drops the corridor, logs at `ERROR` and adds a

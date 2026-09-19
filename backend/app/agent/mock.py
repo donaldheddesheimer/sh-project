@@ -129,11 +129,16 @@ def _outcome_lines(base: TrafficMetrics, m: TrafficMetrics) -> list[str]:
     return lines
 
 
-def _by_plan(lessons: list[dict], verdict: str, min_similarity: float) -> dict[str, str]:
-    """Plan id -> the most similar lesson (lessons arrive most similar first) that found it ``verdict``."""
+def _by_plan(lessons: list[dict], verdict: str, min_similarity: float, *, pruning: bool = False) -> dict[str, str]:
+    """Plan id -> the highest-ranked matching lesson, optionally restricted to pruning authority."""
     found: dict[str, str] = {}
     for lesson in lessons:
-        if lesson.get("verdict") == verdict and lesson.get("similarity", 0.0) >= min_similarity:
+        trusted = lesson.get("trusted", not lesson.get("provisional", False))
+        if pruning and not trusted:
+            continue
+        score_key = "structured_score" if pruning else "ranking_score"
+        score = lesson.get(score_key, lesson.get("similarity", 0.0))
+        if lesson.get("verdict") == verdict and score >= min_similarity:
             found.setdefault(lesson.get("chosen", ""), lesson["id"])
     return found
 
@@ -145,13 +150,13 @@ def _noted(plan: CandidatePlan, note: str) -> CandidatePlan:
 def _apply_lessons(plans: list[CandidatePlan], lessons: list[dict]) -> list[CandidatePlan]:
     """Use remembered episodes the way an operator uses experience: try what worked first, skip what did not.
 
-    Only a close match prunes: a plan it found ineffective is dropped, and a plan it found effective is simulated
-    with just ``KEEP_WITH_LESSON`` others (one wave of branches instead of two). A looser match only reorders.
-    Every plan that is left is still validated and simulated.
+    Only a trusted close structured match prunes: a plan it found ineffective is dropped, and a plan it found
+    effective is simulated with just ``KEEP_WITH_LESSON`` others (one wave of branches instead of two). A looser
+    or provisional match only reorders. Every plan that is left is still validated and simulated.
     """
     baseline, rest = plans[0], plans[1:]
-    rest = [p for p in rest if p.id not in _by_plan(lessons, "ineffective", CLOSE_MATCH)]
-    worked = _by_plan(lessons, "effective", CLOSE_MATCH)
+    rest = [p for p in rest if p.id not in _by_plan(lessons, "ineffective", CLOSE_MATCH, pruning=True)]
+    worked = _by_plan(lessons, "effective", CLOSE_MATCH, pruning=True)
     first = next((p for p in rest if p.id in worked), None)
     if first is not None:
         others = [p for p in rest if p is not first][:KEEP_WITH_LESSON]

@@ -99,6 +99,15 @@ class WindowStats(BaseModel):
 
 
 Outcome = Literal["effective", "ineffective", "inconclusive"]
+ResponseKind = Literal["corridor", "diversion"]
+
+
+class ResponseCheck(BaseModel):
+    """Evidence that an applied response actually exercised its intended control."""
+
+    kind: ResponseKind
+    ok: bool | None = Field(description="True when exercised, false when explicitly idle/disabled, null when unknown")
+    detail: str
 
 
 class Scorecard(BaseModel):
@@ -131,6 +140,8 @@ class Scorecard(BaseModel):
     best_by_rubric: str | None = None
     material: bool = Field(False, description="The predicted gain exceeded the noise thresholds")
     outcome: Outcome = "inconclusive"
+    checks: list[ResponseCheck] = Field(default_factory=list)
+    provisional: bool = Field(False, description="An applicable response check was unsuccessful or unavailable")
     notes: list[str] = Field(default_factory=list)
 
 
@@ -188,7 +199,13 @@ class RecalledExperience(BaseModel):
     """The compact view of an Experience injected into the agent's context."""
 
     id: str
-    similarity: float
+    similarity: float = Field(description="Backward-compatible alias for ranking_score")
+    structured_score: float = 0.0
+    semantic_score: float | None = None
+    combined_score: float = 0.0
+    ranking_score: float = 0.0
+    provisional: bool = False
+    trusted: bool = True
     incidents: list[str] = Field(description="One line per incident, e.g. 'collision major, Main St EB, right lane blocked'")
     chosen: str = Field(description="Plan family that was applied, e.g. 'divert-advisory' (incident prefix removed)")
     chosen_name: str = ""

@@ -250,13 +250,21 @@ rules (two-crash rule, decisions, thresholds). This table is the code path.
 | 3 | Analyze | `MockAnalyst` (`ScenarioService.run_pipeline`) or `NemotronAnalyst` (MCP client over NIM, fallback to the mock) | a completed `ScenarioRun`; episode `analyzing` |
 | 4 | Implement | `Implementor.implement(run_id, by)` in one `run_on_live` command | re-validation on live programs, EMS probes, `apply_plan`; `Implementation` on the run and the episode; the plan joins the standing responses; episode `monitoring` |
 | 5 | Monitor | `LiveMonitor` (a frame observer) | `LiveSample` every 5 simulated seconds; a `LiveRecord` after the window |
-| 6 | Score | `build_scorecard` | `Scorecard` (code only): predicted vs realised on absolute simulation time, outcome |
+| 6 | Score | live `response_notes()` → `build_scorecard` | `Scorecard` (code only): predicted vs realised on absolute simulation time, typed corridor/diversion checks, provisional state, outcome |
 | 7 | Review | `MockReviewer` / `NemotronReviewer` | `Lesson` (verdict = the scorecard's outcome); episode `reviewing` |
 | 8 | Remember | `ExperienceStore.save` | `memory/episodes/EP-NNNN.md` + `playbook.md`; episode `completed`; live sim paused |
-| 9 | Recall | `ScenarioService.lessons_source` → `ExperienceStore.recall` | `IncidentContext.lessons`, `ScenarioRun.recalled`, MCP `experience` |
+| 9 | Recall | `ScenarioService.lessons_source` → `ExperienceStore.recall` | structured/semantic/combined/ranking scores and query-scoped trust in `IncidentContext.lessons`, `ScenarioRun.recalled`, MCP `experience` |
 
 Hooks (`incident_listeners`, `reset_listeners`, implementation listeners, the monitor) run
 inside the frame pipeline or a request, so they change state synchronously and spawn tasks
 for slow work. The implementor's live apply runs in a shielded task: once started, a plan
 that reached the live signals is always recorded as standing, even if its agent is
 superseded mid-apply.
+
+Response checks determine trust, not the scorecard verdict. A corridor needs a recorded
+pre-emption and a diversion needs a recorded diverted vehicle; failed or unavailable evidence
+makes the stored lesson provisional and caps confidence at 0.4. Recall discounts an
+unconfirmed provisional lesson. It trusts one for the current query only after two distinct,
+verified experiences with the same plan family and verdict also score at least 0.75 by the
+structured matcher. The mock may reorder on any recalled lesson, but only trusted structured
+matches at or above 0.75 may prune candidates.

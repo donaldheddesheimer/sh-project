@@ -2,9 +2,9 @@
 
 A completed episode becomes ``<memory_dir>/episodes/EP-NNNN.md``: a JSON front-matter block holding the whole
 ``Experience`` (so nothing needs a YAML dependency) and a readable body, so people can read and diff it.
-``playbook.md`` is a digest of every lesson, regenerated on each save. Recall ranks past episodes by how similar
-the situation is, then by recency and by the lesson's confidence. Embedding-based recall (an NVIDIA embedding NIM)
-can later replace ``similarity`` behind the same ``recall`` call.
+``playbook.md`` is a digest of every lesson, regenerated on each save. Recall ranks past episodes by a trust-aware
+score, then by recency and by the lesson's confidence. Structured similarity remains explicit in the recall
+contract so optional semantic recall can improve ranking later without gaining pruning authority.
 """
 
 from __future__ import annotations
@@ -12,10 +12,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
+from app.learning.scorecard import PROVISIONAL_CONFIDENCE_CAP
 from app.models.domain import Incident
-from app.models.episode import Experience, IncidentFeatures, RecalledExperience
+from app.models.episode import Experience, IncidentFeatures, RecalledExperience, ResponseCheck
 from app.simulation.network import RoadNetwork
 
 log = logging.getLogger(__name__)
@@ -30,6 +32,9 @@ W_INTERSECTION = 0.1  # shares the upstream or downstream intersection
 W_LANE = 0.1  # the same lane(s) blocked
 W_COUNT = 0.1  # as many incidents at once
 MIN_SIMILARITY = 0.3  # less alike than this is not worth recalling
+TRUSTED_MATCH = 0.75  # only a trusted structured match this close may prune mock candidates
+CONFIRMATION_COUNT = 2  # distinct verified replications needed to trust a provisional lesson at recall time
+PROVISIONAL_RANKING_FACTOR = 0.75
 RECALL_LIMIT = 3
 PLAYBOOK_LIMIT = 20
 _FRONT_MATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
@@ -106,11 +111,77 @@ def plan_family(plan_id: str) -> str:
     return plan_id.split(":", 1)[-1]
 
 
-def recalled_view(exp: Experience, score: float) -> RecalledExperience:
+@dataclass(frozen=True)
+class _ScoredExperience:
+    experience: Experience
+    structured_score: float
+    semantic_score: float | None
+    combined_score: float
+    ranking_score: float
+    trusted: bool
+
+
+def _checks_succeeded(exp: Experience) -> bool:
+    checks = exp.scorecard.checks
+    return bool(checks) and all(check.ok is True for check in checks)
+
+
+def _normalize_legacy_trust(exp: Experience) -> Experience:
+    """Treat a legacy high-impact lesson without checks as provisional without rewriting its markdown file."""
+    if exp.scorecard.checks:
+        return exp
+    kinds = [kind for kind in ("corridor", "diversion") if kind in exp.chosen.kinds]
+    if not kinds:
+        return exp
+    checks = [ResponseCheck(kind=kind, ok=None, detail="legacy memory has no response evidence") for kind in kinds]
+    scorecard = exp.scorecard.model_copy(update={"checks": checks, "provisional": True})
+    lesson = exp.lesson.model_copy(update={"confidence": min(exp.lesson.confidence, PROVISIONAL_CONFIDENCE_CAP)})
+    return exp.model_copy(update={"scorecard": scorecard, "lesson": lesson})
+
+
+def _confirmed_by_replication(
+    provisional: Experience, scored: list[tuple[float, Experience]]
+) -> bool:
+    """Trust a provisional lesson only after two close, verified replications support it for this recall query."""
+    family = plan_family(provisional.chosen.id)
+    supporters = {
+        other.id
+        for structured, other in scored
+        if other.id != provisional.id
+        and structured >= TRUSTED_MATCH
+        and plan_family(other.chosen.id) == family
+        and other.lesson.verdict == provisional.lesson.verdict
+        and _checks_succeeded(other)
+    }
+    return len(supporters) >= CONFIRMATION_COUNT
+
+
+def _score_recall(exp: Experience, structured: float, all_scores: list[tuple[float, Experience]]) -> _ScoredExperience:
+    trusted = not exp.scorecard.provisional or _confirmed_by_replication(exp, all_scores)
+    combined = structured  # semantic recall is optional and added behind this contract later
+    ranking = combined if trusted else round(combined * PROVISIONAL_RANKING_FACTOR, 3)
+    return _ScoredExperience(
+        experience=exp,
+        structured_score=structured,
+        semantic_score=None,
+        combined_score=combined,
+        ranking_score=ranking,
+        trusted=trusted,
+    )
+
+
+def recalled_view(scored: _ScoredExperience) -> RecalledExperience:
+    exp = scored.experience
     sc = exp.scorecard
     return RecalledExperience(
         id=exp.id,
-        similarity=score,
+        similarity=scored.ranking_score,
+        structured_score=scored.structured_score,
+        semantic_score=scored.semantic_score,
+        combined_score=scored.combined_score,
+        ranking_score=scored.ranking_score,
+        provisional=sc.provisional,
+        trusted=scored.trusted,
         incidents=[describe(f) for f in exp.incidents],
         chosen=plan_family(exp.chosen.id),
         chosen_name=exp.chosen.name,
@@ -147,19 +218,23 @@ class ExperienceStore:
         for path in sorted(self._episodes.glob("EP-*.md")):
             match = _FRONT_MATTER.match(path.read_text(encoding="utf-8"))
             try:
-                found.append(Experience.model_validate_json(match.group(1)))
+                found.append(_normalize_legacy_trust(Experience.model_validate_json(match.group(1))))
             except (AttributeError, ValueError):  # no front matter, or edited into something invalid
                 log.warning("skipping unreadable memory file %s", path)
         return sorted(found, key=lambda e: e.created_at)
 
     def recall(self, current: list[IncidentFeatures], limit: int = RECALL_LIMIT) -> list[RecalledExperience]:
-        """The most similar remembered episodes, then the most recent, then the most confident."""
+        """Rank by trust-adjusted score, then recency and confidence; confirmation never mutates stored memory."""
         if not self.enabled or not current:
             return []
-        scored = [(similarity(current, e.incidents), e) for e in self.load()]
-        scored = [(s, e) for s, e in scored if s >= MIN_SIMILARITY]
-        scored.sort(key=lambda se: (se[0], se[1].created_at, se[1].lesson.confidence), reverse=True)
-        return [recalled_view(e, s) for s, e in scored[:limit]]
+        structured = [(similarity(current, exp.incidents), exp) for exp in self.load()]
+        scored = [_score_recall(exp, score, structured) for score, exp in structured]
+        scored = [item for item in scored if item.ranking_score >= MIN_SIMILARITY]
+        scored.sort(
+            key=lambda item: (item.ranking_score, item.experience.created_at, item.experience.lesson.confidence),
+            reverse=True,
+        )
+        return [recalled_view(item) for item in scored[:limit]]
 
     def playbook(self) -> str:
         path = self.directory / "playbook.md"
@@ -212,9 +287,11 @@ class ExperienceStore:
         for exp in experiences:
             vs_base = exp.scorecard.realised_vs_baseline.get("delay_pct")
             effect = f"delay {vs_base:+.0f}% vs doing nothing" if vs_base is not None else "no comparable numbers"
+            trust = "provisional" if exp.scorecard.provisional else "trusted"
             lines.append(
                 f"- **{exp.id}** · {'; '.join(describe(f) for f in exp.incidents)} · applied "
-                f"`{plan_family(exp.chosen.id)}` ({', '.join(exp.chosen.kinds)}) · **{exp.lesson.verdict}**, {effect}."
+                f"`{plan_family(exp.chosen.id)}` ({', '.join(exp.chosen.kinds)}) · **{exp.lesson.verdict}** "
+                f"({trust}), {effect}."
             )
             lines.extend(f"  - Next time: {tip}" for tip in exp.lesson.next_time[:2])
         (self.directory / "playbook.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -253,8 +330,19 @@ def _body(exp: Experience) -> str:
             )
     lines += [
         "",
-        f"**Lesson ({lesson.verdict}, confidence {lesson.confidence:.2f}, reviewer {lesson.reviewer}).** {lesson.summary}",
+        f"**Lesson ({lesson.verdict}, {'provisional' if sc.provisional else 'trusted'}, "
+        f"confidence {lesson.confidence:.2f}, reviewer {lesson.reviewer}).** {lesson.summary}",
     ]
+    if sc.checks:
+        lines += [
+            "",
+            "Response checks:",
+            *(
+                f"- {check.kind}: "
+                f"{'passed' if check.ok is True else 'failed' if check.ok is False else 'unknown'} — {check.detail}"
+                for check in sc.checks
+            ),
+        ]
     for title, items in (("What worked", lesson.what_worked), ("What didn't", lesson.what_didnt),
                          ("Next time", lesson.next_time)):
         if items:

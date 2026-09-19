@@ -10,11 +10,12 @@ predicted baseline.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from app.agent.mock import MockAgentProvider
 from app.models.domain import CandidateStatus, MetricSample, SimulationCandidate
-from app.models.episode import Implementation, LiveRecord, LiveSample, Outcome, Scorecard, WindowStats
+from app.models.episode import Implementation, LiveRecord, LiveSample, Outcome, ResponseCheck, Scorecard, WindowStats
 from app.models.scenario import ScenarioRun
 
 # Differences smaller than these are noise, not a lesson (timing plans move delay by about 1%).
@@ -22,8 +23,51 @@ MATERIAL_DELAY_PCT = 5.0
 MATERIAL_QUEUE = 5
 MATERIAL_EMS_S = 30.0
 STALE_S = 60.0  # a plan applied this long after its snapshot was predicted for a noticeably different city
+PROVISIONAL_CONFIDENCE_CAP = 0.4
+
+_CORRIDOR_SUCCESS = re.compile(r"^(?P<count>[1-9]\d*) pre-emptions? \(.+\); longest hold \d+s$")
+_DIVERSION_RESULT = re.compile(r"^(?P<count>\d+) vehicles? diverted over the horizon$")
 
 _EMPTY = WindowStats(samples=0, mean_delay=0.0, end_delay=0.0, peak_queue=0, mean_throughput=0.0, mean_speed_mps=0.0)
+
+
+def _corridor_check(notes: list[str], available: bool) -> ResponseCheck:
+    disabled = next((note for note in notes if note.startswith("pre-emption disabled")), None)
+    if disabled is not None:
+        return ResponseCheck(kind="corridor", ok=False, detail=disabled)
+    if "no pre-emptions" in notes:
+        return ResponseCheck(kind="corridor", ok=False, detail="no pre-emptions")
+    success = next((note for note in notes if _CORRIDOR_SUCCESS.fullmatch(note)), None)
+    if success is not None:
+        return ResponseCheck(kind="corridor", ok=True, detail=success)
+    detail = "response notes did not contain corridor evidence" if available else "response notes unavailable"
+    return ResponseCheck(kind="corridor", ok=None, detail=detail)
+
+
+def _diversion_check(implementation: Implementation, available: bool) -> ResponseCheck:
+    result = next((match for note in implementation.notes if (match := _DIVERSION_RESULT.fullmatch(note))), None)
+    if result is not None:
+        count = int(result.group("count"))
+        return ResponseCheck(kind="diversion", ok=count > 0, detail=result.group(0))
+    if implementation.diverted > 0:
+        count = implementation.diverted
+        return ResponseCheck(
+            kind="diversion",
+            ok=True,
+            detail=f"{count} vehicle{'s' if count != 1 else ''} diverted when the response was applied",
+        )
+    if available:
+        return ResponseCheck(kind="diversion", ok=False, detail="0 vehicles diverted")
+    return ResponseCheck(kind="diversion", ok=None, detail="response notes unavailable")
+
+
+def _response_checks(chosen: SimulationCandidate, implementation: Implementation, available: bool) -> list[ResponseCheck]:
+    checks: list[ResponseCheck] = []
+    if chosen.corridor is not None:
+        checks.append(_corridor_check(implementation.notes, available))
+    if chosen.reroutes:
+        checks.append(_diversion_check(implementation, available))
+    return checks
 
 
 def _stats(samples: Sequence[MetricSample | LiveSample], ems: float | None) -> WindowStats | None:
@@ -80,7 +124,12 @@ def _eta(candidate: SimulationCandidate | None) -> float | None:
 
 
 async def build_scorecard(
-    run: ScenarioRun, implementation: Implementation, record: LiveRecord, detected_at: float
+    run: ScenarioRun,
+    implementation: Implementation,
+    record: LiveRecord,
+    detected_at: float,
+    *,
+    response_notes_available: bool = False,
 ) -> Scorecard:
     chosen = next(c for c in run.candidates if c.id == implementation.candidate_id)
     baseline = next((c for c in run.candidates if c.id == "baseline"), None)
@@ -102,6 +151,7 @@ async def build_scorecard(
     realised_vs_baseline = _versus(realised, predicted_baseline) if compared else {}
     material = _beyond(predicted_gain, -1)
     best = await MockAgentProvider().recommend(None, run.candidates)
+    checks = _response_checks(chosen, implementation, response_notes_available)
 
     notes: list[str] = []
     staleness = implementation.staleness_s
@@ -149,5 +199,7 @@ async def build_scorecard(
         best_by_rubric=best.candidate_id,
         material=material,
         outcome=outcome,
+        checks=checks,
+        provisional=any(check.ok is not True for check in checks),
         notes=notes,
     )

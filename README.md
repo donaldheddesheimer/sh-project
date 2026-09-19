@@ -7,7 +7,8 @@ recommended**. The experiments are exposed as MCP tools. An agent (Nemotron over
 rule-based mock offline) drives them, applies its choice to the live twin and learns from
 the result (see [the autonomous episode](#the-autonomous-self-learning-episode)).
 
-This repository has completed **milestone 2** and built the first part of milestone 3. It
+This repository has completed **milestone 2** and built **milestone 3** (the autonomous
+episode; it has not been run yet). Milestone 4 is planned (see [Next: milestone 4](#next-milestone-4)). It
 has a live SUMO digital twin of a 3×3 downtown grid and a FastAPI backend that streams city
 state over WebSocket. There is a React/MapLibre operations console: inject a collision,
 watch the queue spill back, then click **Analyze Response** to test up to 8 candidate plans
@@ -174,7 +175,7 @@ analysis rounds of 10–16 s each plus the 600 s window, about 150 s), so use 8�
 
 ## The autonomous, self-learning episode
 
-This is the first part of milestone 3 and the single place that describes it. It is **built
+This is milestone 3 and the single place that describes it. It is **built
 but has not been run end to end**: no test and no run has exercised it yet. Only build checks
 were run (see [Review notes](#review-notes-the-episode-pass)).
 
@@ -466,13 +467,14 @@ reviewer, so no NIM key is needed except for step 7.
   `varied-crash`: rounds and candidates used, wall time, recommendation quality
   (`GET /api/episodes` has `rounds`, `candidates`, `analysis_wall_s`, `recalled` and the
   scorecard). Same-script gains are memorisation; only the varied script shows transfer.
+  Planned as part 2 of [milestone 4](#next-milestone-4), with a run protocol that adds a cold
+  `varied-crash` control. Nothing has been measured yet.
 
-Later: embedding-based recall; automatic revert of an applied plan when the scene
-clears; per-responder EMS metrics; verifying the corridor and diversion results before
-trusting their lessons; the branch speed-up in `sumo.py`; a slower live speed during
-analysis to reduce staleness; the REST pipeline's `NemotronAgentProvider`; tests for
-`ScenarioService`, the MCP tools and the learning package (the convention so far is no new
-test files, so agree on this first).
+The items this list used to defer (embedding-based recall, reverting an applied plan when the
+scene clears, per-responder EMS metrics, verifying corridor and diversion lessons, the branch
+speed-up, a slower live speed during analysis, the REST `NemotronAgentProvider`) are planned
+in [milestone 4](#next-milestone-4). Still later: tests for `ScenarioService`, the MCP tools and
+the learning package (the convention so far is no new test files, so agree on this first).
 
 ### Decisions and open questions
 
@@ -497,7 +499,8 @@ simulation time.
 
 **Open:** which NIM model id to use (`nvidia/nemotron-3-super-120b-a12b` is built for agentic
 tool calling; `nvidia/nemotron-3-nano-30b-a3b` is faster); whether to slow the live sim
-during analysis to reduce staleness.
+during analysis to reduce staleness (milestone 4 plans it as an opt-in setting, off by
+default).
 
 ### Risks and known gaps
 
@@ -514,9 +517,10 @@ during analysis to reduce staleness.
 - **Snapshots after a live timing change** rely on a fix (`custom_programs`) that was
   checked against the SUMO source, not by a run. Without it every branch of a later analysis
   would fail with `Unknown program`.
-- **Two-crash EMS numbers do not match exactly.** A branch's EMS response counts a live
-  responder already en route to the first crash, while the realised one counts only the new
-  probe (per-responder metrics are listed under "Later").
+- **Two-crash EMS numbers are one figure.** Branch and live both time every responder the plan
+  involves (its own dispatches, and any already on the way at the snapshot) from the same
+  origin, and report the last one to arrive. Per-responder times are not shown (planned in
+  [milestone 4](#next-milestone-4), parts 1 and 2). Read from the code, not run.
 - **Nemotron is untested.** Its latency, rate limits and tool-calling reliability on NIM are
   unknown, and the fallback to the mock can hide a failure, so read the episode's steps.
 - **The in-process MCP connection** uses the SDK's in-memory transport, which the SDK
@@ -631,7 +635,8 @@ simulation/
 memory/                 written at runtime: episodes/EP-NNNN.md lessons and playbook.md (git-ignored)
 docs/
   architecture.md       design notes, both pipelines stage by stage, MCP tools
-  milestone-2/          the milestone-2 plan, per-feature specs and results
+  milestone-2/          the milestone-2 plan, per-feature specs and results (historical)
+  milestone-4/          the milestone-4 plan: MASTER.md, one handoff per part, the step-0 contract
   specs/                scenario-engine-mcp.md (MCP tools spec + client snippet)
 ```
 
@@ -693,18 +698,37 @@ docs/
 - The live EMS ETA is an estimate (observed speeds plus expected signal waits). The
   realised response time comes from the simulation.
 
-## Next: milestone 3
+## Next: milestone 4
 
-Milestone 3 has two parts.
+**Planned. Nothing in milestone 4 is built or run.**
 
-1. **The autonomous, self-learning episode: built, not yet run.** Its design, status and
-   task list are in [The autonomous, self-learning episode](#the-autonomous-self-learning-episode).
-   What remains is to run it (the [review notes](#review-notes-the-episode-pass) list what to
-   try), to run it with Nemotron once a model id is chosen, and to measure the learning.
-2. **NVIDIA Smart City input, prepared but not faked.** The `NvidiaSmartCityProvider`
-   mapping onto the VSS Video Analytics MCP tools, plus a map-matching component (lat/lon
-   and place names → segment and lane). This milestone does not install or run the full
-   Blueprint; until a real VSS endpoint exists, the mock stays the provider.
+**First, milestone 3 has to be run.** It is built, not yet run end to end. What remains is to
+run it (the [review notes](#review-notes-the-episode-pass) list what to try, in order), to run
+it with Nemotron once a model id is chosen, and to measure the learning (see the task list).
+
+Milestone 4 takes what milestones 2 and 3 deferred: the NVIDIA Smart City input that was the
+second half of milestone 3, the episode's "Later" items, and the measurement of the learning.
+It is split into three parts with disjoint files, planned in
+[docs/milestone-4/](docs/milestone-4/MASTER.md). Each part's row below is where its status is
+kept.
+
+| Part | Branch and plan | What it delivers | Status |
+|---|---|---|---|
+| 1. Twin engine | `feature/twin-engine`, [plan](docs/milestone-4/feature-twin-engine.md) | The branch speed-up in `sumo.py`; the EMS corridor explained and its levers tried (a longer detection distance, a combined corridor and diversion plan); per-responder EMS response from the twin; a `revert_response()` primitive; a pre-emption failure on the live twin that degrades instead of stopping it; an opt-in slower live speed during analysis | Planned |
+| 2. Agent and memory | `feature/agent-memory`, [plan](docs/milestone-4/feature-agent-memory.md) | Reverting an applied plan when the scene clears (automatic, and by the operator); per-responder EMS in the scorecard; response checks, so corridor and diversion lessons are verified before they are trusted; embedding-based recall; a learning report and the cold, warm and varied run protocol; the REST `NemotronAgentProvider` | Planned |
+| 3. VSS input | `feature/vss-input`, [plan](docs/milestone-4/feature-vss-input.md) | `NvidiaSmartCityProvider` on the VSS Video Analytics MCP tools, with a replay client for development; a map matcher (lat/lon and place names → segment and lane); mirroring a reported incident into the twin so it can be analyzed; cameras and match details in the UI; Oakland demo scripts | Planned |
+
+**Prepared but not faked** still holds for part 3. The full Blueprint is not installed or run;
+until a real VSS endpoint exists, the mock stays the default provider. The replay client reads
+VSS-shaped documents and labels their incidents `vss-replay`. The VSS field mapping in
+`smart_city/nvidia.py` cites the Blueprint's `smartcities` profile and has not been checked
+against a running server.
+
+Not in milestone 4: tests (see the task list above), autonomous episodes on real incidents
+without a demo script, and auth. The assumptions the plans make (for example what reverting a
+diversion does, and that a blue-light device is off unless approved) are in the
+[decisions table](docs/milestone-4/MASTER.md#decisions-to-confirm); confirm them before
+starting.
 
 ## Review notes: the episode pass
 

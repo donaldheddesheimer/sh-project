@@ -3,9 +3,11 @@
 Traffic operations center: a live SUMO digital twin (3×3 downtown grid) behind a FastAPI
 backend and a React/MapLibre console. When an incident hits, candidate responses (signal
 timing, EMS green corridor, diversion) are **simulated in parallel SUMO branches before
-anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged. Milestone 3's
-first part, the autonomous, self-learning episode (agent responds, applies its plan to the live
-twin, measures it, stores a lesson), is built but not yet run end to end; NVIDIA input is next.
+anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged. Milestone 3,
+the autonomous, self-learning episode (agent responds, applies its plan to the live twin,
+measures it, stores a lesson), is built but not yet run end to end. Milestone 4 (NVIDIA Smart
+City input, a faster twin, a memory that transfers) is planned in
+[docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md) and not built.
 Read [README.md](README.md) for the demos and the episode (its "The autonomous, self-learning
 episode" section), and [docs/architecture.md](docs/architecture.md) for the design and both
 pipelines stage by stage.
@@ -189,5 +191,8 @@ venv directly (this is what works in PowerShell or Git Bash):
 - [docs/architecture.md](docs/architecture.md): current design, the Analyze Response and episode stage tables, the safety model.
 - [docs/specs/scenario-engine-mcp.md](docs/specs/scenario-engine-mcp.md): MCP tool contract and a client snippet.
 - [simulation/controllers/README.md](simulation/controllers/README.md): how pre-emption stays safe.
+- [docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md): the **current** plan for milestone 4
+  (three parts, file ownership, the step-0 contract, decisions to confirm). The README's "Next:
+  milestone 4" table is where each part's status lives. The hard rules above override it.
 - `docs/milestone-2/`: **historical** planning record. Its file-ownership and "frozen"
   rules no longer apply. `docs/hackathon-reference-projects.md` is unrelated inspiration.

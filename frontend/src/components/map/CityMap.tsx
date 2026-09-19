@@ -246,8 +246,9 @@ function syncIncidentMarkers(map: MapLibreMap, markers: Map<string, Marker>, inc
     if (markers.has(incident.id)) continue
     const el = markerElement(
       `incident-marker severity-${incident.severity}`,
-      `<span class="pulse"></span><span class="glyph">!</span><span class="tag">${incident.id}</span>`,
+      '<span class="pulse"></span><span class="glyph">!</span><span class="tag"></span>',
     )
+    el.querySelector<HTMLElement>('.tag')!.textContent = incident.id
     markers.set(
       incident.id,
       new Marker({ element: el }).setLngLat([incident.location.point.lon, incident.location.point.lat]).addTo(map),

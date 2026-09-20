@@ -1,0 +1,19 @@
+# The backend image needs backend/ and simulation/ only — keep everything else out.
+frontend
+node_modules
+**/__pycache__
+**/*.pyc
+.git
+.github
+.claude
+.venv
+venv
+.env
+.env.*
+!.env.example
+docs
+scripts
+*.md
+dist
+.vercel
+memory

@@ -357,6 +357,27 @@ Only a smoke test at different settings has run it (see [Tests](#tests)), so the
 An episode takes about 4–6 minutes of wall time at 4× (an estimate from today's timings:
 analysis rounds of 10–16 s each plus the 600 s window, about 150 s), so use 8–16× on stage.
 
+### Running the stage demo on Oakland with Claude or Nemotron
+
+The safe [demo environment template](#model-api-keys) already selects Oakland, 16× speed
+and a credit-free Mock startup. Once either or both provider credentials are present, use
+the **Analyst** selector to switch the analyst and reviewer together between Mock, Claude
+and Nemotron without editing `.env` or restarting. The exact model id beside the selector
+is the model that will receive the next episode. For Cloud Run, add the credentials through
+Secret Manager as described in [Google Cloud Run demo](#google-cloud-run-demo).
+
+For a real provider qualification, use `EPISODE_FALLBACK_TO_MOCK=false`: an analyst or
+reviewer failure then fails the episode instead of silently completing through Mock. Prove
+the operator-controlled path with Mock, then Claude, and spend Nemotron credits only on the
+final qualification run; the ordered gates are in the
+[demo-readiness roadmap](#demo-readiness-gate).
+
+After **Operator collision** is armed, inject exactly one collision to start it. **Do not
+inject another collision while the episode is working** unless the two-crash behavior is
+the point of the demonstration: the [two-crash rule](#the-two-crash-rule) supersedes the
+working episode and stores no lesson for it. Scheduled scripts such as `crash-ahead` fire
+their own collision and need no manual injection.
+
 ## The autonomous, self-learning episode
 
 This is milestone 3 and the single place that describes it. It is **built

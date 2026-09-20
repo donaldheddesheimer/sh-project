@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from itertools import count
 
@@ -33,6 +34,8 @@ from app.smart_city.matching import RoadMatcher
 from app.smart_city.nvidia import NvidiaSmartCityProvider
 from app.smart_city.vss_client import McpVssClient, ReplayVssClient
 from app.websocket.hub import ConnectionHub
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -115,9 +118,15 @@ def build_episode_teams(
 ) -> tuple[dict[str, AgentTeam], str]:
     """Configured analyst/reviewer teams and the startup selection.
 
-    A configured NVIDIA key makes the backend Nemotron-first and removes the deterministic
-    local team from its advertised choices. This keeps the deployed backend model-backed.
+    The console has no analyst selector: Nemotron runs every episode, and the mock team is used only when
+    ``episode_analyst`` is set to ``mock`` in code.
     """
+    mock = MockAnalyst(scenarios, implementor, settings.agent_may_implement)
+    mock_reviewer = MockReviewer()
+    teams = {"mock": AgentTeam(mock, None, mock_reviewer)}
+    fallback_analyst = mock if settings.episode_fallback_to_mock else None
+    fallback_reviewer = mock_reviewer if settings.episode_fallback_to_mock else None
+
     claude_key = settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None
     nvidia_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
     teams: dict[str, AgentTeam] = {}
@@ -203,6 +212,7 @@ def build_episode_teams(
             )
         needed = "an Anthropic API key" if selected == "claude" else "an NVIDIA API key"
         raise RuntimeError(f"analyst {selected} requires {needed}")
+    log.info("episode analyst/reviewer team: %s (available: %s)", selected, ", ".join(sorted(teams)))
     return teams, selected
 
 
@@ -288,4 +298,6 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
         teams=teams,
         selected_team=selected_team,
     )
+    # an old twin is refreshed on its own (Settings.twin_refresh_s), but never under an analysis or an episode
+    city.refresh_blockers.extend([scenarios.has_open_analysis, episodes.blocks_refresh])
     return Services(city=city, scenarios=scenarios, implementor=implementor, episodes=episodes, memory=memory)

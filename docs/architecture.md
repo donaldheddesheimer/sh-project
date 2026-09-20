@@ -256,9 +256,9 @@ An episode is one agent answering one set of active incidents, from detection to
 lesson. `EpisodeService` is the only thing that starts an agent, and only while a demo
 script is armed. The [demo guide](demo-guide.md#autonomous-path-respond-monitor-learn) covers
 the operator flow and two-crash behavior; this document owns the implementation stages and
-thresholds. Configured mock, Claude and Nemotron teams
-can be selected between episodes through `POST /api/demo/analyst`; selection is refused
-while an episode is armed or active. This table is the code path.
+thresholds. The mock, Claude and Nemotron teams are built from the credentials present and the
+startup team comes from `episode_analyst` in `config.py`; there is no runtime selector.
+This table is the code path.
 
 | # | Stage | Code | Output |
 |---|---|---|---|

@@ -12,9 +12,10 @@ interface Props {
 }
 
 // The happy path of an episode (EpisodeStatus in backend/app/models/episode.py); the other statuses end it early.
-const FLOW: EpisodeStatus[] = ['armed', 'detected', 'analyzing', 'monitoring', 'reviewing', 'completed']
+const FLOW: EpisodeStatus[] = ['armed', 'awaiting', 'detected', 'analyzing', 'monitoring', 'reviewing', 'completed']
 const FLOW_LABEL: Record<string, string> = {
   armed: 'Armed',
+  awaiting: 'Paused',
   detected: 'Detect',
   analyzing: 'Analyze',
   monitoring: 'Monitor',
@@ -24,6 +25,7 @@ const FLOW_LABEL: Record<string, string> = {
 
 const STATUS_TAG: Record<EpisodeStatus, { tone: string; icon: IconName }> = {
   armed: { tone: 'tag-minimal', icon: 'pending' },
+  awaiting: { tone: 'tag-caution', icon: 'pause' },
   detected: { tone: 'tag-primary', icon: 'spinner' },
   analyzing: { tone: 'tag-primary', icon: 'spinner' },
   monitoring: { tone: 'tag-primary', icon: 'spinner' },
@@ -64,7 +66,7 @@ function Flow({ episode }: { episode: Episode }) {
 
 function EpisodeCard({ episode }: { episode: Episode }) {
   const tag = STATUS_TAG[episode.status]
-  const working = ['detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status)
+  const working = ['detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status) // awaiting is idle, not busy
   const impl = episode.implementation
   const sc = episode.scorecard
   const lesson = episode.lesson
@@ -261,7 +263,6 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
   const description = selectedScript?.description
   const operatorControlled = selectedScript?.crashes_at.length === 0
   const memory = info?.memory
-  const analystLocked = !!episode && ['armed', 'detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status)
 
   return (
     <Section
@@ -311,25 +312,9 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
         </button>
       </div>
       <div className="episode-meta">
-        <label className="episode-provider">
-          Analyst
-          <select
-            value={info?.analyst ?? ''}
-            disabled={!!busy || analystLocked}
-            title={
-              analystLocked
-                ? 'Stop or finish the current episode before changing the analyst'
-                : 'Analyst and reviewer for the next episode'
-            }
-            onChange={(e) => void act('analyst', () => api.selectAnalyst(e.target.value))}
-          >
-            {info?.analysts.map((analyst) => (
-              <option key={analyst.id} value={analyst.id}>
-                {analyst.id === 'mock' ? 'Mock' : analyst.id === 'claude' ? 'Claude' : 'Nemotron'}
-              </option>
-            ))}
-          </select>
-        </label>
+        <span className="episode-provider">
+          Analyst {info?.analyst === 'mock' ? 'Mock' : (info?.analyst ?? '—')}
+        </span>
         {info?.analyst_model && (
           <span className="episode-model mono" title={info.analyst_model}>
             analyst: {info.analyst_model}
@@ -356,7 +341,13 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
       </div>
       {operatorControlled && episode?.status === 'armed' && (
         <div className="episode-next-action" role="status">
-          Agent armed. Click <strong>Inject collision</strong> in the top bar when you are ready.
+          Agent armed. Click <strong>Inject collision</strong> in the top bar; the city pauses and an{' '}
+          <strong>Analyze</strong> button appears on the map.
+        </div>
+      )}
+      {episode?.status === 'awaiting' && (
+        <div className="episode-next-action" role="status">
+          Collision detected and the simulation is paused. Press <strong>Analyze</strong> on the map to start the response.
         </div>
       )}
       {episode ? (

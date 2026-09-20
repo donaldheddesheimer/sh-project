@@ -40,6 +40,7 @@ DELAY_TRADEOFF = 1.05  # ...as long as mean delay stays within 5% of the best el
 CLOSE_MATCH = 0.75  # a remembered episode this similar (same segment and blockage) may prune the plan set...
 LOOSE_MATCH = 0.5  # ...one this similar only reorders it
 KEEP_WITH_LESSON = 2  # other plans still tried next to the one a close lesson found effective
+SAME_DELAY_S = 0.5  # mean delays closer than this are the same result (the rationale says "the same delay")
 
 
 def _serves(phase: SignalPhase, by_label: bool) -> list[str]:
@@ -111,6 +112,27 @@ def _change(before: float, after: float) -> str:
     return f" ({round(100 * (after - before) / before):+d}%)" if before else ""
 
 
+def _components(r: SimulationCandidate) -> int:
+    """How many things a plan changes: signal policies, a corridor, diversions. Fewer is easier to run and to undo."""
+    return len(r.policies) + (1 if r.corridor else 0) + len(r.reroutes)
+
+
+def _material_gain(base: TrafficMetrics, m: TrafficMetrics) -> bool:
+    """Whether ``m`` beats ``base`` by a margin the scorecard would call real (anything less is noise)."""
+    # imported here because the scorecard imports this module (for the rubric) and would make a cycle
+    from app.learning.scorecard import MATERIAL_DELAY_PCT, MATERIAL_EMS_S, MATERIAL_QUEUE
+
+    if base.mean_vehicle_delay:
+        delay_gain_pct = 100 * (base.mean_vehicle_delay - m.mean_vehicle_delay) / base.mean_vehicle_delay
+        if delay_gain_pct >= MATERIAL_DELAY_PCT:
+            return True
+    if base.max_queue_length - m.max_queue_length >= MATERIAL_QUEUE:
+        return True
+    before, after = base.emergency_vehicle_eta, m.emergency_vehicle_eta
+    # a baseline responder that never arrived, against a plan that gets it there, is the biggest EMS gain there is
+    return after is not None and (before is None or before - after >= MATERIAL_EMS_S)
+
+
 def _outcome_lines(base: TrafficMetrics, m: TrafficMetrics) -> list[str]:
     lines = []
     if base.emergency_vehicle_eta is not None and m.emergency_vehicle_eta is not None:
@@ -124,8 +146,10 @@ def _outcome_lines(base: TrafficMetrics, m: TrafficMetrics) -> list[str]:
         f"Mean delay {base.mean_vehicle_delay:.0f}s -> {m.mean_vehicle_delay:.0f}s"
         f"{_change(base.mean_vehicle_delay, m.mean_vehicle_delay)}"
     )
-    lines.append(f"Max queue {base.max_queue_length} -> {m.max_queue_length} vehicles")
-    lines.append(f"Throughput {base.throughput:.0f} -> {m.throughput:.0f} veh/h")
+    worse_queue = " (worse)" if m.max_queue_length > base.max_queue_length else ""
+    lines.append(f"Max queue {base.max_queue_length} -> {m.max_queue_length} vehicles{worse_queue}")
+    worse_flow = " (worse)" if m.throughput < base.throughput else ""
+    lines.append(f"Throughput {base.throughput:.0f} -> {m.throughput:.0f} veh/h{worse_flow}")
     return lines
 
 
@@ -176,15 +200,17 @@ def _apply_lessons(plans: list[CandidatePlan], lessons: list[dict]) -> list[Cand
 def _why_lost(chosen: SimulationCandidate, other: SimulationCandidate, other_eligible: bool) -> str:
     c, o = chosen.metrics, other.metrics
     gap = o.mean_vehicle_delay - c.mean_vehicle_delay
-    if gap >= 0.5:
+    if gap >= SAME_DELAY_S:
         return f"{other.id} has {gap:.0f}s more delay"
-    lead = f"{other.id} has {-gap:.0f}s less delay" if gap <= -0.5 else f"{other.id} has the same delay"
+    lead = f"{other.id} has {-gap:.0f}s less delay" if gap <= -SAME_DELAY_S else f"{other.id} has the same delay"
     o_eta, c_eta = o.emergency_vehicle_eta, c.emergency_vehicle_eta
     if o_eta is None and c_eta is not None:
         return f"{lead} but the responder never reaches the scene within the horizon"
     if o_eta is not None and c_eta is not None and o_eta > c_eta:
         limit = f" (beyond the {round((EMS_ETA_TOLERANCE - 1) * 100)}% EMS limit)" if not other_eligible else ""
         return f"{lead} but leaves the responder {o_eta - c_eta:.0f}s slower{limit}"
+    if _components(other) > _components(chosen):
+        return f"{lead} but changes more, and the simpler plan wins a tie"
     return f"{lead} but ranks lower on tie-breaks"
 
 
@@ -335,12 +361,16 @@ class MockAgentProvider(AgentProvider):
            most ``EMS_ETA_TOLERANCE`` x the baseline's. If the baseline responder never arrived (None) there is
            nothing to compare, so nobody is filtered; if only the candidate's responder failed to arrive, the
            candidate is ineligible. The baseline itself is always eligible, as the fallback.
-        3. Take the eligible candidate with the lowest mean delay. Unless another eligible candidate (or that one)
-           improves EMS response by >= ``EMS_GAIN_PREFERRED_S`` and has delay within ``DELAY_TRADEOFF`` of the best;
-           then the biggest EMS improvement wins (ties: lower delay, then candidate order). If the baseline responder
-           never arrived, its response counts as the whole horizon, so a candidate that gets it there scores a gain.
-        4. The rationale gives before/after figures against the baseline and one line on why the runner-up
-           (lowest-delay other completed candidate) lost.
+        3. Take the eligible candidate with the lowest mean delay; delays within ``SAME_DELAY_S`` are the same
+           result, and then the plan that changes least wins (the baseline first). Unless another eligible candidate
+           (or that one) improves EMS response by >= ``EMS_GAIN_PREFERRED_S`` and has delay within ``DELAY_TRADEOFF``
+           of the best; then the biggest EMS improvement wins (ties: lower delay, then fewer changes, then candidate
+           order). If the baseline responder never arrived, its response counts as the whole horizon, so a
+           candidate that gets it there scores a gain.
+        4. A winner that does not beat the baseline by a material margin (the scorecard's thresholds: delay, queue
+           or EMS response) is noise, so the baseline is recommended instead.
+        5. The rationale gives before/after figures against the baseline, marks what got worse, and adds one line on
+           why the runner-up (lowest-delay other completed candidate) lost.
         """
         done = [r for r in results if r.status is CandidateStatus.COMPLETED and r.metrics is not None]
         if not done:
@@ -362,26 +392,48 @@ class MockAgentProvider(AgentProvider):
             return reference - eta if reference is not None and eta is not None else 0.0
 
         pool = [r for r in done if eligible(r)]
-        best = min(pool, key=lambda r: r.metrics.mean_vehicle_delay)
+        lowest = min(r.metrics.mean_vehicle_delay for r in pool)
+        # delays this close are the same result, so the plan that changes least wins: the baseline first, and never a
+        # plan whose extra parts (a corridor that pre-empted nothing, say) bought nothing over a simpler one
+        best = min(
+            (r for r in pool if r.metrics.mean_vehicle_delay - lowest < SAME_DELAY_S),
+            key=lambda r: (_components(r), r.metrics.mean_vehicle_delay),
+        )
         fast = [
             r
             for r in pool
             if ems_gain(r) >= EMS_GAIN_PREFERRED_S
             and r.metrics.mean_vehicle_delay <= best.metrics.mean_vehicle_delay * DELAY_TRADEOFF
         ]
-        chosen = max(fast, key=lambda r: (ems_gain(r), -r.metrics.mean_vehicle_delay)) if fast else best
+        chosen = (
+            max(fast, key=lambda r: (ems_gain(r), -r.metrics.mean_vehicle_delay, -_components(r))) if fast else best
+        )
+        near: SimulationCandidate | None = None  # the winner, when it is too small a win to act on
+        if chosen is not baseline and baseline is not None and not _material_gain(baseline.metrics, chosen.metrics):
+            near, chosen = chosen, baseline
         others = sorted((r for r in done if r is not chosen), key=lambda r: r.metrics.mean_vehicle_delay)
 
         m = chosen.metrics
         if chosen is baseline:
             ems = f", EMS response {_mss(m.emergency_vehicle_eta)}" if m.emergency_vehicle_eta is not None else ""
-            lead = "No candidate beat keeping current timing" if others else "No alternative candidate completed"
+            if near is not None:
+                lead = "No candidate beat keeping current timing by a material margin"
+            else:
+                lead = "No candidate beat keeping current timing" if others else "No alternative candidate completed"
             rationale = [
                 f"{lead} (mean delay {m.mean_vehicle_delay:.0f}s, max queue {m.max_queue_length} vehicles, "
                 f"throughput {m.throughput:.0f} veh/h{ems})"
             ]
+            if near is not None:
+                rationale.append(
+                    f"The closest, {near.id}: {'; '.join(_outcome_lines(m, near.metrics))}. That is within the "
+                    "simulation's noise, so it is not worth changing live signals for"
+                )
             summary = (
-                "Keep current signal timing; no candidate beat it." if others else "No alternative completed; keep current timing."
+                "Keep current signal timing; no candidate beat it by enough to act on."
+                if near is not None
+                else "Keep current signal timing; no candidate beat it." if others
+                else "No alternative completed; keep current timing."
             )
         else:
             summary = chosen.description
@@ -392,6 +444,6 @@ class MockAgentProvider(AgentProvider):
                     f"No baseline completed; ranked on mean delay alone ({m.mean_vehicle_delay:.0f}s, "
                     f"max queue {m.max_queue_length} vehicles, throughput {m.throughput:.0f} veh/h)"
                 ]
-        if others:
+        if others and near is None:  # the noise line above already says why the closest plan did not win
             rationale.append(_why_lost(chosen, others[0], eligible(others[0])))
         return Recommendation(candidate_id=chosen.id, summary=summary, rationale=rationale)

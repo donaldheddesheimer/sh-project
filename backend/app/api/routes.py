@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket
 
 from app.learning.episode import EpisodeService
 from app.learning.implementor import Implementor
 from app.learning.store import ExperienceStore
 from app.models.api import (
-    AnalystSelectionRequest,
+    DemoAnalyzeRequest,
     CityState,
     ControlResponse,
     DemoStartRequest,
@@ -63,7 +63,8 @@ Memory = Annotated[ExperienceStore, Depends(get_memory)]
 
 def _control(city: CityService) -> ControlResponse:
     status = city.status
-    return ControlResponse(status=status.status, speed=status.speed, sim_time=city.sim_time)
+    # the clock now, not the last published frame: after a reset that frame still belongs to the old run
+    return ControlResponse(status=status.status, speed=status.speed, sim_time=city.live_sim_time)
 
 
 @router.get("/health")
@@ -101,6 +102,8 @@ async def incident(city: City, incident_id: str) -> Incident:
 async def inject_incident(city: City, request: InjectIncidentRequest) -> InjectIncidentResponse:
     try:
         disruption = await city.inject_incident(request)
+    except Conflict as exc:  # a collision already blocks those lanes
+        raise HTTPException(409, str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(404, f"unknown segment {exc.args[0]}") from exc
     except ValueError as exc:
@@ -235,13 +238,11 @@ async def demo_stop(episodes: Episodes) -> DemoInfo:
     return await episodes.stop_demo()
 
 
-@router.post("/demo/analyst", response_model=DemoInfo)
-async def demo_analyst(episodes: Episodes, request: AnalystSelectionRequest) -> DemoInfo:
-    """Select the analyst and reviewer for future episodes without restarting the backend."""
+@router.post("/demo/analyze", response_model=Episode, status_code=202)
+async def demo_analyze(episodes: Episodes, request: DemoAnalyzeRequest) -> Episode:
+    """Start the response for the collision the paused city is waiting on (recall, analyze, apply, monitor)."""
     try:
-        return episodes.select_analyst(request.analyst)
-    except KeyError as exc:
-        raise HTTPException(404, f"analyst {request.analyst} is not configured") from exc
+        return await episodes.analyze(request.memory_mode)
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -288,7 +289,7 @@ async def smart_city_status(city: City) -> SmartCityStatus:
 
 
 @router.get("/events", response_model=list[OpsEvent])
-async def events(city: City, limit: int = 50) -> list[OpsEvent]:
+async def events(city: City, limit: Annotated[int, Query(ge=1, le=200)] = 50) -> list[OpsEvent]:
     return city.events.recent(limit)
 
 

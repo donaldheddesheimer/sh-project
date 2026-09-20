@@ -37,6 +37,12 @@ Set by the user. They override anything else in this file or in the docs.
    what is built versus planned and what was not verified. If docs and code disagree, fix one
    of them; never leave both.
 
+3. **Never read `.env` files, and read nothing from the environment but the API keys.** `.env`
+   holds only `_CREDENTIAL_KEYS`. Every other setting is hardcoded in `config.py` or the code:
+   no `os.environ`, `process.env` or `import.meta.env` reads for configuration, and no new
+   environment variables (including platform-set ones such as `K_SERVICE` or `SUMO_HOME`). To
+   learn whether a key is set, ask the user.
+
 ## Commands
 
 Run from the repo root. SUMO comes from PyPI (`eclipse-sumo`), so nothing else is installed.
@@ -64,7 +70,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 - Try the stage episode: `POST /api/demo/start` with `{"script": "operator-collision"}` (or
   **Arm** in the console's Autonomous agent panel), then click **Inject collision**.
   `DELETE /api/memory` first for a cold run. `crash-ahead` remains the unattended version.
-- To test the UI against a non-default backend: `BACKEND_URL=http://127.0.0.1:8001` for Vite.
+- Vite always proxies to the backend on `127.0.0.1:8000` (hardcoded in `frontend/vite.config.ts`).
   `?fixture=scenario` replays a recorded run but still needs a running backend and an active incident.
 - Operational defaults live in [backend/app/config.py](backend/app/config.py) and runtime
   choices live in the console/API. `.env` accepts only the names in `_CREDENTIAL_KEYS`
@@ -107,8 +113,9 @@ venv directly (this is what works in PowerShell or Git Bash):
   matched collisions into the twin. `NemotronAgentProvider` powers REST Analyze Response with
   schema-validated plan data; the safety validator and completed-candidate gate still decide
   what can run. Model failures remain visible rather than silently changing providers.
-  Nemotron also runs as an episode analyst. Claude and Nemotron are runtime-selectable
-  episode analyst/reviewer teams; startup stays on Mock.
+  Nemotron also runs as the episode analyst and reviewer of every episode (`episode_analyst`
+  defaults to it; the console has no selector). With no `NVIDIA_API_KEY` its calls fail
+  visibly; the backend never falls back to Mock. The Claude team is still built.
 - **One thread owns the live TraCI connection.** TraCI is blocking and not thread-safe.
   Touch the live simulation only through `CityService.run_on_live(fn)`; scripted crashes are
   fired by the runner thread itself (`set_scripted_events`).

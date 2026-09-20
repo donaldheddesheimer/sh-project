@@ -122,8 +122,11 @@ run. To enable a model-backed analyst:
 cp .env.demo.example .env
 ```
 
-Add an Anthropic or NVIDIA key, restart, and choose the provider from the **Agent** workspace.
-See [configuration](docs/configuration.md) for exact variables and Windows commands.
+Add an Anthropic or NVIDIA key and restart. The key decides the team: with an `NVIDIA_API_KEY`
+the backend runs Nemotron and stops offering Mock, so a keyed deployment cannot present a
+deterministic run as model-backed. The **Agent** workspace shows which analyst and reviewer
+models are in use; it has no selector, and the startup team is a reviewed choice in
+`config.py`. See [configuration](docs/configuration.md) for exact variables and Windows commands.
 
 ## Architecture
 

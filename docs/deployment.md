@@ -112,8 +112,10 @@ gcloud run services update traffic-ops-demo \
   --update-env-vars=ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID
 ```
 
-Reload the console and verify that the expected analysts appear. Keep Mock selected until the
-deployed simulation path has completed successfully.
+Reload the console and verify that the **Agent** workspace names the analyst and reviewer models
+you configured. Attaching the NVIDIA key is what makes the deployment model-backed, so prove the
+deployed simulation path first: deploy without secrets and run an episode on the deterministic
+team, then add the key.
 
 ## Security and lifecycle
 

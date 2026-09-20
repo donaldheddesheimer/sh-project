@@ -50,6 +50,7 @@ from app.services.city import CityService, Conflict, NotReady
 from app.simulation.branching import ProbeSpec, candidate_from_plan, probe_for_incident, run_branch
 from app.simulation.interface import TrafficSimulation
 from app.simulation.network import RoadNetwork
+from app.simulation.routes import plan_routes
 
 log = logging.getLogger(__name__)
 
@@ -141,6 +142,10 @@ class ScenarioService:
 
     def runs(self) -> list[ScenarioRun]:
         return list(reversed(self._runs))
+
+    def has_open_analysis(self) -> bool:
+        """True while a run holds the snapshot lock; the live city must not be reset under it."""
+        return self._open is not None
 
     def get(self, run_id: str) -> ScenarioRun:
         for run in self._runs:
@@ -379,6 +384,11 @@ class ScenarioService:
 
         start = len(a.run.candidates)
         a.run.candidates.extend(candidate_from_plan(p) for p in plans)
+        stations = self.city.scenario.ems_stations
+        for plan in plans:  # where each plan acts, for the mini map
+            a.run.routes[plan.id] = plan_routes(
+                self.city.network, plan, a.incidents, stations[0].edge if stations else None
+            )
         for candidate, plan in zip(a.run.candidates[start:], plans):
             if findings := self.check_plan(a, plan):
                 candidate.status = CandidateStatus.REJECTED
@@ -434,6 +444,11 @@ class ScenarioService:
             return
         a.run.error = error
         a.run.completed_at = datetime.now(UTC)
+        for candidate in a.run.candidates:
+            if candidate.status in (CandidateStatus.PENDING, CandidateStatus.RUNNING):
+                # its branch is cancelled with the run and never reports back, so it would read "running" forever
+                candidate.status = CandidateStatus.FAILED
+                candidate.notes = [*candidate.notes, f"Cancelled before it finished: {error}"]
         self._set_status(a.run, ScenarioStatus.FAILED)
         self.city.events.add(EventLevel.ALERT, f"Analysis {a.run.id} failed: {error}", self.city.sim_time, a.incident.id)
         self._close(a)

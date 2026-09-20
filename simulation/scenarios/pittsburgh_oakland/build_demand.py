@@ -26,7 +26,9 @@ NET = HERE.parents[1] / "networks" / "pittsburgh_oakland" / "oakland.net.xml"
 
 # 0.55 gives ~2,500 veh/h: busy but stable (no gridlock or teleports over two simulated hours)
 DEFAULT_SCALE = 0.55
-HORIZON_S = 24 * 3600
+# Flows stop at this time and the network then empties for good. It was 24 h, which an always-on service reaches after
+# 90 minutes at 16x; 7 days is 10 h at 16x. The service also resets an idle twin long before either (twin_refresh_s).
+HORIZON_S = 7 * 24 * 3600
 # veh/h entering per lane, by OSM road class (a rough capacity ladder, not counts)
 CLASS_VPH_PER_LANE = {
     "trunk": 380,

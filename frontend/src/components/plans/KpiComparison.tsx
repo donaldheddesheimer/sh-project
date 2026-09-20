@@ -20,6 +20,9 @@ function position(value: number, values: number[]): number {
 
 function unavailable(candidate: SimulationCandidate, run: ScenarioRun): string {
   if (candidate.status === 'rejected') return 'Rejected by safety validator'
+  if (run.status === 'failed' && (candidate.status === 'pending' || candidate.status === 'running')) {
+    return 'Cancelled: the analysis ended before it finished'
+  }
   if (candidate.status === 'failed') return candidate.notes[0] ?? 'Branch failed'
   if (candidate.status === 'running') return 'Simulation running…'
   if (candidate.status === 'pending') return 'Waiting for a worker…'
@@ -32,15 +35,18 @@ export function KpiComparison({ run, colors, activeId, selectedId, onHover, onSe
 
   return (
     <div className="compare-pane">
-      <div className="subhead">Candidate outcomes</div>
+      {/* these are branch-horizon averages; the live delay in Live trends is measured differently */}
+      <div className="subhead">Candidate outcomes · {Math.round(run.horizon_s / 60)}-minute horizon</div>
       <div className="kpi-matrix" role="table" aria-label="Scenario KPI comparison">
-        <div className="km-head" role="columnheader">Plan</div>
-        {KPIS.map((kpi) => (
-          <div className="km-head" role="columnheader" key={kpi.key}>
-            {kpi.label}
-            <span className="km-dir">{kpi.lowerIsBetter ? '↓' : '↑'} better</span>
-          </div>
-        ))}
+        <div role="row" style={{ display: 'contents' }}>
+          <div className="km-head" role="columnheader">Plan</div>
+          {KPIS.map((kpi) => (
+            <div className="km-head" role="columnheader" key={kpi.key}>
+              {kpi.label}
+              <span className="km-dir">{kpi.lowerIsBetter ? '↓' : '↑'} better</span>
+            </div>
+          ))}
+        </div>
 
         {run.candidates.map((candidate) => {
           const metrics = candidate.metrics
@@ -50,19 +56,21 @@ export function KpiComparison({ run, colors, activeId, selectedId, onHover, onSe
           const style = { '--cand-color': colors[candidate.id] } as CSSProperties
           return (
             <div className={rowClass} role="row" key={candidate.id} style={style}>
-              <button
-                type="button"
-                className="km-name"
-                aria-pressed={selectedId === candidate.id}
-                onMouseEnter={() => onHover(candidate.id)}
-                onMouseLeave={() => onHover(null)}
-                onFocus={() => onHover(candidate.id)}
-                onBlur={() => onHover(null)}
-                onClick={() => onSelect(candidate.id)}
-              >
-                <span className={`swatch${candidate.id === 'baseline' ? ' baseline' : ''}`} />
-                <span>{candidate.name}</span>
-              </button>
+              <div role="rowheader" style={{ display: 'contents' }}>
+                <button
+                  type="button"
+                  className="km-name"
+                  aria-pressed={selectedId === candidate.id}
+                  onMouseEnter={() => onHover(candidate.id)}
+                  onMouseLeave={() => onHover(null)}
+                  onFocus={() => onHover(candidate.id)}
+                  onBlur={() => onHover(null)}
+                  onClick={() => onSelect(candidate.id)}
+                >
+                  <span className={`swatch${candidate.id === 'baseline' ? ' baseline' : ''}`} />
+                  <span>{candidate.name}</span>
+                </button>
+              </div>
 
               {metrics ? (
                 KPIS.map((kpi) => {
@@ -76,7 +84,7 @@ export function KpiComparison({ run, colors, activeId, selectedId, onHover, onSe
                   if (value == null) {
                     return (
                       <div className="km-cell" role="cell" key={kpi.key} title={emsMissing(run)}>
-                        <span className="km-note missing">not on scene</span>
+                        <span className="km-note missing">{run.ems_probe ? 'not on scene' : 'no EMS probe'}</span>
                       </div>
                     )
                   }

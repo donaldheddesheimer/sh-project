@@ -5,6 +5,9 @@ const SIM_START_HOUR = 7 // the scenario represents the AM peak starting at 07:0
 
 export const mph = (mps: number) => mps * MPS_TO_MPH
 
+/** "Forbes Avenue & Bigelow Boulevard & Schenley Drive" -> its first two streets, enough to tell junctions apart. */
+export const shortName = (name: string) => name.split(' & ').slice(0, 2).join(' & ')
+
 export function clock(simSeconds: number): string {
   const total = Math.floor(simSeconds) + SIM_START_HOUR * 3600
   const h = Math.floor(total / 3600) % 24

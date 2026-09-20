@@ -27,11 +27,11 @@ The `.env` file is ignored by Git. Never put either key in `.env.demo.example`, 
 build argument, frontend code, or a `VITE_*` variable. A Claude web subscription is separate
 from Anthropic API billing.
 
-## Runtime analyst selection
+## Analyst teams
 
 With no NVIDIA key, the backend starts with the credit-free Mock team. An NVIDIA key makes
-Nemotron the startup team; an Anthropic key adds Claude. Open **Agent** and change the
-**Analyst** selector between episodes when more than one configured team is available:
+Nemotron the startup team and withdraws Mock; an Anthropic key adds Claude. The team is chosen
+at startup from the credentials present and `episode_analyst` in `config.py`, not in the console:
 
 | Selection | Credential | Analyst / reviewer models |
 |---|---|---|

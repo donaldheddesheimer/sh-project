@@ -33,6 +33,7 @@ export default function App() {
   const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [pendingMapId, setPendingMapId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const cancelReplay = useRef<(() => void) | null>(null)
 
@@ -161,6 +162,9 @@ export default function App() {
   const switchMap = async (mapId: string) => {
     if (mapId === network?.id) return
     setBusy('map')
+    // Keep the controlled select on the operator's choice while the replacement warms up.
+    // Otherwise React can restore the old network id and some browsers emit a reverse change.
+    setPendingMapId(mapId)
     setSelection(null)
     setHoveredPlanId(null)
     setSelectedPlanId(null)
@@ -171,6 +175,7 @@ export default function App() {
     } catch (err) {
       setToast(err instanceof Error ? err.message : String(err))
     } finally {
+      setPendingMapId(null)
       setBusy(null)
     }
   }
@@ -179,7 +184,7 @@ export default function App() {
     <div className="app">
       <TopBar
         networkName={network?.name ?? null}
-        mapId={network?.id ?? null}
+        mapId={pendingMapId ?? network?.id ?? null}
         simTime={state?.sim_time ?? null}
         status={status}
         connected={connected}

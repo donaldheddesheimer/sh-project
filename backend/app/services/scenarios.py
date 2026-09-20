@@ -252,35 +252,35 @@ class ScenarioService:
             )
         return combined
 
-    async def run_pipeline(self, a: Analysis) -> None:
-        """Capture, propose, simulate and recommend with the configured AgentProvider; failures fail the run.
+    async def run_pipeline(self, a: Analysis, agent: AgentProvider | None = None) -> None:
+        """Capture, propose, simulate and recommend with an AgentProvider; failures fail the run.
 
         Awaited by the episode's mock analyst (so cancelling the analyst cancels the pipeline) or spawned by
-        ``start_run``.
+        ``start_run``. An episode may supply its team's provider; REST uses the configured provider.
         """
         try:
             await self.capture(a)
-            agent = self.agent
+            selected = agent or self.agent
             try:
-                plans = await self._propose(a, agent)
+                plans = await self._propose(a, selected)
             except Exception as exc:
-                agent = self._fallback_agent(a, "proposal", exc)
-                plans = await self._propose(a, agent)
+                selected = self._fallback_agent(a, selected, "proposal", exc)
+                plans = await self._propose(a, selected)
             plans = [BASELINE, *(p for p in plans if p.id != BASELINE.id)][: self.settings.scenario_max_candidates]
             await self.evaluate(a, plans, then=ScenarioStatus.RECOMMENDING)
             try:
-                recommendation = await agent.recommend(a.context, a.run.candidates)
+                recommendation = await selected.recommend(a.context, a.run.candidates)
             except Exception as exc:
-                agent = self._fallback_agent(a, "recommendation", exc)
-                recommendation = await agent.recommend(a.context, a.run.candidates)
-            self.finish(a, self._checked(recommendation, a.run))
+                selected = self._fallback_agent(a, selected, "recommendation", exc)
+                recommendation = await selected.recommend(a.context, a.run.candidates)
+            self.finish(a, self._checked(recommendation, a.run, selected.name))
         except Exception as exc:  # noqa: BLE001 - reported on the run and in the ops log
             log.exception("scenario run %s failed", a.run.id)
             self.fail(a, f"{type(exc).__name__}: {exc}")
 
-    def _fallback_agent(self, a: Analysis, stage: str, exc: Exception) -> AgentProvider:
+    def _fallback_agent(self, a: Analysis, agent: AgentProvider, stage: str, exc: Exception) -> AgentProvider:
         """Switch a REST NIM run to the deterministic provider once, or preserve its configured failure."""
-        if self.agent.name != "nemotron" or a.run.agent == "nemotron→mock" or not self.settings.agent_fallback_to_mock:
+        if agent.name != "nemotron" or a.run.agent == "nemotron→mock" or not self.settings.agent_fallback_to_mock:
             raise exc
         message = _safe_error(exc)
         a.run.agent = "nemotron→mock"
@@ -548,7 +548,7 @@ class ScenarioService:
             candidate.status = CandidateStatus.RUNNING
             self.city.publish_scenario(run)
 
-    def _checked(self, recommendation: Recommendation, run: ScenarioRun) -> Recommendation:
+    def _checked(self, recommendation: Recommendation, run: ScenarioRun, agent_name: str) -> Recommendation:
         """Mock path: fall back to the baseline if the agent picked a candidate that did not complete."""
         chosen = next((c for c in run.candidates if c.id == recommendation.candidate_id), None)
         if chosen is not None and chosen.status is CandidateStatus.COMPLETED:
@@ -556,7 +556,7 @@ class ScenarioService:
         return Recommendation(
             candidate_id=BASELINE.id,
             summary="Keep current signal timing.",
-            rationale=[f"{self.agent.name} agent recommended '{recommendation.candidate_id}', which did not complete; "
+            rationale=[f"{agent_name} agent recommended '{recommendation.candidate_id}', which did not complete; "
                        "falling back to the baseline"],
         )
 

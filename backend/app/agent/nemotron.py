@@ -1,20 +1,15 @@
-"""NVIDIA Nemotron via NIM: chat-backed REST proposals plus the episode's MCP analyst.
+"""NVIDIA Nemotron via NIM: structured proposals and recommendations for the guarded pipeline.
 
-Nemotron drives an episode's analysis as an MCP client of this backend's scenario tools
-(``app/learning/analysts.py``). NIM does not speak MCP, so the analyst lists the tools, hands them to the
-OpenAI-compatible NIM endpoint as ``tools`` and runs each tool call the model makes:
+The built-in Nemotron episode uses ``NemotronAgentProvider`` through ``PipelineAnalyst``. The model makes
+the two judgment calls—propose candidate plans, then recommend from completed results—as compact JSON.
+Application code owns the stateful workflow:
 
-    start_analysis         -> incident(s), segments (worst first), every signal's phases, experience
-    -> design plans (SignalPolicy timing changes, EmergencyCorridor, RerouteAction)
-    -> validate_plan       -> safety findings, before spending a simulation
-    -> simulate_plans      -> parallel SUMO branches from one snapshot, baseline included
-    -> get_analysis        -> results with deltas against the baseline; refine and repeat
-    -> submit_recommendation (a completed candidate and a rationale that quotes numbers)
-    -> implement_recommendation (the gated implementor applies it to the live city)
+    incident context -> propose plans -> validate -> parallel SUMO branches
+    -> completed results -> recommend -> checked implementor
 
-The optional one-shot REST pipeline uses the same NIM client through
-``NemotronAgentProvider``. It returns plans as data only; ScenarioService keeps validation,
-branch simulation, completed-candidate checks and its explicit mock fallback.
+The public MCP scenario tools remain available for external agents, while the bounded built-in path avoids
+the hosted endpoint's fragile, growing assistant/tool transcript. The REST Analyze Response path uses the
+same provider and safety pipeline.
 """
 
 from __future__ import annotations

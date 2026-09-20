@@ -13,7 +13,7 @@ from app.agent.mock import MockAgentProvider
 from app.agent.nemotron import NemotronAgentProvider, NimClient
 from app.config import Settings
 from app.learning.embeddings import NimEmbedder
-from app.learning.analysts import MockAnalyst, ModelAnalyst
+from app.learning.analysts import MockAnalyst, ModelAnalyst, PipelineAnalyst
 from app.learning.episode import AgentTeam, EpisodeService
 from app.learning.implementor import Implementor
 from app.learning.monitor import LiveMonitor
@@ -154,11 +154,18 @@ def build_episode_teams(
 
     if nvidia_key and settings.nemotron_model:
         nim = NimClient(settings.nemotron_base_url, settings.nemotron_model, nvidia_key)
+        provider = NemotronAgentProvider(
+            settings.nemotron_base_url,
+            settings.nemotron_model,
+            nvidia_key,
+            settings.scenario_max_candidates,
+        )
         teams["nemotron"] = AgentTeam(
-            ModelAnalyst(
+            PipelineAnalyst(
                 "nemotron",
-                nim,
-                settings.mcp_url or mcp_server,
+                provider,
+                scenarios,
+                implementor,
                 settings.episode_agent_timeout_s,
                 settings.agent_may_implement,
             ),

@@ -1,11 +1,13 @@
 """Analysts: the agent that answers an episode's incidents by testing plans in branches and picking one.
 
 ``MockAnalyst`` drives the ScenarioService pipeline with the rule-based mock (no model, no key).
+``PipelineAnalyst`` drives that same guarded pipeline with a structured model provider. It is the
+built-in Nemotron path: the model proposes and recommends, while application code validates, simulates
+and implements. This avoids sending a growing tool transcript back to a hosted model.
 ``ModelAnalyst`` is an MCP client of this app's scenario tools (in-process by default, or MCP_URL over HTTP).
-It lists the tools, hands them to Claude or Nemotron and runs each tool call the model makes. Either analyst
-returns the id of the analysis it completed. When AGENT_MAY_IMPLEMENT is on, the analyst applies its
-recommendation through the implementor (the mock directly, a model with ``implement_recommendation``); the
-episode service implements it if the model forgets.
+It lists the tools, hands them to Claude and runs each tool call the model makes. Every analyst returns the
+id of the analysis it completed. When AGENT_MAY_IMPLEMENT is on, the analyst applies its recommendation
+through the implementor; the episode service implements it otherwise.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from mcp import Client
 from mcp.server.mcpserver import MCPServer
 from pydantic import ValidationError
 
-from app.agent.base import CandidatePlan
+from app.agent.base import AgentProvider, CandidatePlan
 from app.agent.chat import ChatClient
 from app.learning.implementor import Implementor
 from app.models.episode import MemoryMode
@@ -57,6 +59,44 @@ class MockAnalyst:
         a = await self._scenarios.open(None, None, True, self.name, memory_mode=memory_mode, incident_ids=incident_ids)
         on_run(a.run.id)
         await self._scenarios.run_pipeline(a)  # a cancel (superseded) propagates; failures fail the run
+        if a.run.status is not ScenarioStatus.COMPLETED:
+            raise AnalystError(a.run.error or f"{a.run.id} ended {a.run.status.value}")
+        if self._may_implement:
+            await self._implementor.implement(a.run.id, by="agent")
+        return a.run.id
+
+
+class PipelineAnalyst:
+    """Run a model provider through the application's bounded, schema-validated pipeline."""
+
+    def __init__(
+        self,
+        name: str,
+        provider: AgentProvider,
+        scenarios: ScenarioService,
+        implementor: Implementor,
+        timeout_s: float,
+        may_implement: bool,
+    ):
+        self.name = name
+        self._provider = provider
+        self._scenarios = scenarios
+        self._implementor = implementor
+        self._timeout_s = timeout_s
+        self._may_implement = may_implement
+
+    async def run(self, incident_ids: list[str], on_run: OnRun, memory_mode: MemoryMode = "use") -> str:
+        a = await self._scenarios.open(
+            None, None, True, self.name, memory_mode=memory_mode, incident_ids=incident_ids
+        )
+        on_run(a.run.id)
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                await self._scenarios.run_pipeline(a, agent=self._provider)
+        except TimeoutError as exc:
+            if not a.closed:
+                self._scenarios.fail(a, f"{self.name} analysis timed out after {self._timeout_s:.0f}s")
+            raise AnalystError(a.run.error or f"{self.name} analysis timed out") from exc
         if a.run.status is not ScenarioStatus.COMPLETED:
             raise AnalystError(a.run.error or f"{a.run.id} ended {a.run.status.value}")
         if self._may_implement:

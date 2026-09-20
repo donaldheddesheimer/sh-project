@@ -1,0 +1,30 @@
+Todo: broken things found so far
+
+Excluded: agent B's TraCI ConnectionResetError and the two orphaned snapshot files, since both came from my killing the agents mid-run.
+
+Confirmed (I reproduced or measured these)
+
+ Model loop truncates start_analysis.
+start_analysis returns 23,250 characters on the plain grid, and ModelAnalyst cuts every tool result at 16,000 (analysts.py:29).
+The model gets invalid JSON. About half the signal phases and all the experience lessons are lost, because the payload is built in _context in mcp_tools.py with signals and lessons last.
+Fix options are a smaller payload, better ordering, or a bigger cap. Oakland is likely worse but wasn't measured.
+ /mcp returns 421 for any non-local Host header.
+The MCP SDK turns on DNS-rebinding protection by default and nothing in the repo configures it. A curl to your demo backend with Host: my-service.run.app got 421.
+External clients on a Cloud Run URL, or an MCP_URL pointing at a non-local host, would be blocked. The in-process Nemotron path is unaffected.
+The README says the Cloud Run deploy publishes /mcp, which this contradicts. I haven't tested a real deployment.
+ Log noise on aborted requests (low priority). A client dropping mid-body makes the MCP SDK log a ClientDisconnect ERROR traceback. The server stays up, and it's SDK code, not ours.
+Suspected from reading the code (never reproduced)
+
+ Uncaught exceptions in the Nemotron loop. In analysts.py, call["function"]["name"], call["id"], json.loads on a non-string (TypeError) and name not in TOOLS with an unhashable name would each escape the try and fail the analysis. So would non-list tool_calls, and non-string message content, which NIM would reject.
+ A tool-call exception ends the whole analysis. A timeout or error from client.call_tool is not turned into a tool result the model can read.
+ Uncapped horizon_s. The model can pass up to 1800 s with 8 plans, which may exceed the client's 180 s read timeout. I never measured it.
+ Tool schemas. They contain $defs, $ref and anyOf with null, which may not suit NIM's function-calling. This is unverified against NIM.
+Not tested at all
+
+The Nemotron client path, because agent D never got past reading code.
+Oakland, multi-crash analyses, horizon and plan-count timing, and memory corruption.
+Most of the schema and identifier fuzzing.
+Housekeeping
+
+Nothing is committed. The doc edits are on feature/mcp-hardening.
+The demo backend on 8000 runs pre-merge code and needs a restart to pick up upstream's changes.

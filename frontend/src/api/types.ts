@@ -505,6 +505,7 @@ export type StreamMessage =
       type: 'hello'
       data: {
         status: StatusInfo
+        network: NetworkGeometry
         state: CityState | null
         events: OpsEvent[]
         history: MetricSample[]

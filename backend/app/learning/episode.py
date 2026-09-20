@@ -185,8 +185,23 @@ class EpisodeService:
         return self._working
 
     async def shutdown(self) -> None:
-        for task in list(self._tasks):
+        """Stop this service's work and wait for it.
+
+        Awaiting matters for a map switch: a review or a memory write already in flight would otherwise keep
+        running against the old city, and its episode id was taken from a counter the replacement has already
+        snapshotted, so an unawaited write can overwrite the replacement's first lesson.
+        """
+        tasks = list(self._tasks)
+        for task in tasks:
             task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 - a failed episode task must not stop the rest of the shutdown
+                log.exception("an episode task failed while shutting down")
+        await self._monitor.shutdown()
 
     async def stop_demo(self) -> DemoInfo:
         """Disarm: no more scripted crashes and no autonomous response. The city keeps running."""

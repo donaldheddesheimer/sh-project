@@ -241,7 +241,6 @@ class SumoSimulation(TrafficSimulation):
         self._time = 0.0
         self._collector = MetricsCollector()
         self._veh: dict[str, dict] = {}
-        self._teleporting: set[str] = set()
         self._edges: dict[str, dict] = {}
         self._tls: dict[str, dict] = {}
         self._pending: tuple[str, ...] = ()
@@ -399,24 +398,19 @@ class SumoSimulation(TrafficSimulation):
             c.vehicle.subscribe(vid, VEHICLE_VARS)
 
     def _read_vehicles(self) -> None:
-        """Read the vehicle subscription, keeping only the vehicles that are on the network in ``_veh``.
+        """Read the vehicle subscription, keeping only the vehicles that are on the network.
 
-        SUMO teleports a vehicle that has been stuck longer than ``--time-to-teleport`` (300 simulated
-        seconds in both scenarios, which a queue behind a crash reaches) and re-inserts it downstream. While
-        it is in transfer it sits on no lane at all, so traci answers the subscription with
-        INVALID_DOUBLE_VALUE (-2^30) for its speed, angle, position and lane position. That is not an
-        observation of the city, and one such record ruins every average it enters: -2^30 shared with 400
-        real vehicles is a mean speed of -2.7 million m/s, which the console showed as millions of negative
-        mph. The ids stay in ``_teleporting`` because those vehicles are still in the simulation, so a
-        command addressed to one (handing speed control back, clearing a diversion) must still go out.
+        traci answers with INVALID_DOUBLE_VALUE (-2^30) for the speed, angle, position and lane position of
+        a vehicle that is not on a lane: one SUMO is teleporting after it stood still longer than
+        ``--time-to-teleport`` (300 simulated seconds in both scenarios, which a queue behind a crash
+        reaches), and one that arrived and whose subscription result survives a frame. Neither is an
+        observation of the city, and a single such record ruins every average it enters: -2^30 shared with
+        400 real vehicles is a mean speed of -2.7 million m/s, which the console showed as millions of
+        negative mph. Dropping them here covers every reader of ``_veh`` - the metrics, the map, the
+        responder bookkeeping - and leaves nothing addressing a vehicle that may already be gone.
         """
         results = self.conn.vehicle.getAllSubscriptionResults()
         self._veh = {vid: r for vid, r in results.items() if r[tc.VAR_SPEED] > tc.INVALID_DOUBLE_VALUE}
-        self._teleporting = results.keys() - self._veh.keys()
-
-    def _in_simulation(self) -> list[str]:
-        """Every vehicle SUMO still knows about, on the network or mid-teleport (sorted for determinism)."""
-        return [*self._veh, *sorted(self._teleporting)]
 
     def _read_state(self) -> dict:
         c = self.conn
@@ -516,7 +510,7 @@ class SumoSimulation(TrafficSimulation):
             if vid not in self._rubbernecking:
                 c.vehicle.setSpeed(vid, speed)
         for vid in self._rubbernecking - targets.keys():
-            if vid in self._veh or vid in self._teleporting:  # one in a teleport still carries the override
+            if vid in self._veh:
                 c.vehicle.setSpeed(vid, -1)  # hand control back to the car-following model
         self._rubbernecking = set(targets)
 
@@ -986,7 +980,7 @@ class SumoSimulation(TrafficSimulation):
                 raise ValueError(f"unknown segment {segment_id}")
         if self._diversion is None:
             self._diversion = DiversionAdvisory(self.conn, self._vehicle_type)
-        return self._diversion.activate(action, self._in_simulation())
+        return self._diversion.activate(action, list(self._veh))
 
     def response_notes(self) -> list[str]:
         corridor = self._preemption or self._dropped_preemption
@@ -1049,7 +1043,7 @@ class SumoSimulation(TrafficSimulation):
             self._drop_preemption()
             notes.append("EMS corridor disabled; each signal carries on with its own program")
         if self._diversion is not None and self._diversion.active:
-            cleared = self._diversion.deactivate(self._in_simulation())
+            cleared = self._diversion.deactivate(self._veh)
             notes.append(
                 f"diversion advisory stopped; travel-time overrides cleared on {cleared} "
                 f"vehicle{'' if cleared == 1 else 's'} (routes already changed are left alone)"

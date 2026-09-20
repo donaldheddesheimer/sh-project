@@ -488,7 +488,8 @@ only on the final qualification run; the ordered gates are in the
 This is milestone 3 and the single place that describes it. The operator-controlled path,
 warm recall, `varied-crash`, Reset and Clear scene were manually qualified with the Mock team
 on Oakland on 2026-09-20; see the [demo-readiness gate](#demo-readiness-gate) for the evidence.
-Claude, Nemotron, `crash-already` and `double-crash` still have not been run end to end.
+Claude, `crash-already` and `double-crash` still have not been run end to end. Nemotron has
+reached authenticated multi-turn tool use and branch simulation, but not a completed episode.
 
 **Status at a glance**
 
@@ -498,7 +499,7 @@ Claude, Nemotron, `crash-already` and `double-crash` still have not been run end
 | Scripted and operator-controlled crash scenarios | Operator collision and `varied-crash` qualified locally; the other scripts remain unrun | `simulation/scenarios/*/demos/`, `simulation/runner.py` |
 | One analysis over several incidents; branches that replay standing responses; abandoning an analysis | Single-incident branches and Reset/Clear aborts qualified; multi-incident analysis remains unrun | `services/scenarios.py`, `simulation/branching.py` |
 | Episode service, implementor, monitor, scorecard, reviewer, memory, recall, the mock acting on lessons | Qualified locally with Mock | `backend/app/learning/`, `agent/mock.py` |
-| Runtime-selectable mock, Claude and Nemotron analyst/reviewer teams | Built, not run: model teams need their API key and model id | `learning/analysts.py`, `agent/claude.py`, `agent/nemotron.py` |
+| Runtime-selectable mock, Claude and Nemotron analyst/reviewer teams | Mock qualified; Nemotron partially qualified through branch simulation; Claude unrun | `learning/analysts.py`, `agent/claude.py`, `agent/nemotron.py` |
 | Autonomous agent panel, runtime selector, **Apply to live signals** | Mock episode state and runtime selector visible locally; manual Apply remains unrun | `frontend/src/components/EpisodePanel.tsx`, `plans/ResponsePlans.tsx` |
 
 ### The idea
@@ -809,7 +810,7 @@ The defaults a demo run depends on, all in `backend/app/config.py`:
 |---|---|---|
 | `scenario_dir` | `downtown_grid` | The city at startup; the **Map** selector switches it |
 | `sim_speed` | 4 | Time scale at startup. An armed script sets its own; `operator-collision` asks for 16× |
-| `agent_provider` | `nemotron` | Who proposes plans for REST **Analyze Response**. Needs `NVIDIA_API_KEY`; without one the run fails visibly when called (no silent Mock fallback). Set `mock` in code for offline use. Not verified: Nemotron remains unrun |
+| `agent_provider` | `auto` | Who proposes plans for REST **Analyze Response** and the Mock episode. `auto` uses the local rule-based provider without `NVIDIA_API_KEY` and Nemotron when the key is present. An explicitly selected Nemotron provider requires the key at startup |
 | `episode_analyst` | `auto` | Startup team: Nemotron when `NVIDIA_API_KEY` is set, else Claude when its key is set, else the credit-free local team. A configured NVIDIA key also withdraws the local team from the selector, so a keyed deployment stays model-backed and reports no `mock` provider |
 | `episode_agent_timeout_s` | 420 | Wall-clock limit for one Claude or Nemotron analysis, plus a cap of 16 model turns |
 | `episode_fallback_to_mock`, `agent_fallback_to_mock` | false | A model failure fails the run instead of silently completing through Mock |
@@ -819,7 +820,7 @@ The defaults a demo run depends on, all in `backend/app/config.py`:
 | `memory_enabled`, `memory_dir` | true, `<repo>/memory` | Memory on/off and where lessons are written |
 | `scenario_max_candidates` | 9 | Most plans an analysis simulates, the baseline included |
 | `embedding_model` | unset | Optional semantic recall through an OpenAI-compatible embedding NIM; unset keeps recall structured-only |
-| `claude_model`, `nemotron_model` | `claude-haiku-4-5-20251001`, `nvidia/nemotron-3-super-120b-a12b` | The model each selectable team calls |
+| `claude_model`, `nemotron_model` | `claude-haiku-4-5-20251001`, `nvidia/nemotron-3-super-120b-a12b` | The model each selectable team calls. Nemotron 3 Super uses NVIDIA's non-thinking, non-empty-content chat-template options for multi-turn tool calling; one transient NIM 5xx is retried once |
 | `mcp_url` | unset | Where a model analyst reaches the MCP tools; unset = this app's server, in-process |
 | `smart_city_provider`, `nvidia_va_mcp_url`, `vss_*` | mock, unset, defaults | The NVIDIA VSS input path, off unless the code selects it. The built-in feed is selected by the value `mock` but reports itself as `simulation` in `/api/state` and the map caption: it is the twin's own ground truth standing in for VSS, never a fallback for a model that failed |
 
@@ -1190,10 +1191,10 @@ calling or prove billing. Use this order to protect the Nemotron credit balance:
 | Order | Gate | Status | Evidence / exit condition |
 |---|---|---|---|
 | 1 | Operator-controlled flow, runtime Mock / Claude / Nemotron selector, exact model label and single-container Cloud Run packaging | Local UI passed | The UI changed Oakland → 3×3 grid → Oakland and the selector exposed all three configured teams. Container deployment is still covered by gate 6. |
-| 2 | Local mock episode | **Passed 2026-09-20** | Cold `EP-0001` completed with 8 candidates, applied `corridor-plus-divert`, compared 562.5 s, recorded 7.22 m/s mean speed, received an `effective` verdict and wrote a readable lesson. Fallback was disabled. |
+| 2 | Local mock episode | **Passed 2026-09-20** | The earlier Oakland run completed with 8 candidates. A later grid rerun after key-aware provider selection completed 9 candidates in 20.4 s, applied `EMS corridor + divert`, received an `effective` verdict (-14.8% realised delay vs baseline) and stored a lesson. Fallback was disabled. |
 | 3 | Local Claude qualification | Awaiting explicit data-sharing approval | The local qualification is prepared and model failures cannot fall back to Mock, but no incident briefing has been sent to Anthropic yet. |
 | 4 | Recall and failure drills | **Passed 2026-09-20** | Warm `EP-0002` recalled `EP-0001` and pruned 8 candidates to 4. `varied-crash` `EP-0003` recalled both lessons at 0.35 similarity and evaluated 9 candidates. Reset aborted `EP-0005` after 71.5 s of monitoring; Clear scene aborted `EP-0006` after 66 s. |
-| 5 | Local Nemotron qualification | Pending | Only after gates 2–4 pass, keep fallback off, select **Nemotron** and run one operator-controlled episode. Stop after the first successful analysis/review cycle to conserve credits. |
+| 5 | Local Nemotron qualification | **Partial 2026-09-20** | Authentication, exact model selection, multi-turn tool calls and branch simulation succeeded. The strongest run simulated two candidates and recovered one NIM 500 through the bounded retry, but a later NIM request hung until the 420 s episode timeout. No run reached recommendation, implementation or review; do not present this path as qualified. |
 | 6 | Cloud Run and stage rehearsal | Pending | Deploy Mock first, open the public URL and prove the UI, REST API and reconnecting WebSocket. Then attach Secret Manager values, qualify the stage model once, rehearse the visible click path, and set `--min=0` after the event. |
 
 The demo is ready when gates 2–4 and 6 pass with Claude as the stage model. Gate 5 proves
@@ -1211,7 +1212,7 @@ kept.
 | Part | Branch and plan | What it delivers | Status |
 |---|---|---|---|
 | 1. Twin engine | `feature/twin-engine`, [plan](docs/milestone-4/feature-twin-engine.md) | The branch speed-up in `sumo.py`; the EMS corridor explained and its levers tried (a longer detection distance, a combined corridor and diversion plan); per-responder EMS response from the twin; a `revert_response()` primitive; a pre-emption failure on the live twin that degrades instead of stopping it; an opt-in slower live speed during analysis | Exercised by the local Mock qualification; no isolated performance benchmark |
-| 2. Agent and memory | `feature/agent-memory`, [plan](docs/milestone-4/feature-agent-memory.md) | Response checks/trust, `use`/`ignore` controls, optional embedding recall, learning report/protocol and REST `NemotronAgentProvider`. Revert-on-clear and per-responder EMS in the scorecard remain planned. | Mock recall and response checks qualified; embeddings and Nemotron remain unrun |
+| 2. Agent and memory | `feature/agent-memory`, [plan](docs/milestone-4/feature-agent-memory.md) | Response checks/trust, `use`/`ignore` controls, optional embedding recall, learning report/protocol and REST `NemotronAgentProvider`. Revert-on-clear and per-responder EMS in the scorecard remain planned. | Mock recall and response checks qualified; embeddings unrun; Nemotron partial through branch simulation |
 | 3. VSS input | `feature/vss-input`, [plan](docs/milestone-4/feature-vss-input.md) | `NvidiaSmartCityProvider` on the VSS Video Analytics MCP tools, with a replay client for development; a map matcher (lat/lon and place names → segment and lane); mirroring a reported incident into the twin so it can be analyzed; cameras and match details in the UI; Oakland demo scripts | Built, not run |
 
 **Prepared but not faked** still holds for part 3. The full Blueprint is not installed or run;
@@ -1264,12 +1265,16 @@ the previous pass, plus five fixes found while reading the code. The single-cras
   returned HTTP 200 for the Claude and Nemotron credentials in the local `.env`, and each
   configured model id appeared in its provider's catalog. No secret value was printed or
   added to Git. These checks made no inference call.
-- **Not run in this branch:** runtime switching between the grid and Pittsburgh, the
-  operator-controlled flow, runtime provider selection, Claude/Nemotron inference, the
-  single-container deployment and the updated panel. The cold
-  mock smoke run documented under [Tests](#tests) predates this work. CLAUDE.md hard rule 1
-  prohibits agents from running tests, scratch scripts or the app without a user request, so
-  the existing suite was not re-run.
+- **Runtime qualification requested by the user on 2026-09-20:** the keyless Mock
+  `operator-collision` episode completed end to end after restoring key-aware REST-provider
+  selection. Nemotron authenticated as `nvidia/nemotron-3-super-120b-a12b`, completed repeated
+  chat/tool turns and one branch-simulation round, but did not finish an episode: intermittent
+  hosted NIM 500s and a later request timeout remain. The fixes add NVIDIA's documented chat
+  template options, one bounded 5xx retry, staged tool exposure, plan-argument normalization
+  and useful nested-error reporting.
+- **Still not run in this branch:** runtime map switching, Claude inference, the
+  single-container deployment and the updated panel. No automated tests, frontend build or
+  lint were run; the user requested the two live runtime qualifications, not the test suite.
 - **MCP tools, run by hand on 2026-09-19** (mock providers, grid, no episode): a scratch Python
   MCP client took a timing plan through `submit_recommendation` and `implement_recommendation`,
   and the next analysis completed every branch instead of failing with `Unknown program`. The

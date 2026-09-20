@@ -19,6 +19,7 @@ branch simulation, completed-candidate checks and its explicit mock fallback.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx2
@@ -54,12 +55,22 @@ class NimClient:
             "top_p": 0.95,
             "max_tokens": max_tokens,
         }
+        if "nemotron-3-super" in self.model.lower():
+            # NVIDIA's model card requires non-thinking mode for reliable tool calling and
+            # force_nonempty_content for agent loops that feed tool results back to the model.
+            # Without it the first tool call succeeds, but the hosted endpoint can return 500
+            # while rendering the follow-up assistant + tool history.
+            body["chat_template_kwargs"] = {"enable_thinking": False, "force_nonempty_content": True}
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         async with httpx2.AsyncClient(timeout=self._timeout_s) as http:
-            response = await http.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
+            for attempt in range(2):
+                response = await http.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
+                if response.status_code not in {500, 502, 503, 504} or attempt == 1:
+                    break
+                await asyncio.sleep(0.5)
         if response.status_code >= 400:
             raise NimError(f"NIM returned {response.status_code}: {response.text[:300]}")
         try:

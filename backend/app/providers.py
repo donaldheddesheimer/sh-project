@@ -89,11 +89,16 @@ def check_keyed_deployment(settings: Settings) -> None:
 
 
 def build_agent_provider(settings: Settings) -> AgentProvider:
-    if settings.agent_provider == "mock":
+    api_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
+    selected = settings.agent_provider
+    if selected == "auto":
+        selected = "nemotron" if api_key else "mock"
+    if selected == "mock":
         return MockAgentProvider()
     if not settings.nemotron_model:
         raise RuntimeError("the Nemotron REST provider requires a model id")
-    api_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
+    if not api_key:
+        raise RuntimeError("the Nemotron REST provider requires an NVIDIA API key")
     return NemotronAgentProvider(
         settings.nemotron_base_url, settings.nemotron_model, api_key, settings.scenario_max_candidates
     )

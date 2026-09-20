@@ -39,7 +39,9 @@ class Settings(BaseSettings):
 
     # --- provider selection -------------------------------------------------
     smart_city_provider: Literal["mock", "nvidia"] = "mock"
-    agent_provider: Literal["mock", "nemotron"] = "nemotron"
+    # REST Analyze Response and the Mock episode share this provider. Auto keeps no-key
+    # development local while a keyed deployment remains Nemotron-first.
+    agent_provider: Literal["auto", "mock", "nemotron"] = "auto"
 
     # --- traffic simulation -------------------------------------------------
     # downtown_grid (the tests and startup use it) or pittsburgh_oakland; runtime UI/API switching is primary

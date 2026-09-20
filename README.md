@@ -142,8 +142,10 @@ cp .env.demo.example .env
 ```
 
 Only model credentials belong in this file, and they are the only names the app reads from
-the environment at all. The app starts on the credit-free Mock team; model ids, safe analysis
-behavior and every other default live in code ([Settings](#settings)). The **Analyst**
+the environment at all. Startup follows the keys: with `NVIDIA_API_KEY` set the app starts on
+Nemotron and stops offering the credit-free local team, and with no model key at all it starts on
+that local team. Model ids, safe analysis behavior and every other default live in code
+([Settings](#settings)). The **Analyst**
 selector switches the analyst and reviewer between runs without editing `.env` or restarting
 the backend:
 
@@ -196,8 +198,9 @@ gcloud secrets add-iam-policy-binding nvidia-api-key \
   --role="roles/secretmanager.secretAccessor"
 ```
 
-First deploy the credit-free mock to prove that the container, Oakland network, UI and
-WebSocket work. Run this from the repository root:
+First deploy with no model keys attached, to prove that the container, Oakland network, UI and
+WebSocket work; with no key the backend runs the credit-free local team. Run this from the
+repository root:
 
 ```bash
 gcloud run deploy traffic-ops-demo \
@@ -215,7 +218,9 @@ gcloud run deploy traffic-ops-demo \
   --no-cpu-throttling
 ```
 
-After the mock deployment works, attach both API keys without rebuilding:
+After that deployment works, attach the API keys without rebuilding. Attaching `NVIDIA_API_KEY`
+makes the backend Nemotron-first at its next start and withdraws the local team, so no deployed
+endpoint reports a `mock` provider:
 
 ```bash
 gcloud run services update traffic-ops-demo \
@@ -227,7 +232,8 @@ Add `--update-env-vars=ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID` when the Anthro
 organization-level. It is the only environment name besides the two keys that the app reads;
 `--set-env-vars` would replace the whole list, so use `--update-env-vars`.
 
-Reload the console and select Mock, Claude or Nemotron from the panel. Lessons live on the
+Reload the console. With the NVIDIA key attached the panel offers Nemotron, plus Claude when its
+key is set; the local team is no longer listed. Lessons live on the
 container's ephemeral filesystem, so they survive repeated runs on the warm instance but
 not a replacement or restart. Keep `--max=1`; multiple instances would create different
 live cities. Because the service is public, anyone with
@@ -251,7 +257,7 @@ README:
 |---|---|---|
 | **Command bar** | Across the top, available in every view | The **Map** selector (**3×3 Grid**, **Pittsburgh**), network state and the simulated clock, the time scale (1×–16×), play/pause and reset, and the three response commands: **Inject collision**, **Dispatch EMS**, **Analyze Response** |
 | **Workspace rail** | Narrow left column | The three views — **Live**, **Analysis**, **Agent** — each with a count: active incidents, candidate plans, and a working episode |
-| **Map** | The center, always the live twin and never a branch | Roads colored by cycle-averaged congestion, signal heads on the live phase, vehicles, incident markers, the EMS responder, cameras on the VSS path, and the legend. The caption under it names the network, its signalized intersections, the tracked vehicle count and the three providers in use |
+| **Map** | The center, always the live twin and never a branch | Roads colored by cycle-averaged congestion, signal heads on the live phase, vehicles, incident markers, the EMS responder, cameras on the VSS path, the cosmetic thinking overlay while a decision is being made, and the legend. The caption under it names the network, its signalized intersections, the tracked vehicle count and the three providers in use |
 | **Workspace drawer** | Right column, titled by the selected view | **Live**: Active incident, Network performance, Inspector. **Analysis**: Response plans, then the incident. **Agent**: Autonomous agent, then the plans and the incident |
 | **Performance dock** | Strip along the bottom | **Live trends** (delay, max queue, throughput and mean speed against simulated time, one marker per incident, above the city overview and the ops log), **Scenario comparison** (the KPI table and the horizon chart, enabled once a run exists) and **Activity** (that overview and ops log on their own, with more room) |
 
@@ -266,6 +272,16 @@ How the regions drive each other:
   that object in Active incident or the Inspector.
 - Hovering or clicking a plan, in either the drawer or the dock, paints it on the map and
   pins a summary card there; clicking the same plan again clears it.
+- While a decision is being made — an Analyze Response run is open, or an episode is at
+  `detected` or `analyzing` — a **thinking overlay** fans a few plausible detours out of the
+  crash, pulses light along each one and captions the map *Evaluating detours…*. It is
+  **decoration only**: the frontend traces the routes through the map's own geometry, and
+  reads no candidate, agent message or MCP tool, so the colors carry no ranking and the
+  caption says *illustration · not the agent's plan*. It stands aside as soon as a real plan
+  is hovered or clicked, and fades out when the decision lands. Under
+  `prefers-reduced-motion` the routes are drawn once and nothing animates. It type-checks,
+  lints and builds clean; **nobody has watched it run**, so how the fan-out reads on either
+  map is still unverified.
 - **Dispatch EMS** targets the newest active incident. With several incidents open, the
   drawer gets a **Selected incident** picker, and dispatch is disabled while an older one is
   selected.
@@ -519,7 +535,7 @@ Used the same way everywhere in this README, the code and the ops log.
 | Term | Meaning |
 |---|---|
 | **Crash** | The physical event scripted into the simulation (a `Disruption`). |
-| **Incident** | A Smart City provider's report (`INC-0001`): a mock-detected crash or an external VSS event. |
+| **Incident** | A Smart City provider's report (`INC-0001`): a crash the built-in `simulation` feed detected, or an external VSS event. |
 | **Analysis / run** | One `ScenarioRun` (`SCN-0001`): one snapshot, a baseline plus candidate plans, one recommendation. |
 | **Plan / candidate** | A `CandidatePlan` (signal timing changes, an EMS corridor, reroutes) before simulating; a `SimulationCandidate` once it has metrics. `baseline` is the do-nothing plan. |
 | **Implement** | Apply the recommended plan to the *live* simulation, as opposed to simulating it in a branch. Recorded with who did it: `agent`, `operator`, or `coordinator` (the episode service, when a model recommended but did not apply). |
@@ -794,7 +810,7 @@ The defaults a demo run depends on, all in `backend/app/config.py`:
 | `scenario_dir` | `downtown_grid` | The city at startup; the **Map** selector switches it |
 | `sim_speed` | 4 | Time scale at startup. An armed script sets its own; `operator-collision` asks for 16× |
 | `agent_provider` | `nemotron` | Who proposes plans for REST **Analyze Response**. Needs `NVIDIA_API_KEY`; without one the run fails visibly when called (no silent Mock fallback). Set `mock` in code for offline use. Not verified: Nemotron remains unrun |
-| `episode_analyst` | `mock` | Startup team, so a restart never spends model credits |
+| `episode_analyst` | `auto` | Startup team: Nemotron when `NVIDIA_API_KEY` is set, else Claude when its key is set, else the credit-free local team. A configured NVIDIA key also withdraws the local team from the selector, so a keyed deployment stays model-backed and reports no `mock` provider |
 | `episode_agent_timeout_s` | 420 | Wall-clock limit for one Claude or Nemotron analysis, plus a cap of 16 model turns |
 | `episode_fallback_to_mock`, `agent_fallback_to_mock` | false | A model failure fails the run instead of silently completing through Mock |
 | `episode_monitor_s` | unset | The script's `monitor_s`, else the analysis horizon (see [Monitor](#the-autonomous-self-learning-episode)) |
@@ -805,7 +821,7 @@ The defaults a demo run depends on, all in `backend/app/config.py`:
 | `embedding_model` | unset | Optional semantic recall through an OpenAI-compatible embedding NIM; unset keeps recall structured-only |
 | `claude_model`, `nemotron_model` | `claude-haiku-4-5-20251001`, `nvidia/nemotron-3-super-120b-a12b` | The model each selectable team calls |
 | `mcp_url` | unset | Where a model analyst reaches the MCP tools; unset = this app's server, in-process |
-| `smart_city_provider`, `nvidia_va_mcp_url`, `vss_*` | mock, unset, defaults | The NVIDIA VSS input path, off unless the code selects it |
+| `smart_city_provider`, `nvidia_va_mcp_url`, `vss_*` | mock, unset, defaults | The NVIDIA VSS input path, off unless the code selects it. The built-in feed is selected by the value `mock` but reports itself as `simulation` in `/api/state` and the map caption: it is the twin's own ground truth standing in for VSS, never a fallback for a model that failed |
 
 An analysis automatically holds the live city at 1× so its snapshot stays inside the branch
 horizon; an operator time-scale change during a run overrides the hold and becomes the
@@ -1022,13 +1038,14 @@ backend/tests/          network, simulation, runner, safety/agent, mock provider
 frontend/src/
   App.tsx               map-first workspace layout, view and incident selection, actions
   hooks/useCityStream.ts   WebSocket client (reconnect, trend backfill, scenario runs, episodes)
-  components/map/       MapLibre map, layer styles, vehicle glyphs, plan overlays
+  components/map/       MapLibre map, layer styles, vehicle glyphs, plan and thinking overlays
   components/plans/     response plans: candidate cards, KPI comparison, horizon chart, dock,
                         Apply to live signals
   components/EpisodePanel.tsx  autonomous agent: scripts, step strip, lesson, memory
   components/           workspace rail, command bar, incident card, KPI tiles, inspector,
                         trends, ops log
-  lib/plans.ts          analysis state, deltas, plan overlays
+  lib/plans.ts          analysis state, deltas, plan overlays, "the agent is deciding"
+  lib/thinkingRoutes.ts cosmetic detours traced from map geometry for the thinking overlay
   dev/                  ?fixture=scenario replay of a recorded run
 frontend/public/        static Oakland OSM building, park and water context GeoJSON
 frontend/scripts/       reproducible Overpass download for the Oakland context asset

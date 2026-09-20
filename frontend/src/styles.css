@@ -532,6 +532,60 @@ button {
   animation: blink 2s ease-in-out infinite;
 }
 
+/* Map "thinking" overlay: a cosmetic loading effect while the agent decides. It carries no
+   progress numbers and no plan; the truthful status lives in the command bar and the drawer. */
+.think-hud {
+  position: absolute;
+  top: 46px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: calc(100% - 20px);
+  padding: 6px 11px;
+  color: var(--text-2);
+  font-size: 12px;
+  pointer-events: none;
+}
+.think-hud-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.think-hud-text strong {
+  font-weight: 600;
+  color: var(--text);
+}
+.think-hud-sub {
+  color: var(--muted);
+  font: 11px var(--mono);
+  white-space: nowrap;
+}
+.think-hud-note {
+  padding-left: 9px;
+  border-left: 1px solid var(--line-strong);
+  color: var(--faint);
+  font: 10.5px var(--mono);
+  white-space: nowrap;
+}
+.think-dots {
+  display: flex;
+  gap: 3px;
+}
+.think-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-text);
+  animation: think-dots 1.2s ease-in-out infinite;
+}
+.think-dots span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.think-dots span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
 .map-banner {
   position: absolute;
   top: 50%;
@@ -780,6 +834,29 @@ button {
   letter-spacing: 0;
   text-transform: none;
   color: var(--text);
+}
+
+/* Rings radiating from the crash while the agent is deciding. Separate from
+   `.incident-marker .pulse`, which belongs to the incident and runs the whole time it is open. */
+.think-ring {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  pointer-events: none;
+}
+.think-ring span {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent-text);
+  opacity: 0;
+  animation: think-ring 2.4s ease-out infinite;
+}
+.think-ring span:nth-child(2) {
+  animation-delay: 0.8s;
+}
+.think-ring span:nth-child(3) {
+  animation-delay: 1.6s;
 }
 
 .ems-marker {
@@ -2335,6 +2412,25 @@ button {
 @keyframes blink {
   50% {
     opacity: 0.35;
+  }
+}
+@keyframes think-ring {
+  from {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(4.2);
+    opacity: 0;
+  }
+}
+@keyframes think-dots {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
   }
 }
 

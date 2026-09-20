@@ -50,7 +50,7 @@ class ScenarioRun(BaseModel):
     )
     recommendation: Recommendation | None = None
     error: str | None = None
-    rounds: int = Field(0, description="Simulation rounds run (the mock runs one; an MCP agent may run several)")
+    rounds: int = Field(0, description="Simulation rounds run (the deterministic agent runs one; an MCP agent may run several)")
     memory_mode: MemoryMode = "use"
     recalled: list[str] = Field(default_factory=list, description="Remembered episodes given to the agent as lessons")
     recall_provenance: list[RecalledExperience] = Field(

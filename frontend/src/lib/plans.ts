@@ -66,6 +66,14 @@ const WORKING: ReadonlySet<EpisodeStatus> = new Set(['awaiting', 'detected', 'an
 export const episodeWorking = (episode: Episode | null): episode is Episode =>
   episode != null && WORKING.has(episode.status)
 
+// Deliberately narrower than WORKING: by `monitoring` the plan is chosen and applied, so the
+// agent is measuring, not deciding. Keep this the only definition of "the agent is deciding".
+const DECIDING: ReadonlySet<EpisodeStatus> = new Set(['detected', 'analyzing'])
+
+/** True while a decision is being made: an analysis run is open, or an episode is still choosing. */
+export const agentThinking = (run: ScenarioRun | null, episode: Episode | null): boolean =>
+  isRunning(run) || (episode != null && DECIDING.has(episode.status))
+
 export function analyzeState(opts: {
   connected: boolean
   runStatus: RunStatus | null

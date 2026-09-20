@@ -7,6 +7,7 @@ import { EpisodePanel } from './components/EpisodePanel'
 import { Icon } from './components/Icon'
 import { IncidentPanel } from './components/IncidentPanel'
 import { CityMap, type Selection } from './components/map/CityMap'
+import { ThinkingCaption } from './components/map/ThinkingCaption'
 import { MapLegend } from './components/MapLegend'
 import { AnalysisDock } from './components/plans/AnalysisDock'
 import { MapPlanCard } from './components/plans/MapPlanCard'
@@ -19,7 +20,8 @@ import { WorkspaceRail, type WorkspaceView } from './components/WorkspaceRail'
 import { FIXTURE_MODE } from './dev/fixture'
 import { useCityStream } from './hooks/useCityStream'
 import { usePanelSizes } from './hooks/usePanelSizes'
-import { analyzeState, candidateColors, planOverlay } from './lib/plans'
+import { agentThinking, analyzeState, candidateColors, planOverlay } from './lib/plans'
+import { buildThinkingRoutes } from './lib/thinkingRoutes'
 
 type Action = 'start' | 'pause' | 'reset' | 'inject' | 'dispatch'
 
@@ -151,6 +153,28 @@ export default function App() {
         ? planOverlay(activeCandidate, colors[activeCandidate.id], network, incidentSegmentId)
         : null,
     [activeCandidate, colors, incidentSegmentId, network],
+  )
+  // Cosmetic "thinking" overlay: detours fanning out from the crash while the agent decides.
+  // It reads no candidate or agent output, and stands aside as soon as a real plan is previewed.
+  // Every dependency is a primitive so the overlay is not rebuilt by each live frame.
+  const incidentLon = focusedIncident?.location.point?.lon ?? null
+  const incidentLat = focusedIncident?.location.point?.lat ?? null
+  const incidentPosition = focusedIncident?.location.position_m ?? null
+  const thinkingActive = !overlay && agentThinking(scopedScenario, episode)
+  const thinking = useMemo(
+    () =>
+      thinkingActive && network && incidentLon != null && incidentLat != null
+        ? {
+            routes: buildThinkingRoutes(network, {
+              segmentId: incidentSegmentId,
+              positionM: incidentPosition,
+              lon: incidentLon,
+              lat: incidentLat,
+            }),
+            point: [incidentLon, incidentLat] as [number, number],
+          }
+        : null,
+    [thinkingActive, network, incidentSegmentId, incidentPosition, incidentLon, incidentLat],
   )
   const analyze = analyzeState({
     connected,
@@ -297,6 +321,7 @@ export default function App() {
             cameras={cameras}
             selection={selection}
             planOverlay={overlay}
+            thinking={thinking}
             onSelect={(next) => {
               setSelection(next)
               if (next) showView('live')
@@ -319,6 +344,7 @@ export default function App() {
             </span>
           )}
         </div>
+        {thinking && <ThinkingCaption />}
         <MapLegend hasCameras={cameras.some((camera) => camera.location != null)} />
         {network?.attribution && <div className="map-attribution">{network.attribution}</div>}
         {activeCandidate && overlay && <MapPlanCard candidate={activeCandidate} overlay={overlay} />}

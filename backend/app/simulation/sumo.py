@@ -397,19 +397,27 @@ class SumoSimulation(TrafficSimulation):
         for vid in c.vehicle.getIDList():
             c.vehicle.subscribe(vid, VEHICLE_VARS)
 
+    def _read_vehicles(self) -> None:
+        """Read the vehicle subscription, keeping only the vehicles that are on the network.
+
+        traci answers with INVALID_DOUBLE_VALUE (-2^30) for the speed, angle, position and lane position of
+        a vehicle that is not on a lane: one SUMO is teleporting after it stood still longer than
+        ``--time-to-teleport`` (300 simulated seconds in both scenarios, which a queue behind a crash
+        reaches), and one that arrived and whose subscription result survives a frame. Neither is an
+        observation of the city, and a single such record ruins every average it enters: -2^30 shared with
+        400 real vehicles is a mean speed of -2.7 million m/s, which the console showed as millions of
+        negative mph. Dropping them here covers every reader of ``_veh`` - the metrics, the map, the
+        responder bookkeeping - and leaves nothing addressing a vehicle that may already be gone.
+        """
+        results = self.conn.vehicle.getAllSubscriptionResults()
+        self._veh = {vid: r for vid, r in results.items() if r[tc.VAR_SPEED] > tc.INVALID_DOUBLE_VALUE}
+
     def _read_state(self) -> dict:
         c = self.conn
         sim = c.simulation.getSubscriptionResults()
         self._time = sim[tc.VAR_TIME]
         self._pending = tuple(sim.get(tc.VAR_PENDING_VEHICLES, ()))
-        # TraCI keeps a just-arrived vehicle's subscription result for one frame and fills
-        # its numeric fields with INVALID_DOUBLE_VALUE. Treat it as gone here so the sentinel
-        # cannot become a map coordinate or drag an otherwise valid mean speed below zero.
-        self._veh = {
-            vid: result
-            for vid, result in c.vehicle.getAllSubscriptionResults().items()
-            if result.get(tc.VAR_SPEED, tc.INVALID_DOUBLE_VALUE) != tc.INVALID_DOUBLE_VALUE
-        }
+        self._read_vehicles()
         self._edges = c.edge.getAllSubscriptionResults()
         self._tls = c.trafficlight.getAllSubscriptionResults()
         return sim
@@ -422,11 +430,7 @@ class SumoSimulation(TrafficSimulation):
         for vid in departed:
             c.vehicle.subscribe(vid, VEHICLE_VARS)
         if departed:
-            self._veh = {
-                vid: result
-                for vid, result in c.vehicle.getAllSubscriptionResults().items()
-                if result.get(tc.VAR_SPEED, tc.INVALID_DOUBLE_VALUE) != tc.INVALID_DOUBLE_VALUE
-            }
+            self._read_vehicles()
         if self._diversion is not None:
             self._diversion.on_departed(departed)
 

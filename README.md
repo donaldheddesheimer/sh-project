@@ -1046,6 +1046,13 @@ docs/
   - *Branch start-up may still serialise on Windows.* Each `traci.connect` attempt runs under
     the module lock; if a refused loopback connect takes about a second there, parallel
     branches still wait on each other and the ~1 s saving shrinks. Not timed.
+- **A vehicle that is on no lane is not counted.** traci answers `INVALID_DOUBLE_VALUE`
+  (-2^30) for the speed, angle and position of a vehicle SUMO is teleporting (it stood still
+  longer than `--time-to-teleport`, 300 s in both scenarios, which a queue behind a crash
+  reaches) and of one that has just arrived. The twin drops those records as it reads the
+  subscription, so such a vehicle is absent from the live metrics, the map and the vehicle
+  count until it is re-inserted. Reading them as observations was a bug: one record dragged
+  the console's mean speed to millions of negative mph. Read from the code, not run.
 - The mock agent is rule-based: it proposes a fixed set of 9 plans (fewer when a close
   lesson prunes them) and recommends with a fixed rule (see
   [architecture.md](docs/architecture.md#analyze-response-pipeline)).

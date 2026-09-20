@@ -33,7 +33,9 @@ def test_network_and_state(client):
     assert len(network["segments"]) == 48 and len(network["intersections"]) == 9
     state = client.get("/api/state").json()
     assert state["status"] == "running"
-    assert state["providers"] == {"smart_city": "mock", "agent": "mock", "simulator": "Eclipse SUMO"}
+    # "simulation" is the twin's own feed standing in for VSS; "nemotron" is the REST agent
+    # default. Neither is a fallback, and neither name is "mock" any more.
+    assert state["providers"] == {"smart_city": "simulation", "agent": "nemotron", "simulator": "Eclipse SUMO"}
     assert len(state["vehicles"]) > 0
 
 

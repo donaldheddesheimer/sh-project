@@ -10,6 +10,9 @@ frontend/dist/
 
 # Local config and logs
 .env
+# editor swap files: a .env.swp holds the same live API keys as .env
+*.swp
+*.swo
 *.log
 .DS_Store
 

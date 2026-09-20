@@ -1957,7 +1957,7 @@ button {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) var(--activity-w, 340px);
 }
 .dock-body.compare-body {
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
@@ -2452,7 +2452,7 @@ button {
     min-width: 0;
   }
   .dock-body {
-    grid-template-columns: minmax(0, 1fr) 260px;
+    grid-template-columns: minmax(0, 1fr) var(--activity-w, 260px);
   }
   .dock-body.compare-body {
     grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);

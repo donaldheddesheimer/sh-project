@@ -32,6 +32,7 @@ interface Props {
   active: boolean
   selected: boolean
   phaseLabels: PhaseLabels
+  names: Record<string, string>
   onHover: (id: string | null) => void
   onSelect: (id: string) => void
 }
@@ -71,9 +72,14 @@ function Kpis({ run, candidate, baseline }: Pick<Props, 'run' | 'candidate' | 'b
 }
 
 export function CandidateCard(props: Props) {
-  const { run, candidate: c, baseline, color, recommended, active, selected, phaseLabels, onHover, onSelect } = props
-  const chips = planChips(c, phaseLabels)
-  const classes = ['cand', `status-${c.status}`, active && 'is-active', selected && 'is-selected'].filter(Boolean).join(' ')
+  const { run, candidate: c, baseline, color, recommended, active, selected, phaseLabels, names, onHover, onSelect } =
+    props
+  const chips = planChips(c, phaseLabels, names)
+  // a failed or aborted run cancels its unfinished branches, so a card still "running" would spin forever
+  const cancelled = run.status === 'failed' && (c.status === 'pending' || c.status === 'running')
+  const status: CandidateStatus = cancelled ? 'failed' : c.status
+  const notes = cancelled && c.notes.length === 0 ? ['Cancelled before it finished: the analysis ended first'] : c.notes
+  const classes = ['cand', `status-${status}`, active && 'is-active', selected && 'is-selected'].filter(Boolean).join(' ')
   const minutes = Math.round(run.horizon_s / 60)
 
   return (
@@ -106,7 +112,7 @@ export function CandidateCard(props: Props) {
           </div>
           <div className="cand-desc">{c.description}</div>
         </div>
-        <StatusPill status={c.status} />
+        <StatusPill status={status} />
       </div>
 
       {chips.length > 0 && (
@@ -120,19 +126,19 @@ export function CandidateCard(props: Props) {
         </div>
       )}
 
-      {c.status === 'pending' && (
+      {status === 'pending' && (
         <div className="cand-wait">
           <Icon name="pending" size={12} /> Waiting for a simulation worker
         </div>
       )}
-      {c.status === 'running' && (
+      {status === 'running' && (
         <div className="cand-wait">
           Simulating {minutes} min horizon <div className="bar-indet" />
         </div>
       )}
-      {c.status === 'completed' && <Kpis run={run} candidate={c} baseline={baseline} />}
+      {status === 'completed' && <Kpis run={run} candidate={c} baseline={baseline} />}
 
-      {c.status === 'rejected' && (
+      {status === 'rejected' && (
         <div className="violations">
           <div className="violations-head">
             <Icon name="shield" size={13} /> Not simulated: failed safety validation
@@ -149,13 +155,13 @@ export function CandidateCard(props: Props) {
         </div>
       )}
 
-      {c.status === 'failed' && (
+      {status === 'failed' && (
         <div className="callout callout-danger failure">
           <Icon name="error" size={14} />
           <div className="callout-body">
-            <strong>Branch failed</strong>
+            <strong>{cancelled ? 'Branch cancelled' : 'Branch failed'}</strong>
             <ul>
-              {(c.notes.length ? c.notes : ['No details reported']).map((n) => (
+              {(notes.length ? notes : ['No details reported']).map((n) => (
                 <li key={n}>{n}</li>
               ))}
             </ul>

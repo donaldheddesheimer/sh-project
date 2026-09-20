@@ -32,4 +32,6 @@ class EventLog:
         return event
 
     def recent(self, limit: int = 50) -> list[OpsEvent]:
+        if limit <= 0:  # [-0:] is the whole log, and a negative slice drops from the front
+            return []
         return list(self._events)[-limit:]

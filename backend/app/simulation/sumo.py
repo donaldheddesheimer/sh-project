@@ -11,7 +11,6 @@ from __future__ import annotations
 import itertools
 import logging
 import math
-import os
 import re
 import shutil
 import subprocess
@@ -185,8 +184,6 @@ def resolve_sumo_binary(explicit: str | None = None, gui: bool = False) -> str:
         candidates.append(Path(sumo.SUMO_HOME) / "bin" / name)
     except ImportError:
         pass
-    if os.environ.get("SUMO_HOME"):
-        candidates.append(Path(os.environ["SUMO_HOME"]) / "bin" / name)
     for candidate in candidates:
         for path in (candidate, candidate.with_name(candidate.name + ".exe")):  # ".exe" on Windows
             if path.exists():
@@ -216,6 +213,7 @@ class _ResponderWait:
     stalled_s: float = 0.0
     by_segment: dict[str, float] = field(default_factory=dict)
     max_ahead: int = 0
+    held_s: float = 0.0  # how long it has been standing still right now (reset as soon as it moves again)
 
 
 class SumoSimulation(TrafficSimulation):
@@ -523,6 +521,8 @@ class SumoSimulation(TrafficSimulation):
             if (r := self._veh.get(d.id)) is not None:
                 prev = self._responder_speed.get(d.id, r[tc.VAR_SPEED])
                 self._responder_speed[d.id] = prev + alpha * (r[tc.VAR_SPEED] - prev)
+                if r[tc.VAR_SPEED] >= RESPONDER_STALL_SPEED_MS and d.id in self._responder_waits:
+                    self._responder_waits[d.id].held_s = 0.0  # moving again: the standing time no longer predicts more
             if d.id in arrived:
                 d.status = EmergencyStatus.COMPLETED
                 if d.arrived_at is None:
@@ -548,6 +548,7 @@ class SumoSimulation(TrafficSimulation):
         """Charge this step to a stalled responder: total, the segment it happened on, and the queue ahead."""
         wait = self._responder_waits.setdefault(responder_id, _ResponderWait())
         wait.stalled_s += self._step_length
+        wait.held_s += self._step_length
         lane_id = r[tc.VAR_LANE_ID]
         segment = lane_id.rsplit("_", 1)[0]  # SUMO lane ids are "<edge>_<index>"
         if segment in self.network.segments:  # an internal lane means it is inside a junction, not held on a road
@@ -896,7 +897,9 @@ class SumoSimulation(TrafficSimulation):
 
         On its current segment the responder's own recent speed caps the estimate,
         so a unit stuck in an incident queue shows a growing ETA instead of the
-        free-flow time of the road it is stuck on.
+        free-flow time of the road it is stuck on. That speed is floored (0.3 m/s), which alone would freeze the
+        estimate once the unit stops, so the time it has been standing still right now is added: a unit held for
+        an hour is not five minutes away.
         """
         r = self._veh.get(d.id)
         if r is None:
@@ -923,7 +926,8 @@ class SumoSimulation(TrafficSimulation):
             junction = self.network.intersections.get(seg.destination)
             if i < dest_index and junction is not None and junction.tls_id is not None:
                 total += EXPECTED_SIGNAL_WAIT_S
-        return total
+        held = self._responder_waits.get(d.id)
+        return total + (held.held_s if held is not None else 0.0)
 
     def _emergency_responses(self, window_start: float) -> list[EmergencyResponse]:
         """One entry per responder that matters to this window, in dispatch order.

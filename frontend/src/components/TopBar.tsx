@@ -26,12 +26,14 @@ interface Props {
   onSpeed: (speed: number) => void
   onMap: (mapId: string) => void
   onAnalyze: () => void
+  layoutCustom: boolean
+  onResetLayout: () => void
 }
 
 export function TopBar(props: Props) {
   const {
     networkName, mapId, simTime, status, connected, hasIncident, canDispatch,
-    busy, analyze, fixture, onAction, onSpeed, onMap, onAnalyze,
+    busy, analyze, fixture, onAction, onSpeed, onMap, onAnalyze, layoutCustom, onResetLayout,
   } = props
   const run = status?.status ?? 'starting'
   const live = connected && run !== 'starting' && run !== 'error'
@@ -135,6 +137,11 @@ export function TopBar(props: Props) {
             >
               <Icon name="reset" />
             </button>
+            {layoutCustom && (
+              <button className="btn btn-sm" title="Restore the default panel sizes" onClick={onResetLayout}>
+                Reset layout
+              </button>
+            )}
           </div>
         </div>
         <div className="control-cluster response-cluster">
@@ -152,16 +159,20 @@ export function TopBar(props: Props) {
             >
               <Icon name="medical" /> Dispatch EMS
             </button>
-            <button
-              className={`btn btn-primary btn-analyze${analyze.progress != null ? ' btn-busy' : ''}`}
-              disabled={!analyze.enabled}
-              title={analyze.reason}
-              onClick={onAnalyze}
-            >
-              <Icon name={analyze.progress != null ? 'spinner' : 'branch'} className={analyze.progress != null ? 'spin' : undefined} />
-              {analyze.label}
-              {analyze.progress != null && <span className="btn-progress" style={{ width: `${analyze.progress * 100}%` }} />}
-            </button>
+            {/* Live analysis starts from the Analyze button that appears over the paused map after a collision;
+                this one only replays the recorded fixture run. */}
+            {fixture && (
+              <button
+                className={`btn btn-primary btn-analyze${analyze.progress != null ? ' btn-busy' : ''}`}
+                disabled={!analyze.enabled}
+                title={analyze.reason}
+                onClick={onAnalyze}
+              >
+                <Icon name={analyze.progress != null ? 'spinner' : 'branch'} className={analyze.progress != null ? 'spin' : undefined} />
+                {analyze.label}
+                {analyze.progress != null && <span className="btn-progress" style={{ width: `${analyze.progress * 100}%` }} />}
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -241,6 +241,16 @@ class Incident(BaseModel):
     cleared_at: datetime | None = None
 
 
+def lane_name(lane: int, total_lanes: int | None) -> str:
+    """'right lane', 'left lane' or 'lane 2'. Only the outermost lanes have a name, and which index is the left
+    one depends on how wide the road is: on a 3-lane road lane 1 is an interior lane, not the left one."""
+    if lane == 0:
+        return "right lane"
+    if total_lanes and lane == total_lanes - 1:
+        return "left lane"
+    return f"lane {lane + 1}"
+
+
 # --------------------------------------------------------------------------
 # Signal control and candidate evaluation
 # --------------------------------------------------------------------------
@@ -339,6 +349,16 @@ class SimulationCandidate(BaseModel):
     violations: list[str] = Field(default_factory=list, description="Safety-validator findings (status rejected)")
     notes: list[str] = Field(default_factory=list)
     wall_time_s: float | None = Field(None, description="Wall-clock seconds the branch took to simulate")
+
+
+class PlanRoutes(BaseModel):
+    """Segments one plan acts on, drawn on the mini map. Presentation only: SUMO decides each vehicle's route."""
+
+    ems_segments: list[str] = Field(default_factory=list, description="Responder path; only plans with a corridor")
+    diversion_segments: list[str] = Field(
+        default_factory=list, description="Free-flow detour round the avoided segments (where diverted traffic goes)"
+    )
+    blocked_segments: list[str] = Field(default_factory=list, description="Segments the incident(s) block")
 
 
 class Recommendation(BaseModel):

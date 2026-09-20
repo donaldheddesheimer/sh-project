@@ -44,13 +44,18 @@ class Settings(BaseSettings):
     # --- traffic simulation -------------------------------------------------
     # downtown_grid (the tests and startup use it) or pittsburgh_oakland; runtime UI/API switching is primary
     scenario_dir: Path = REPO_ROOT / "simulation" / "scenarios" / "downtown_grid"
-    sumo_binary: str | None = None  # default: bundled eclipse-sumo, then $SUMO_HOME, then PATH
+    sumo_binary: str | None = None  # default: bundled eclipse-sumo, then PATH
     sumo_gui: bool = False  # open sumo-gui for the live simulation (debugging)
     sim_speed: float = 4.0  # live simulation speed as a multiple of wall-clock time
     sim_warmup_s: float = 300.0  # simulated seconds run at startup/reset so roads are populated
     sim_autostart: bool = True
     broadcast_hz: float = 8.0  # max WebSocket state frames per second
     snapshot_dir: Path = Path(tempfile.gettempdir()) / "traffic-ops-snapshots"
+    # A twin left running degrades: the Oakland network saturates about 2.5 simulated hours after a reset, and its
+    # demand ends at 24 (docs/bug-hunt-2026-09-20.md, D1 and D2). Once the live city is this old, and nothing
+    # depends on it (no incident, no open analysis, no working episode, no scheduled demo script), the service
+    # resets it to a clean network. 0 turns the refresh off.
+    twin_refresh_s: float = 7200.0
 
     # --- scenario analysis ("Analyze Response") -----------------------------
     scenario_horizon_s: float = 600.0  # simulated seconds per branch when the request omits it
@@ -62,8 +67,8 @@ class Settings(BaseSettings):
 
     # --- autonomous demo episode (app/learning/) ----------------------------
     demo_script: str | None = None  # arm this demos/*.json script at startup
-    # Select Nemotron first when its API key is present; otherwise Claude, then the deterministic local team.
-    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "auto"
+    # Nemotron drives every episode; the mock team runs only when this is set to "mock" here in code.
+    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "nemotron"
     episode_monitor_s: float | None = None  # sim seconds a plan is watched (default: script monitor_s, else horizon)
     episode_agent_timeout_s: float = 420.0  # wall-clock limit for one model-backed analyst run
     episode_fallback_to_mock: bool = False  # selected model failures stay visible; choose Mock explicitly if desired
@@ -72,6 +77,10 @@ class Settings(BaseSettings):
     memory_enabled: bool = True  # store lessons and recall them for the next incident
     memory_dir: Path = REPO_ROOT / "memory"
     mcp_url: str | None = None  # where a model loop reaches /mcp; unset = this app's MCP server, in-process
+    # The MCP SDK turns DNS-rebinding protection on when it is served from loopback, which rejects every request
+    # whose Host header is not local (421 "Invalid Host header" on Cloud Run). The REST API beside it has no such
+    # check, so it is off here; turn it on for a deployment that only this machine can reach.
+    mcp_dns_rebinding_protection: bool = False
 
     # --- memory and agents --------------------------------------------------
     embedding_model: str | None = None  # unset keeps recall structured-only

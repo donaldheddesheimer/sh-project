@@ -1083,6 +1083,7 @@ vercel.json             optional static frontend-only deployment when the API is
 docs/
   architecture.md       design notes, both pipelines stage by stage, MCP tools
   mcp-curl.md           calling the MCP tools by hand with curl or PowerShell: headers, helpers, a walkthrough, refusals
+  bug-hunt-2026-09-20.md  bug hunt on the deployed Cloud Run console: findings reproduced live, findings read from code, what was not tested (dated; it tested a build older than the branch)
   milestone-2/          the milestone-2 plan, per-feature specs and results (historical)
   milestone-4/          the milestone-4 plan: MASTER.md, one handoff per part, the step-0 contract
   specs/                scenario-engine-mcp.md (MCP tools spec + client snippet)

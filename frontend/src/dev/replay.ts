@@ -12,8 +12,11 @@ const RECOMMENDING_MS = 600
 
 let replays = 0
 
-/** The run as it ends: the recorded fixture, or a copy with a failed branch and a failed run. */
-function finalRun(mode: FixtureMode): ScenarioRun {
+/**
+ * The run as it ends: the recorded fixture, or a copy with a failed branch and a failed run. `incidentId` is the
+ * crash on screen: the recording carries INC-0001, and a run for any other id would never be shown.
+ */
+function finalRun(mode: FixtureMode, incidentId?: string): ScenarioRun {
   // the recording predates the multi-incident and episode fields
   const run = {
     incident_ids: [recorded.incident_id],
@@ -25,6 +28,10 @@ function finalRun(mode: FixtureMode): ScenarioRun {
     implementation: null,
     ...structuredClone(recorded),
   } as ScenarioRun
+  if (incidentId) {
+    run.incident_id = incidentId
+    run.incident_ids = [incidentId]
+  }
   if (mode === 'scenario-failed') {
     const divert = run.candidates.find((c) => c.id === 'divert-advisory')
     if (divert) {
@@ -48,8 +55,8 @@ function finalRun(mode: FixtureMode): ScenarioRun {
  * queued → proposing → simulating (branches pending → running → done) → recommending → completed | failed.
  * Returns a function that cancels the replay.
  */
-export function replayFixture(mode: FixtureMode, onUpdate: (run: ScenarioRun) => void): () => void {
-  const final = finalRun(mode)
+export function replayFixture(mode: FixtureMode, onUpdate: (run: ScenarioRun) => void, incidentId?: string): () => void {
+  const final = finalRun(mode, incidentId)
   const timers: ReturnType<typeof setTimeout>[] = []
   const at = (ms: number, step: () => void) => timers.push(setTimeout(step, ms))
 

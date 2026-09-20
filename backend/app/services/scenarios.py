@@ -143,6 +143,10 @@ class ScenarioService:
     def runs(self) -> list[ScenarioRun]:
         return list(reversed(self._runs))
 
+    def has_open_analysis(self) -> bool:
+        """True while a run holds the snapshot lock; the live city must not be reset under it."""
+        return self._open is not None
+
     def get(self, run_id: str) -> ScenarioRun:
         for run in self._runs:
             if run.id == run_id:
@@ -440,6 +444,11 @@ class ScenarioService:
             return
         a.run.error = error
         a.run.completed_at = datetime.now(UTC)
+        for candidate in a.run.candidates:
+            if candidate.status in (CandidateStatus.PENDING, CandidateStatus.RUNNING):
+                # its branch is cancelled with the run and never reports back, so it would read "running" forever
+                candidate.status = CandidateStatus.FAILED
+                candidate.notes = [*candidate.notes, f"Cancelled before it finished: {error}"]
         self._set_status(a.run, ScenarioStatus.FAILED)
         self.city.events.add(EventLevel.ALERT, f"Analysis {a.run.id} failed: {error}", self.city.sim_time, a.incident.id)
         self._close(a)

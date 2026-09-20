@@ -235,4 +235,6 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
         teams=teams,
         selected_team=selected_team,
     )
+    # an old twin is refreshed on its own (Settings.twin_refresh_s), but never under an analysis or an episode
+    city.refresh_blockers.extend([scenarios.has_open_analysis, episodes.blocks_refresh])
     return Services(city=city, scenarios=scenarios, implementor=implementor, episodes=episodes, memory=memory)

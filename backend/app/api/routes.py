@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket
 
 from app.learning.episode import EpisodeService
 from app.learning.implementor import Implementor
@@ -63,7 +63,8 @@ Memory = Annotated[ExperienceStore, Depends(get_memory)]
 
 def _control(city: CityService) -> ControlResponse:
     status = city.status
-    return ControlResponse(status=status.status, speed=status.speed, sim_time=city.sim_time)
+    # the clock now, not the last published frame: after a reset that frame still belongs to the old run
+    return ControlResponse(status=status.status, speed=status.speed, sim_time=city.live_sim_time)
 
 
 @router.get("/health")
@@ -101,6 +102,8 @@ async def incident(city: City, incident_id: str) -> Incident:
 async def inject_incident(city: City, request: InjectIncidentRequest) -> InjectIncidentResponse:
     try:
         disruption = await city.inject_incident(request)
+    except Conflict as exc:  # a collision already blocks those lanes
+        raise HTTPException(409, str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(404, f"unknown segment {exc.args[0]}") from exc
     except ValueError as exc:
@@ -286,7 +289,7 @@ async def smart_city_status(city: City) -> SmartCityStatus:
 
 
 @router.get("/events", response_model=list[OpsEvent])
-async def events(city: City, limit: int = 50) -> list[OpsEvent]:
+async def events(city: City, limit: Annotated[int, Query(ge=1, le=200)] = 50) -> list[OpsEvent]:
     return city.events.recent(limit)
 
 

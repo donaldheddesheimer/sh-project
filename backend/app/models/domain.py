@@ -241,6 +241,16 @@ class Incident(BaseModel):
     cleared_at: datetime | None = None
 
 
+def lane_name(lane: int, total_lanes: int | None) -> str:
+    """'right lane', 'left lane' or 'lane 2'. Only the outermost lanes have a name, and which index is the left
+    one depends on how wide the road is: on a 3-lane road lane 1 is an interior lane, not the left one."""
+    if lane == 0:
+        return "right lane"
+    if total_lanes and lane == total_lanes - 1:
+        return "left lane"
+    return f"lane {lane + 1}"
+
+
 # --------------------------------------------------------------------------
 # Signal control and candidate evaluation
 # --------------------------------------------------------------------------

@@ -143,6 +143,14 @@ class EpisodeService:
                 return ep
         raise KeyError(episode_id)
 
+    def blocks_refresh(self) -> bool:
+        """True while the live city must not be reset behind the agent's back: an episode is past 'armed', or a
+        scheduled script is armed (a reset replays its crash and would start an unattended episode)."""
+        ep = self._working
+        if ep is not None and ep.status in WORKING_STATUSES:
+            return True
+        return self._script is not None and bool(self._script.crashes)
+
     def info(self) -> DemoInfo:
         return DemoInfo(
             scripts=[

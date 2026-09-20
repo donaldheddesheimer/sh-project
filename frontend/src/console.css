@@ -490,6 +490,14 @@ body {
   height: 31px;
 }
 
+.panel-heading {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font: inherit;
+}
+
 .panel-title {
   color: var(--text-2);
   font-size: 10.5px;

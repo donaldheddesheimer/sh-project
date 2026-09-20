@@ -88,6 +88,12 @@ class LiveSimulationRunner:
     def speed(self) -> float:
         return self._speed
 
+    @property
+    def sim_time(self) -> float:
+        """The simulation clock right now: a plain attribute read, so it is safe from any thread."""
+        sim = self._sim
+        return sim.sim_time if sim is not None else 0.0
+
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="live-simulation", daemon=True)
         self._thread.start()

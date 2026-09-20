@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     sim_autostart: bool = True
     broadcast_hz: float = 8.0  # max WebSocket state frames per second
     snapshot_dir: Path = Path(tempfile.gettempdir()) / "traffic-ops-snapshots"
+    # A twin left running degrades: the Oakland network saturates about 2.5 simulated hours after a reset, and its
+    # demand ends at 24 (docs/bug-hunt-2026-09-20.md, D1 and D2). Once the live city is this old, and nothing
+    # depends on it (no incident, no open analysis, no working episode, no scheduled demo script), the service
+    # resets it to a clean network. 0 turns the refresh off.
+    twin_refresh_s: float = 7200.0
 
     # --- scenario analysis ("Analyze Response") -----------------------------
     scenario_horizon_s: float = 600.0  # simulated seconds per branch when the request omits it
@@ -72,6 +77,10 @@ class Settings(BaseSettings):
     memory_enabled: bool = True  # store lessons and recall them for the next incident
     memory_dir: Path = REPO_ROOT / "memory"
     mcp_url: str | None = None  # where a model loop reaches /mcp; unset = this app's MCP server, in-process
+    # The MCP SDK turns DNS-rebinding protection on when it is served from loopback, which rejects every request
+    # whose Host header is not local (421 "Invalid Host header" on Cloud Run). The REST API beside it has no such
+    # check, so it is off here; turn it on for a deployment that only this machine can reach.
+    mcp_dns_rebinding_protection: bool = False
 
     # --- memory and agents --------------------------------------------------
     embedding_model: str | None = None  # unset keeps recall structured-only

@@ -29,6 +29,26 @@ const STAGE: Record<ScenarioStatus, number> = {
   failed: 4,
 }
 
+/**
+ * A reconnect sends the same network again as a new object. Keeping the old one stops the maps, which rebuild
+ * whenever it changes, from being torn down (pan, zoom, markers and all) by every dropped connection.
+ */
+const sameNetwork = (a: NetworkGeometry | null, b: NetworkGeometry) =>
+  a != null &&
+  a.id === b.id &&
+  a.segments.length === b.segments.length &&
+  a.intersections.length === b.intersections.length &&
+  a.bounds.flat().join() === b.bounds.flat().join()
+
+/** One frame from the server, or null when it is not valid JSON. */
+function parseFrame(data: string): StreamMessage | null {
+  try {
+    return JSON.parse(data) as StreamMessage
+  } catch {
+    return null
+  }
+}
+
 /** A newer run replaces the current one; an update to the same run never moves it backwards. */
 function supersedes(next: ScenarioRun, prev: ScenarioRun | null): boolean {
   if (!prev) return true
@@ -114,15 +134,21 @@ export function useCityStream(): CityStream {
         return out
       })
 
+    let attempts = 0
     const connect = () => {
-      socket = new WebSocket(streamUrl())
-      socket.onopen = () => setConnected(true)
-      socket.onmessage = (message) => {
-        const msg = JSON.parse(message.data) as StreamMessage
+      const ws = new WebSocket(streamUrl())
+      socket = ws
+      ws.onopen = () => {
+        attempts = 0
+        setConnected(true)
+      }
+      ws.onmessage = (message) => {
+        const msg = parseFrame(message.data)
+        if (msg == null) return // one malformed frame is skipped; it must not take the stream down
         switch (msg.type) {
           case 'hello':
             setStatus(msg.data.status)
-            setNetwork(msg.data.network)
+            setNetwork((prev) => (sameNetwork(prev, msg.data.network) ? prev : msg.data.network))
             setEvents(msg.data.events)
             setHistory(msg.data.history)
             setScenario(msg.data.scenario ?? null)
@@ -139,7 +165,12 @@ export function useCityStream(): CityStream {
             break
           case 'state':
             setState(msg.data)
-            setStatus((prev) => ({ status: msg.data.status, speed: msg.data.speed, error: prev?.error ?? null }))
+            // an error message belongs to the error state: once the simulation runs again it must not linger
+            setStatus((prev) => ({
+              status: msg.data.status,
+              speed: msg.data.speed,
+              error: msg.data.status === 'error' ? (prev?.error ?? null) : null,
+            }))
             record(msg.data)
             learnPhases(msg.data)
             break
@@ -159,9 +190,11 @@ export function useCityStream(): CityStream {
           }
         }
       }
-      socket.onclose = () => {
+      ws.onclose = () => {
+        if (socket !== ws) return // replaced or disposed of already: its close says nothing about the live connection
         setConnected(false)
-        if (!disposed) retry = setTimeout(connect, 1000)
+        // back off while the server is away (1 s, 2 s, 4 s ... 10 s) instead of knocking once a second forever
+        if (!disposed) retry = setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10_000))
       }
     }
 
@@ -169,7 +202,9 @@ export function useCityStream(): CityStream {
     return () => {
       disposed = true
       clearTimeout(retry)
-      socket?.close()
+      const closing = socket
+      socket = null // so its onclose is ignored and cannot mark a newer connection offline
+      closing?.close()
     }
   }, [acceptScenario])
 

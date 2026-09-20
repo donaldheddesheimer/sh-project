@@ -20,10 +20,11 @@ from pathlib import Path
 from collections.abc import Callable
 
 from app.agent.base import CandidatePlan
+from app.config import REPO_ROOT
 from app.learning.embeddings import NimEmbedder
 from app.learning.scorecard import MATERIAL_DELAY_PCT, MATERIAL_EMS_S, MATERIAL_QUEUE, PROVISIONAL_CONFIDENCE_CAP
 from app.models.api import EventLevel
-from app.models.domain import Incident
+from app.models.domain import Incident, lane_name
 from app.models.episode import (
     Experience,
     IncidentFeatures,
@@ -36,6 +37,15 @@ from app.models.episode import (
 from app.simulation.network import RoadNetwork
 
 log = logging.getLogger(__name__)
+
+
+def _display_path(path: Path) -> str:
+    """Where lessons are written, relative to the repository when they are inside it. The API is public, and an
+    absolute path would name the host's filesystem."""
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return path.name
 
 # Similarity weights (sum 1.0). Another crash on the same segment scores 1.0, the same street in the other
 # direction about 0.65, a crash on a street feeding the same intersection about 0.55.
@@ -70,16 +80,6 @@ def incident_features(incident: Incident, network: RoadNetwork) -> IncidentFeatu
         blocked_lanes=list(incident.affected_lanes),
         total_lanes=incident.total_lanes,
     )
-
-
-def lane_name(lane: int, total_lanes: int | None) -> str:
-    """'right lane', 'left lane' or 'lane 2'. Only the outermost lanes have a name, and which index is the left
-    one depends on how wide the road is: on a 3-lane road lane 1 is an interior lane, not the left one."""
-    if lane == 0:
-        return "right lane"
-    if total_lanes and lane == total_lanes - 1:
-        return "left lane"
-    return f"lane {lane + 1}"
 
 
 def describe(f: IncidentFeatures) -> str:
@@ -434,7 +434,7 @@ class ExperienceStore:
         episodes = self.load() if self.enabled else []
         return {
             "enabled": self.enabled,
-            "directory": str(self.directory),
+            "directory": _display_path(self.directory),
             "episodes": len(episodes),
             "latest": [e.id for e in reversed(episodes)][:10],
         }

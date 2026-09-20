@@ -37,6 +37,7 @@ from app.models.domain import (
     NetworkState,
     Severity,
     SignalProgram,
+    lane_name,
 )
 from app.models.episode import Episode
 from app.models.scenario import ScenarioRun
@@ -59,6 +60,7 @@ T = TypeVar("T")
 MIRROR_MOVE_TOLERANCE_M = 5.0  # a mirrored crash is re-placed only when the report moves further than this
 TREND_SAMPLE_S = 5.0  # simulated seconds between trend samples
 TREND_SAMPLES = 180  # 15 simulated minutes
+MAX_RESPONDERS_EN_ROUTE = 4  # more than any scenario needs: a runaway client cannot fill the city with ambulances
 
 
 @dataclass(frozen=True)
@@ -138,6 +140,12 @@ class CityService:
         # Held for a whole reset (listeners and reboot), and by the implementor for a whole apply, so a plan is
         # never installed on a simulation that is about to be, or has just been, replaced.
         self.live_change_lock = asyncio.Lock()
+        # Callables that answer "must the live city be left alone right now?" (an open analysis, a working
+        # episode). The periodic refresh of an old twin waits while any of them says yes.
+        self.refresh_blockers: list[Callable[[], bool]] = []
+        self._epoch_start: float | None = None  # sim time of the first frame since the simulation last (re)started
+        self._last_frame_time = 0.0
+        self._refresh_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------ lifecycle
 
@@ -154,6 +162,8 @@ class CityService:
         )
 
     async def stop(self) -> None:
+        if self._refresh_task is not None:
+            self._refresh_task.cancel()
         await asyncio.to_thread(self._runner.shutdown)
         if self._consumer:
             self._consumer.cancel()
@@ -174,6 +184,12 @@ class CityService:
     @property
     def sim_time(self) -> float:
         return self._state.sim_time if self._state else 0.0
+
+    @property
+    def live_sim_time(self) -> float:
+        """The simulation clock right now. ``sim_time`` is the last published frame, which still belongs to the
+        old run for a moment after a reset."""
+        return self._runner.sim_time
 
     def status_json(self) -> str:
         return self.status.model_dump_json()
@@ -319,7 +335,20 @@ class CityService:
             request.segment_id, request.lanes, request.position_fraction, request.severity
         )
         segment = self.network.segments[segment_id]
-        disruption = await self._runner.call(lambda sim: sim.inject_collision(segment_id, lanes, position, severity))
+        blocking = set(range(segment.lanes)) if severity is Severity.CRITICAL else set(lanes)
+
+        def stage(sim: TrafficSimulation) -> Disruption:
+            # a second click, or a repeated API call, would stack phantom vehicles on a crash that is already there
+            for existing in sim.list_disruptions():
+                if existing.segment_id == segment_id and blocking & set(existing.lanes):
+                    held = ", ".join(lane_name(lane, segment.lanes) for lane in sorted(existing.lanes))
+                    raise Conflict(
+                        f"a collision already blocks the {held} of {segment.name} {segment.direction}; "
+                        "clear that scene before staging another there"
+                    )
+            return sim.inject_collision(segment_id, lanes, position, severity)
+
+        disruption = await self._runner.call(stage)
         self.events.add(
             EventLevel.WARNING,
             f"Collision staged in simulation on {segment.name} {segment.direction} ({severity.value}); "
@@ -333,16 +362,32 @@ class CityService:
         if incident is None:
             raise KeyError(incident_id)
         segment_id = incident.location.segment_id
+        owned = self._disruptions_of(incident)
 
         def clear(sim: TrafficSimulation) -> list[str]:
-            ids = [d.id for d in sim.list_disruptions() if d.segment_id == segment_id]
+            if owned is None:  # the provider cannot say which crash is this incident's: everything on its road
+                ids = [d.id for d in sim.list_disruptions() if d.segment_id == segment_id]
+            else:  # only this incident's crash: another one on the same road is a separate incident
+                ids = [d.id for d in sim.list_disruptions() if d.id in owned]
             for disruption_id in ids:
                 sim.clear_disruption(disruption_id)
             return ids
 
         cleared = await self._runner.call(clear)
-        self.events.add(EventLevel.INFO, f"{incident_id}: scene cleared, lanes reopened", self._sim_time(), incident_id)
+        if cleared:  # clearing a scene that is already clear must not log it a second time
+            self.events.add(
+                EventLevel.INFO, f"{incident_id}: scene cleared, lanes reopened", self._sim_time(), incident_id
+            )
         return cleared
+
+    def _disruptions_of(self, incident: Incident) -> set[str] | None:
+        """The live crashes that make up this incident, or None when that cannot be told."""
+        if self.smart_city.simulation_is_source:
+            owned = self.smart_city.disruptions_of(incident.id)
+        else:  # an external report is mirrored into the twin as one crash, remembered here
+            mirrored = self._mirrored_disruptions.get(incident.id)
+            owned = None if mirrored is None else [mirrored]
+        return None if owned is None else set(owned)
 
     async def dispatch_emergency(self, origin_segment: str | None, destination_segment: str | None) -> EmergencyDispatch:
         station = self.scenario.ems_stations[0] if self.scenario.ems_stations else None
@@ -362,6 +407,16 @@ class CityService:
             destination_segment, position, lane = probe.destination_segment, probe.position_m, probe.lane
         if destination_segment not in self.network.segments:
             raise KeyError(destination_segment)
+        responders = [
+            ev
+            for ev in (self._state.emergency_vehicles if self._state else [])
+            if ev.status is EmergencyStatus.EN_ROUTE
+        ]
+        already = next((ev for ev in responders if ev.destination_segment == destination_segment), None)
+        if already is not None:
+            raise Conflict(f"{already.id} is already en route to that scene")
+        if len(responders) >= MAX_RESPONDERS_EN_ROUTE:
+            raise Conflict(f"{len(responders)} responders are already en route")
         dispatch = await self._runner.call(
             lambda sim: sim.spawn_emergency_vehicle(origin, destination_segment, position, lane)
         )
@@ -421,6 +476,46 @@ class CityService:
             providers=self.providers,
         )
         self.hub.broadcast(envelope("state", self._state.model_dump_json()))
+        self._note_epoch(state.sim_time)
+        self._maybe_refresh(state.sim_time)
+
+    def _note_epoch(self, sim_time: float) -> None:
+        """Remember when this run of the simulation began: the first frame, or the first after a time reversal."""
+        if self._epoch_start is None or sim_time < self._last_frame_time:
+            self._epoch_start = sim_time
+        self._last_frame_time = sim_time
+
+    def _maybe_refresh(self, sim_time: float) -> None:
+        limit = self.settings.twin_refresh_s
+        if limit <= 0 or self._epoch_start is None or self._refresh_task is not None:
+            return
+        age = sim_time - self._epoch_start
+        if age >= limit and self._can_refresh():
+            self._refresh_task = asyncio.create_task(self._refresh(age))
+
+    def _can_refresh(self) -> bool:
+        """The live city may be reset unasked only while nothing depends on it."""
+        if self._status is not RunStatus.RUNNING or self.live_change_lock.locked():
+            return False
+        if self._state is not None and self._state.incidents:
+            return False
+        return not any(blocked() for blocked in self.refresh_blockers)
+
+    async def _refresh(self, age_s: float) -> None:
+        """Reset an old, idle twin to a clean network (see ``Settings.twin_refresh_s``)."""
+        try:
+            self.events.add(
+                EventLevel.INFO,
+                f"Refreshing the twin: {age_s / 3600:.1f} simulated hours since its last reset and nothing depends on it",
+                self._sim_time(),
+            )
+            await self.reset()
+        except Exception:  # noqa: BLE001 - the city keeps running; the next frame decides again
+            log.exception("twin refresh failed")
+        finally:
+            # frames queued before the reboot still carry the old time: forget the epoch so they cannot start another
+            self._epoch_start = None
+            self._refresh_task = None
 
     def _record_trend(self, state: NetworkState) -> None:
         if self._trend and state.sim_time < self._trend[-1].t:

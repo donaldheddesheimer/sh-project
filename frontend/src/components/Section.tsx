@@ -17,11 +17,14 @@ export function Section({ id, title, icon, meta, className, defaultOpen = true, 
   return (
     <section id={id} className={className ? `panel ${className}` : 'panel'}>
       <header className="panel-head">
-        <button className="panel-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} className="panel-chevron" />
-          {icon && <Icon name={icon} size={14} className="panel-icon" />}
-          <h2 className="panel-title">{title}</h2>
-        </button>
+        {/* a heading that contains the button (not the other way round): a button may hold only phrasing content */}
+        <h2 className="panel-heading">
+          <button type="button" className="panel-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+            <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} className="panel-chevron" />
+            {icon && <Icon name={icon} size={14} className="panel-icon" />}
+            <span className="panel-title">{title}</span>
+          </button>
+        </h2>
         {meta && <div className="panel-meta">{meta}</div>}
       </header>
       {open && <div className="panel-body">{children}</div>}

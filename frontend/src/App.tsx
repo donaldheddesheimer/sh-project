@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client'
-import type { Camera, MemoryMode } from './api/types'
+import type { Camera, MemoryMode, MetricSample } from './api/types'
 import { AnalyzeOverlay } from './components/AnalyzeOverlay'
 import { DecisionCard } from './components/DecisionCard'
 import { EpisodePanel } from './components/EpisodePanel'
@@ -20,10 +20,23 @@ import { WorkspaceRail, type WorkspaceView } from './components/WorkspaceRail'
 import { FIXTURE_MODE } from './dev/fixture'
 import { useCityStream } from './hooks/useCityStream'
 import { usePanelSizes } from './hooks/usePanelSizes'
-import { agentThinking, analyzeState, candidateColors, planOverlay } from './lib/plans'
+import { shortName } from './lib/format'
+import {
+  agentThinking,
+  analyzeState,
+  candidateColors,
+  episodeInProgress,
+  episodeWorking,
+  isRunning,
+  planOverlay,
+} from './lib/plans'
 import { buildThinkingRoutes } from './lib/thinkingRoutes'
 
 type Action = 'start' | 'pause' | 'reset' | 'inject' | 'dispatch'
+
+// asked only when the click would throw work away: an idle city resets and clears without a prompt
+const RESET_WARNING = 'Reset the simulation? The active incident, any analysis in progress and the agent’s response will be discarded.'
+const CLEAR_WARNING = 'Clear this scene? The response in progress (analysis or agent) will be aborted.'
 
 const ACTIONS: Record<Action, () => Promise<unknown>> = {
   start: api.start,
@@ -46,6 +59,9 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null)
   const [pendingMapId, setPendingMapId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  // The last trend sample before each incident was detected, kept per incident. The history holds only 15
+  // simulated minutes, so a long analysis (or a fast clock) would scroll the "before" out from under the deltas.
+  const [references, setReferences] = useState<Record<string, MetricSample>>({})
   const cancelReplay = useRef<(() => void) | null>(null)
   const appRef = useRef<HTMLDivElement>(null)
   const sideRef = useRef<HTMLElement>(null)
@@ -98,6 +114,7 @@ export default function App() {
     setSelectedPlanId(null)
     setView('live')
     setDrawerOpen(false)
+    setReferences({})
     cancelReplay.current?.()
     cancelReplay.current = null
   }, [network?.id])
@@ -127,16 +144,29 @@ export default function App() {
     ? activeIncidents.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
     : null
   const focusedIncident = activeIncidents.find((incident) => incident.id === selectedIncidentId) ?? latestIncident
-  // an analysis over several incidents belongs to each of them (its incident_id is only the primary one)
+  // An analysis over several incidents belongs to each of them (its incident_id is only the primary one). With no
+  // active incident (the scene was cleared) the last analysis stays on screen, read-only, instead of vanishing.
   const scopedScenario =
-    scenario && focusedIncident && (scenario.incident_ids ?? [scenario.incident_id]).includes(focusedIncident.id)
+    scenario && (!focusedIncident || (scenario.incident_ids ?? [scenario.incident_id]).includes(focusedIncident.id))
       ? scenario
       : null
   const incidentTime = focusedIncident?.sim_time ?? null
+  const incidentId = focusedIncident?.id ?? null
   // pre-incident reference for KPI deltas: the last trend sample before detection
-  const reference = useMemo(
+  const latestBefore = useMemo(
     () => (incidentTime == null ? null : (history.filter((s) => s.t <= incidentTime - 5).at(-1) ?? null)),
     [history, incidentTime],
+  )
+  useEffect(() => {
+    if (incidentId && latestBefore) {
+      setReferences((prev) => (prev[incidentId] ? prev : { ...prev, [incidentId]: latestBefore }))
+    }
+  }, [incidentId, latestBefore])
+  const reference = (incidentId ? references[incidentId] : undefined) ?? latestBefore
+  // signals are named by their streets, not by the OSM node ids Oakland's junctions carry
+  const intersectionNames = useMemo(
+    () => Object.fromEntries((network?.intersections ?? []).map((i) => [i.id, shortName(i.name)])),
+    [network],
   )
   const markers = incidents.filter((i) => i.sim_time != null).map((i) => ({ t: i.sim_time!, label: i.id }))
   const colors = useMemo(() => (scopedScenario ? candidateColors(scopedScenario) : {}), [scopedScenario])
@@ -194,7 +224,7 @@ export default function App() {
       if (FIXTURE_MODE) {
         const { replayFixture } = await import('./dev/replay')
         cancelReplay.current?.()
-        cancelReplay.current = replayFixture(FIXTURE_MODE, acceptScenario)
+        cancelReplay.current = replayFixture(FIXTURE_MODE, acceptScenario, focusedIncident?.id)
       } else {
         const run = await api.runScenario({ incident_id: focusedIncident?.id ?? null, horizon_s: 600, ems_probe: true })
         acceptScenario(run)
@@ -245,7 +275,10 @@ export default function App() {
       busy={busy}
       canDispatch={!!focusedIncident && focusedIncident.id === latestIncident?.id}
       onDispatch={() => run('dispatch', api.dispatchEmergency)}
-      onClear={(id) => run('clear', () => api.clearIncident(id))}
+      onClear={(id) => {
+        if ((isRunning(scenario) || episodeWorking(episode)) && !window.confirm(CLEAR_WARNING)) return
+        void run('clear', () => api.clearIncident(id))
+      }}
     />
   )
 
@@ -257,6 +290,7 @@ export default function App() {
       busy={!!busy}
       colors={colors}
       phaseLabels={phaseLabels}
+      names={intersectionNames}
       activeId={activePlanId}
       selectedId={selectedPlanId}
       onHover={setHoveredPlanId}
@@ -286,6 +320,8 @@ export default function App() {
         fixture={!!FIXTURE_MODE}
         onAction={(action) => {
           if (action === 'reset') {
+            const atStake = incidents.length > 0 || isRunning(scenario) || episodeWorking(episode)
+            if (atStake && !window.confirm(RESET_WARNING)) return
             cancelReplay.current?.()
             cancelReplay.current = null
             setView('live')
@@ -309,7 +345,7 @@ export default function App() {
         view={view}
         activeIncidents={activeIncidents.length}
         candidateCount={scopedScenario?.candidates.length ?? 0}
-        episodeActive={episode != null && ['armed', 'awaiting', 'detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status)}
+        episodeActive={episodeInProgress(episode)}
         onChange={showView}
       />
 
@@ -347,7 +383,9 @@ export default function App() {
         {thinking && <ThinkingCaption />}
         <MapLegend hasCameras={cameras.some((camera) => camera.location != null)} />
         {network?.attribution && <div className="map-attribution">{network.attribution}</div>}
-        {activeCandidate && overlay && <MapPlanCard candidate={activeCandidate} overlay={overlay} />}
+        {activeCandidate && overlay && (
+          <MapPlanCard candidate={activeCandidate} overlay={overlay} names={intersectionNames} />
+        )}
         <AnalyzeOverlay
           episode={episode}
           busy={busy}
@@ -453,7 +491,16 @@ export default function App() {
       />
 
       {toast && (
-        <div className="toast" role="alert" onClick={() => setToast(null)}>
+        <div
+          className="toast"
+          role="alert"
+          tabIndex={0}
+          title="Dismiss"
+          onClick={() => setToast(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') setToast(null)
+          }}
+        >
           {toast}
         </div>
       )}

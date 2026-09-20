@@ -6,12 +6,13 @@ timing, EMS green corridor, diversion) are **simulated in parallel SUMO branches
 anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged. Milestone 3,
 the autonomous, self-learning episode (agent responds, applies its plan to the live twin,
 measures it, stores a lesson), is built and has run end to end once (a cold mock run, in a
-smoke test; README "Tests"). Milestone 4's faster twin
+smoke test; `docs/project-status.md`). Milestone 4's faster twin
 and NVIDIA Smart City input are built and merged, neither run nor measured; its transferable
 memory remains planned in [docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md).
-Read [README.md](README.md) for the demos and the episode (its "The autonomous, self-learning
-episode" section), and [docs/architecture.md](docs/architecture.md) for the design and both
-pipelines stage by stage.
+Read [README.md](README.md) for the product overview, [docs/demo-guide.md](docs/demo-guide.md)
+for the presenter paths, [docs/project-status.md](docs/project-status.md) for validation and
+remaining gates, and [docs/architecture.md](docs/architecture.md) for both pipelines stage by
+stage.
 
 Start every session with `git fetch && git status -sb`. `main` moves quickly and local docs
 can predate a merged cleanup.
@@ -28,13 +29,13 @@ Set by the user. They override anything else in this file or in the docs.
    against code you have read in full, so that a failure means a bug in the code and never
    in the test. Check work by reading the code, and say plainly in the report what was **not**
    run or verified. If a check by running seems necessary, ask the user; they will run it.
-2. **Maintain [README.md](README.md) as a consistent source of information, always.** Every
-   change to behavior, API, settings, file layout, terminology, roadmap or decisions updates
-   the README in the same change, and before finishing you re-read the parts it touches.
-   One term keeps one meaning (see the README's Terms table). No section may contradict
-   another, and the same fact is not written in two places. Mark what is built versus
-   planned, and what was not verified. If the README and the code disagree, fix one of them
-   in that change; never leave both.
+2. **Maintain the user documentation as one consistent source of information.** Keep
+   [README.md](README.md) as the concise product entry point and put operational detail in the
+   linked canonical page: demo, configuration, deployment, architecture or project status.
+   Every behavior, API, setting, file-layout, terminology, roadmap or decision change updates
+   the relevant page in the same change. Do not duplicate detailed facts across pages. Mark
+   what is built versus planned and what was not verified. If docs and code disagree, fix one
+   of them; never leave both.
 
 ## Commands
 
@@ -45,7 +46,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Task | POSIX (`make`) | Windows |
 |---|---|---|
 | Set up | `make setup` | `python -m venv backend\.venv`, then `backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt`, then `npm --prefix frontend install` |
-| Backend tests (24, real SUMO; for what has and has not been run see README "Tests"). **Reference only: never run unasked (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
+| Backend tests (24, real SUMO; see `docs/project-status.md`). **Reference only: never run unasked (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
 | One test. **Reference only: never run unasked (Hard rules)** | `cd backend && .venv/bin/pytest -q -k <name>` | `.venv\Scripts\python.exe -m pytest -q -k <name>` (in `backend`) |
 | Backend on :8000 | `make backend` | `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` |
 | Frontend on :5173 | `make frontend` | `npm --prefix frontend run dev` |
@@ -147,7 +148,7 @@ venv directly (this is what works in PowerShell or Git Bash):
   `SAMPLE_S` in `learning/monitor.py`.
 - Do not add operational environment variables. Put reviewed defaults in `config.py` and
   expose operator-facing choices through the console/API; `.env.example` is credentials only.
-  A new default goes in `config.py` **and** the README's Settings table.
+  A new operator-facing default goes in `config.py` and the appropriate canonical docs page.
 - The mock proposes exactly 9 plans, which equals the default `SCENARIO_MAX_CANDIDATES`. A
   tenth plan silently pushes `divert-advisory` off the end (it is appended last). (A warm run
   with a close lesson proposes 4 on purpose.)
@@ -201,7 +202,8 @@ venv directly (this is what works in PowerShell or Git Bash):
   candidate order, never rank; the baseline stays neutral.
 - **Tests.** Never run them, and write them only when asked (Hard rules). The team chose demo
   over coverage (recorded in `docs/milestone-2/MASTER.md`); the five demo-readiness tests
-  (`test_demo_setup.py`, `test_demo_smoke.py`, one in `test_simulation.py`; README "Tests")
+  (`test_demo_setup.py`, `test_demo_smoke.py`, one in `test_simulation.py`; see
+  `docs/project-status.md` and the archived `docs/project-history.md`)
   passed on one run the user asked for, which predates the async `ExperienceStore`:
   `test_memory_store_round_trip` was updated for it and has not been re-run.
   Verify by reading the code and report what was not run. Known gaps:
@@ -209,19 +211,26 @@ venv directly (this is what works in PowerShell or Git Bash):
   tests; `ScenarioService` and the episode are covered only by the two smoke tests. The suite
   is in `backend/tests/`; the `make_sim` fixture in `tests/conftest.py` starts real SUMO
   processes, and the smoke tests boot the whole app with `Settings(_env_file=None, ...)`.
-- **README.** It is the source of truth for the episode and the roadmap; keep it consistent
-  (Hard rules).
+- **Docs.** The README is the product entry point. `docs/demo-guide.md` owns presentation
+  steps, `docs/configuration.md` owns setup and credentials, `docs/deployment.md` owns Cloud
+  Run, and `docs/project-status.md` owns qualification and next gates (Hard rules).
 - **Git.** Work happens on branches named `feature/<description>` and is merged by PR; do not
   create new `codex/*` branches and do not push to `main`.
 
 ## Docs map
 
 - [docs/architecture.md](docs/architecture.md): current design, the Analyze Response and episode stage tables, the safety model.
+- [docs/demo-guide.md](docs/demo-guide.md): operator and autonomous presentation paths.
+- [docs/configuration.md](docs/configuration.md): credentials, runtime selection and local setup.
+- [docs/deployment.md](docs/deployment.md): the Google Cloud Run deployment and secrets.
+- [docs/project-status.md](docs/project-status.md): validation record, limitations and remaining demo gates.
 - [docs/specs/scenario-engine-mcp.md](docs/specs/scenario-engine-mcp.md): MCP tool contract and a client snippet.
 - [docs/mcp-curl.md](docs/mcp-curl.md): calling the MCP tools by hand (curl, PowerShell), with the refusals an agent sees.
 - [simulation/controllers/README.md](simulation/controllers/README.md): how pre-emption stays safe.
-- [docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md): the **current** plan for milestone 4
-  (three parts, file ownership, the step-0 contract, decisions to confirm). The README's "Next:
-  milestone 4" table is where each part's status lives. The hard rules above override it.
+- [docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md): the detailed milestone-4 plan
+  (three parts, file ownership, the step-0 contract, decisions to confirm). Current status and
+  demo gates live in `docs/project-status.md`. The hard rules above override it.
+- [docs/project-history.md](docs/project-history.md): archived former root README with the
+  detailed implementation and review record as of 2026-09-20; not current setup guidance.
 - `docs/milestone-2/`: **historical** planning record. Its file-ownership and "frozen"
   rules no longer apply. `docs/hackathon-reference-projects.md` is unrelated inspiration.

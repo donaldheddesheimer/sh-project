@@ -204,7 +204,7 @@ except the two rows marked *(code)*, whose wording is read from `services/scenar
   blocks the next analysis for up to 300 s.
 - **`implement_recommendation` changes the live city** (signal timing, EMS dispatch,
   diversion) and it stays until a reset. `AGENT_MAY_IMPLEMENT=false` makes the tool refuse.
-  Nothing on `/mcp` authenticates callers ([README](../README.md) "Current limitations").
+  Nothing on `/mcp` authenticates callers ([project status](project-status.md#current-limitations)).
 - **A reset invalidates open and old runs.** The reboot fails an open analysis and marks
   earlier runs as belonging to a city that is gone, so they cannot be implemented (read from
   `CLAUDE.md` and `learning/implementor.py`; not tried here).

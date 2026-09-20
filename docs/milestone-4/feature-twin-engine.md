@@ -230,7 +230,7 @@ frontend, the frozen contract files, and anything under `backend/tests/`.
 - **Oakland** has unsignalized junctions (`tls_id` is `None`) and a signal id equal to the
   junction id. Anything you loop over intersections for must skip the unsignalized ones, as
   `ScenarioService._capture` does.
-- **The mock on Oakland** can propose fewer than 8 plans (`_safe_shift`); do not assume the
+- **The mock on Oakland** can propose fewer than 9 plans (`_safe_shift`); do not assume the
   plan set is full.
 - **Rubbernecking is a modelling assumption**, not a defect: traffic passing a crash on the
   open lanes is capped at `pass_speed`. Speed it up; do not change what it does.
@@ -275,20 +275,207 @@ checks above were **not run**. Everything is committed on `feature/twin-engine`.
 
 ## Result
 
-_To be filled in by whoever implements this branch._
+**Built.** All seven tasks, on `feature/twin-engine`, in a series of small commits.
 
-**Built.**
+- **Step 0 first.** The MASTER's step-0 contract was listed as frozen but had never landed:
+  `EmergencyResponse`, `TrafficMetrics.emergency_responses`, `TrafficSimulation.revert_response`
+  and the `types.ts` mirror did not exist. Commit 1 lands the contract on its own, unchanged
+  from MASTER, so the rest of the branch builds on it. (`eb72b5c` on this branch claims in its
+  message to have implemented the twin-engine features; its diff is docs only.)
+- **Task 1 (per-step round trips).** `VEHICLE_VARS` gains `VAR_LANE_ID` and `VAR_LANEPOSITION`.
+  `_apply_rubbernecking` now builds an "open lane -> disruption" map and scans the subscription;
+  `_responder_approaches` and `_estimate_eta` read the same two variables instead of calling
+  `getRoadID` and `getLanePosition`.
+- **Task 2 (the 1 s connect wait).** `start()` Popens SUMO itself and calls the new `_connect`,
+  which retries `traci.connect(..., numRetries=0)` plus `getVersion()` every 20 ms for up to 60 s,
+  under the existing module lock and with the same label. It gives up early if the process exits.
+  `traci.start` hardcodes `waitBetweenRetries=1` in `init()`, and its first attempt always
+  precedes SUMO listening, so every process paid ~1 s.
+- **Task 3a (why a responder was slow).** Per responder, per step, while en route and below
+  `RESPONDER_STALL_SPEED_MS` (1.0 m/s): seconds stalled, seconds per segment, and the most
+  vehicles ahead of it on its lane. `PreemptionController.responder_record` adds which signals
+  were pre-empted for that unit and its longest hold. `response_notes()` appends one line per
+  responder that was pre-empted for, or held up for at least `RESPONDER_NOTE_MIN_STALL_S` (3 s;
+  see the review pass below).
+- **Task 3b (levers).** The mock asks for `EMS_DETECTION_M = 350.0` instead of the model's
+  150 m default, and proposes a ninth plan, `corridor-plus-divert`. The blue-light device was
+  **not** built (MASTER D4 is "no unless the user says so", and the user was not asked).
+- **Task 3c (plan count).** `SCENARIO_MAX_CANDIDATES` 8 -> 9 in `config.py` and `.env.example`;
+  every live "8" fixed in the README, CLAUDE.md, `docs/architecture.md` and the controllers README.
+- **Task 4 (per-responder EMS).** `_emergency_responses(window_start)` builds the list and the
+  module-level `_aggregate_response` reduces it to `emergency_vehicle_eta`, so the two cannot
+  disagree. `_realised_emergency_eta` is gone; nothing else called it.
+- **Task 5 (`revert_response`).** Implemented in `SumoSimulation`, idempotent, returning notes.
+- **Task 6 (live-safe pre-emption).** `SumoSimulation(fail_safe_preemption=...)`, set only in
+  `providers.py`'s `live_simulation()`. On the live twin an `UnsafeTransition` drops the corridor,
+  logs at `ERROR` and adds a `response_notes()` line starting `pre-emption disabled:`; branches
+  still raise.
+- **Task 7 (`ANALYSIS_LIVE_SPEED`).** Default `None`, bounded to (0, 64]. `CityService.hold_speed` /
+  `release_speed` plus `LiveSimulationRunner.restore_speed`; the hold is owned by its analysis (see
+  the review pass below).
 
 **How it hooks in.**
 
+- `_apply_rubbernecking`, `_update_dispatches` (which now also calls `_record_stall`) and
+  `_preempt_signals` all run from `_after_step`, in that order, unchanged.
+- `revert_response()` has **no caller**. Agent-memory's revert endpoint is the caller; until it
+  exists the method is dead code that has never executed.
+- `fail_safe_preemption` is off by default, so every branch behaves exactly as before. Only
+  `live_simulation()` passes `True`.
+- `ANALYSIS_LIVE_SPEED` is read in `ScenarioService.open` (hold, at the end, after the run is
+  published) and released from `_close`, which `finish`, `fail` and `abandon` all already go
+  through. The release is `self._spawn(...)`, never awaited.
+- `corridor-plus-divert` is appended inside the `ems_present` block, before `corridor-plus-meter`;
+  `divert-advisory` stays last, so it is still the first plan a tenth would push off the end.
+  `_apply_lessons` and `_by_plan` are untouched and treat the new id like any other (it falls
+  into `middle` until a lesson names it).
+
 **Verified by reading.**
+
+1. **TraCI calls per step (task 1).** Rubbernecking, old: one `lane.getLastStepVehicleIDs`
+   per open lane per step, plus one `vehicle.getLanePosition` per vehicle on those lanes per
+   step. New: zero — the lane id and lane position come from the subscription. The `setSpeed`
+   calls on entering and leaving the zone are unchanged in number and in argument; only the
+   order of independent `setSpeed` calls within a step changes, which cannot affect SUMO.
+   Responder walk, old: `isStopped`, `getRoute`, `getRouteIndex`, `getRoadID`, `getLanePosition`
+   = 5 per en-route responder per step. New: `isStopped`, `getRoute`, `getRouteIndex` = 3.
+   `_estimate_eta`, old: `getRoute`, `getRouteIndex`, `getRoadID`, `getLanePosition` = 4 per
+   responder per `get_network_state`. New: 2.
+2. **Equivalence (task 1).** `lane.getLastStepVehicleIDs` returns the vehicles whose front is
+   on the lane — the same predicate as matching `VAR_LANE_ID`. Both the subscription and a
+   getter called between steps return the state after the last step. Just-departed vehicles
+   are subscribed and `self._veh` is refreshed in `_after_step` *before* `_apply_rubbernecking`.
+   `restore_snapshot` calls `_subscribe_all` and `_read_state` before `_apply_rubbernecking`,
+   so the new variables are present there too. Crash-type vehicles are still not excluded (only
+   `EMS_TYPE`), exactly as before. Where two crashes on one segment leave the same lane open,
+   `open_lanes` is built in `self._disruptions` order, so the later one still wins. That is not
+   quite the old behaviour in that rare case: the old code tested a vehicle against each crash's
+   window in turn, the new code only against the later crash's window. It was **not** changed;
+   see the review pass below.
+3. **Clearance (tasks 5 and 6).** Every path was traced against `check_transition`.
+   `_revert_signals` issues `setProgram`, `setPhase`, `setPhaseDuration` with no step in
+   between, so only the final state is ever shown; that state is `base.phases[phase_index].state`
+   and it is put through `check_transition` against the live state **before** any command is
+   sent. A policy program is built from the base program's phases with only durations changed,
+   so the states are identical and the check is an assertion rather than a guess — it raises
+   if that ever stops holding. The copied remaining time means the phase still ends when it
+   would have, into the base program's own successor. Dropping the corridor issues no command
+   (an extended green simply runs out into the program's yellow); `deactivate` touches no
+   signal; un-fired offsets are dropped rather than applied. For task 6,
+   `PreemptionController.step` appends to a local list and returns it only at the end, so a
+   raise means `_preempt_signals` never sends anything — and not sending a command is always
+   safe, because the program then runs its own course.
+4. **`restore_snapshot`.** Re-read for tasks 1 and 5. `_custom_programs` is deliberately
+   re-created and **not** cleared by a revert: SUMO's saved state names every program variant
+   and `loadState` fails with `Unknown program` for an id it does not know. `_base_program_ids`,
+   `_preemption_notes`, `_preemption_failures` and `_responder_waits` are all reset there, so a
+   branch measures the delay it causes rather than the live city's history.
+5. **Settings and plan count.** Grepped: `config.py`, `.env.example`, README, CLAUDE.md,
+   `docs/architecture.md` and the controllers README all agree on 9 and on `ANALYSIS_LIVE_SPEED`.
+   No live "8 plans" text remains; `docs/milestone-2/` is left alone as a historical record.
+6. **Note contracts.** `no pre-emptions`, `N pre-emption(s) (...); longest hold Ns` and
+   `N vehicle(s) diverted over the horizon` are byte-identical. The new lines are appended.
 
 **Not run / not verified.**
 
-**Checks for the user to run** (commands, and what to look for).
+- **No tests were written or run, and nothing was executed.** The repository's hard rule
+  forbids it. Everything above is from reading the code.
+- `npm --prefix frontend run lint` / `build` were **not run**: `frontend/node_modules` is not
+  installed in this worktree and installing it is a side effect outside this task. The frontend
+  change is two additive interfaces and two added fields in `types.ts`; no import changed.
+- Not one number in this branch has been measured. The README's EMS figures (334 / 292 / 242 s)
+  and wall-clock figures (10–16 s per branch, ~25 s per run) are the pre-branch values and are
+  now labelled as such in the README, CLAUDE.md and `docs/architecture.md`.
+- The degraded pre-emption path (task 6) has never executed; nothing in the scenario provokes an
+  `UnsafeTransition`. Minor consequence of the design, stated for the record: the corridor's
+  aggregate note is captured from the controller *after* the raise, so it can count an
+  activation whose command was never sent. The failure has its own line, starting
+  `pre-emption disabled:`, so it is stated rather than left to be inferred from that count.
+- `revert_response()` has never executed.
+- The 350 m detection distance and `corridor-plus-divert` are **unmeasured guesses at a fix**.
+  They may not improve the EMS number at all.
 
-**Measured** (only numbers the user reported).
+**Checks for the user to run** (exact commands, and what to look for).
 
-**Contract change requests.**
+1. **Equivalence (task 1).** From the same scenario and seed, on `main` and on this branch:
+   ```
+   curl.exe -s -X POST http://127.0.0.1:8000/api/incidents/inject -H "content-type: application/json" -d "{}"
+   # wait ~30 s wall clock (about 2 simulated minutes at 4x), then
+   curl.exe -s -X POST http://127.0.0.1:8000/api/scenarios/run -H "content-type: application/json" -d "{}"
+   ```
+   Compare the **baseline** candidate's `mean_vehicle_delay`, `max_queue_length`, `throughput`
+   and `emergency_vehicle_eta`. They must match to the digit. If they do not, task 1 changed
+   behaviour and the rest of the numbers cannot be trusted. (One known exception: with two
+   crashes on one segment, rubbernecking is applied against the later crash's window only; see
+   the review pass.)
+2. **Speed (tasks 1 and 2).** From the same runs, each candidate's `wall_time_s` and the run's
+   total, on the grid and with `SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland`. The
+   README's 10–16 s per branch and ~25 s per run are the "before".
+3. **Corridor (task 3).** With the analysis started about 75 s after the crash, compare
+   `emergency_vehicle_eta` for `baseline`, `ems-corridor` (now 350 m), `corridor-plus-divert`
+   and `divert-advisory`, and read each candidate's `notes` for the new
+   `EMS-N: stopped for Xs on <segment>, up to N vehicles ahead; ...` line. The question to
+   answer is whether the corridor's loss is now explained — and whether either lever closes it.
+4. **Live safety (task 6).** Only checkable by making the runtime check fail on purpose. The
+   cheapest way is to raise unconditionally at the top of `check_transition` in
+   `backend/app/simulation/preemption.py`, run an episode with a corridor, and confirm the live
+   city keeps stepping, an `ERROR` is logged, and the live twin's response notes carry a
+   `pre-emption disabled:` line — where today it would sit in `error` until Reset. **The user should decide whether this is
+   worth doing**; it requires a deliberate local edit that must be reverted.
+5. **Revert (task 5).** Not checkable in this branch: it has no caller. Once agent-memory's
+   `POST /api/scenarios/{id}/revert` exists, apply a timing plan, revert, and confirm
+   `GET /api/intersections/{id}` reports the base program id again and that no signal skipped
+   a clearance.
+6. **Speed setting (task 7).** Start the backend with `ANALYSIS_LIVE_SPEED=1`, open an analysis,
+   and watch the console's speed drop to 1x and return to 4x when the run completes. Then change
+   the speed by hand mid-analysis and confirm **your** value survives the run completing.
+
+**Measured.** Nothing. No number in this branch has been measured by anyone.
+
+**Contract change requests.** None. The step-0 contract was landed exactly as MASTER states it.
 
 **Deviations.**
+
+1. **Per-responder pre-emption wording.** The handoff's example note reads
+   `3 pre-emptions (A2, B2, C2)`. That collides with the corridor's aggregate note, which
+   agent-memory treats as a contract. The per-responder lines therefore read
+   `N signal(s) pre-empted on its route (...), longest hold Ns` or
+   `no signals pre-empted on its route`, leaving the aggregate strings untouched.
+2. **The blue-light device was not built.** MASTER D4 is "no unless the user says so" and the
+   user was not asked. It is recorded in the README and CLAUDE.md as a deliberate gap.
+3. **`revert_response` also drops un-fired offset shifts**, which the contract does not mention.
+   An offset waiting for a green has changed nothing yet, so dropping it is the whole revert;
+   one already applied lives in the signal's clock and cannot be undone without cutting a phase.
+4. **Step 0 landed here**, not before the branch, because it had never been done. It is a
+   separate first commit so it can be reviewed as the contract rather than as branch work.
+
+**Review pass.** Changed after the branch was reviewed:
+
+- **Stall diagnostics.** The step in which a responder stops at its scene no longer counts as
+  stalled, and a responder gets an `EMS-N: stopped for ...` line only at 3 s or more
+  (`RESPONDER_NOTE_MIN_STALL_S`). Braking for the scene or a red light no longer produces one.
+- **Failure note prefix.** The live-twin failure note now starts with `pre-emption disabled:`,
+  the exact prefix agent-memory's response check looks for.
+- **Dropped corridor.** The controller of a dropped corridor is kept, never stepped again, so
+  the notes can still report what it did in total and per responder after a refusal or a revert.
+- **Hold credit.** A pre-empted responder is credited the hold for every signal service run for
+  it, including after it crossed and for the last stretch after the final top-up.
+- **Starting SUMO.** Free ports are claimed in a module-level set, so two branches started
+  together cannot be given the same port. A failed start kills and reaps the SUMO process and
+  unregisters its traci label.
+- **`ANALYSIS_LIVE_SPEED`.** Bounded to (0, 64], like the console's speed control.
+- **Speed hold.** The hold is owned by its analysis (its run id) and hold and release are
+  serialized, so a late release from an earlier analysis cannot release a later one's hold. An
+  operator speed change, or a demo start, ends the hold, even to the same value; nothing is
+  restored afterwards.
+- **Comments and fixture.** The recorded-run fixture and the `emergency_vehicle_eta` comments
+  were corrected: in a measured window it is the last responder to arrive, on live metrics the
+  soonest estimated ETA among en-route responders.
+
+**Known deviation, not changed.** With two crashes on one segment, the old rubbernecking code
+tested a vehicle against each crash's window in turn, and the new code tests it only against the
+later crash's window. This is a small difference in a rare case, and it means the "to the digit"
+equivalence claim in check 1 above does not strictly hold there.
+
+**Still not run.** As before, none of this review pass was run or measured, and no tests were
+written or run.

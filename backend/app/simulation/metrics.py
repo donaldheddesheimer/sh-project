@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
-from app.models.domain import TrafficMetrics
+from app.models.domain import EmergencyResponse, TrafficMetrics
 
 
 @dataclass
@@ -74,7 +74,12 @@ class MetricsCollector:
 
     # ------------------------------------------------------------------ live
 
-    def live(self, sim_time: float, emergency_eta: float | None) -> TrafficMetrics:
+    def live(
+        self,
+        sim_time: float,
+        emergency_eta: float | None,
+        emergency_responses: list[EmergencyResponse] | None = None,
+    ) -> TrafficMetrics:
         obs = self._last
         if obs is None:
             return TrafficMetrics(
@@ -92,6 +97,7 @@ class MetricsCollector:
             throughput=arrivals * 3600.0 / elapsed,
             mean_speed=sum(obs.vehicle_speeds) / len(obs.vehicle_speeds) if obs.vehicle_speeds else 0.0,
             emergency_vehicle_eta=emergency_eta,
+            emergency_responses=emergency_responses or [],
             vehicles_in_network=len(obs.vehicle_time_loss),
             vehicles_waiting_to_enter=obs.pending,
         )
@@ -101,7 +107,14 @@ class MetricsCollector:
     def begin_window(self, sim_time: float, current_time_loss: dict[str, float]) -> None:
         self._window = _Window(start=sim_time, initial_time_loss=dict(current_time_loss))
 
-    def end_window(self, sim_time: float, emergency_eta: float | None) -> TrafficMetrics:
+    def end_window(
+        self,
+        sim_time: float,
+        emergency_eta: float | None,
+        emergency_responses: list[EmergencyResponse] | None = None,
+    ) -> TrafficMetrics:
+        """``emergency_responses`` is the per-responder breakdown of ``emergency_eta``: the same window and
+        the same responder set, so the aggregate is the maximum of the list once every responder arrived."""
         w = self._window
         if w is None:
             raise RuntimeError("end_window() called without begin_window()")
@@ -119,6 +132,7 @@ class MetricsCollector:
             throughput=w.arrivals * 3600.0 / duration,
             mean_speed=w.speed_sum / w.speed_samples if w.speed_samples else 0.0,
             emergency_vehicle_eta=emergency_eta,
+            emergency_responses=emergency_responses or [],
             vehicles_in_network=live.vehicles_in_network,
             vehicles_waiting_to_enter=live.vehicles_waiting_to_enter,
         )

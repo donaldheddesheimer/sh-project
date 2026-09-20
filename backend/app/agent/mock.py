@@ -30,6 +30,10 @@ MIN_GREEN_S = 12.0  # a shift never takes a green below this (the validator's ve
 MIN_SHIFT_S = 4.0  # less spare green than this is not worth proposing
 MAX_DIVERT_NAMES = 3
 DIVERT_COMPLIANCE = 0.3
+# Blocks are 250 m, so the 150 m default only pre-empts once the responder is already in the queue it
+# needs cleared. At 350 m the signal ahead starts clearing while the unit is still a block away, which is
+# the point of a corridor. The validator bounds this to 30-400 m.
+EMS_DETECTION_M = 350.0
 EMS_ETA_TOLERANCE = 1.10  # a plan may not slow responders by more than 10%
 EMS_GAIN_PREFERRED_S = 60.0  # an EMS improvement this large outweighs a small delay penalty...
 DELAY_TRADEOFF = 1.05  # ...as long as mean delay stays within 5% of the best eligible candidate
@@ -253,6 +257,16 @@ class MockAgentProvider(AgentProvider):
                         )
                     )
 
+        parallels = _parallel_streets(context, segment)
+        src = _cross_street(context, segment.source, approach) or segment.source
+        dst = _cross_street(context, segment.destination, approach) or segment.destination
+        blocked = "road" if incident.total_lanes and len(incident.affected_lanes) >= incident.total_lanes else "lane"
+        divert = RerouteAction(
+            avoid_segment_ids=[segment.id],
+            compliance=DIVERT_COMPLIANCE,
+            reason=f"{blocked} blocked on {segment.name} {approach} between {src} and {dst}",
+        )
+
         if ems_present:
             # The unsafe demo plan travels with the EMS plans (Analyze Response always carries an EMS probe), so a
             # routine proposal set without responders stays fully valid: every plan there passes the validator.
@@ -265,7 +279,17 @@ class MockAgentProvider(AgentProvider):
                     name="EMS green corridor",
                     description="Pre-empt each signal on the responder's route to green ahead of the EMS unit, "
                     "through full yellow and all-red clearance.",
-                    corridor=EmergencyCorridor(reason=reason),
+                    corridor=EmergencyCorridor(reason=reason, detection_distance_m=EMS_DETECTION_M),
+                )
+            )
+            plans.append(
+                CandidatePlan(
+                    id="corridor-plus-divert",
+                    name="EMS corridor + divert",
+                    description=f"Green corridor for the responder, and advise {DIVERT_COMPLIANCE:.0%} of drivers "
+                    "to avoid the blocked segment so there is less queue for it to clear.",
+                    corridor=EmergencyCorridor(reason=reason, detection_distance_m=EMS_DETECTION_M),
+                    reroutes=[divert.model_copy(deep=True)],
                 )
             )
             if meter is not None:
@@ -276,14 +300,10 @@ class MockAgentProvider(AgentProvider):
                         name=f"EMS corridor + meter at {meter_at}",
                         description=f"Green corridor for the responder, then keep metering {approach} inflow at {meter_at}.",
                         policies=[p.model_copy(deep=True) for p in meter.policies],
-                        corridor=EmergencyCorridor(reason=reason),
+                        corridor=EmergencyCorridor(reason=reason, detection_distance_m=EMS_DETECTION_M),
                     )
                 )
 
-        parallels = _parallel_streets(context, segment)
-        src = _cross_street(context, segment.source, approach) or segment.source
-        dst = _cross_street(context, segment.destination, approach) or segment.destination
-        blocked = "road" if incident.total_lanes and len(incident.affected_lanes) >= incident.total_lanes else "lane"
         plans.append(
             CandidatePlan(
                 id="divert-advisory",
@@ -292,13 +312,7 @@ class MockAgentProvider(AgentProvider):
                 else f"Divert around {segment.name} {approach}",
                 description=f"Advise {DIVERT_COMPLIANCE:.0%} of drivers headed through the blocked segment to divert "
                 "(DMS sign + navigation alert).",
-                reroutes=[
-                    RerouteAction(
-                        avoid_segment_ids=[segment.id],
-                        compliance=DIVERT_COMPLIANCE,
-                        reason=f"{blocked} blocked on {segment.name} {approach} between {src} and {dst}",
-                    )
-                ],
+                reroutes=[divert],
             )
         )
         if context.lessons and len(context.all_incidents) == 1:  # several incidents: combined plans lead instead

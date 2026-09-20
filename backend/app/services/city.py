@@ -11,6 +11,7 @@ import asyncio
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TypeVar
 
 from app.agent.base import AgentProvider
@@ -56,6 +57,18 @@ T = TypeVar("T")
 
 TREND_SAMPLE_S = 5.0  # simulated seconds between trend samples
 TREND_SAMPLES = 180  # 15 simulated minutes
+
+
+@dataclass(frozen=True)
+class _SpeedHold:
+    """A live-speed hold: who owns it, the operator's speed to give back, and the speed imposed meanwhile.
+
+    Frozen so that release can tell "the hold I read" from "a hold someone since replaced" by identity.
+    """
+
+    owner: str
+    previous: float
+    imposed: float
 
 
 class NotReady(RuntimeError):
@@ -108,6 +121,10 @@ class CityService:
         self._status = RunStatus.STARTING
         self._error: str | None = None
         self._ems_status: dict[str, EmergencyStatus] = {}
+        self._speed_hold: _SpeedHold | None = None
+        # Serializes hold_speed and release_speed. Releases run as spawned tasks, so without it a finishing
+        # analysis's release could interleave with the next analysis's hold and leave the city un-held.
+        self._speed_lock = asyncio.Lock()
         self._trend: deque[MetricSample] = deque(maxlen=TREND_SAMPLES)
         self.latest_scenario: ScenarioRun | None = None
         self.latest_episode: Episode | None = None
@@ -213,7 +230,53 @@ class CityService:
         self.events.add(EventLevel.INFO, "Simulation resumed" if running else "Simulation paused", self._sim_time())
 
     async def set_speed(self, multiplier: float) -> None:
+        # the operator's choice ends any hold, even a re-selection of the value the hold imposed, which a
+        # comparison on the simulation thread (restore_speed) cannot tell from the hold itself
+        self._speed_hold = None
         await self._runner.set_speed(multiplier)
+
+    async def hold_speed(self, multiplier: float, owner: str) -> None:
+        """Slow the live city while something heavy runs beside it (branch simulations).
+
+        ``owner`` (an analysis run id) is who may release the hold. Holds do not stack: a hold already in
+        force passes to the new owner and keeps the operator's original speed to give back, so a later
+        analysis is never left un-held by an earlier one's release. Serialized with ``release_speed``.
+        """
+        async with self._speed_lock:
+            held = self._speed_hold
+            if held is None:
+                previous = self._runner.speed
+                if previous == multiplier:
+                    return
+                self._speed_hold = _SpeedHold(owner, previous, multiplier)
+            else:
+                # recorded before the await, so an operator set_speed that lands meanwhile still clears it
+                self._speed_hold = _SpeedHold(owner, held.previous, multiplier)
+                if held.imposed == multiplier:
+                    return
+            await self._runner.set_speed(multiplier)
+            self.events.add(
+                EventLevel.INFO, f"Live simulation slowed to {multiplier:g}x while branches run", self._sim_time()
+            )
+
+    async def release_speed(self, owner: str) -> None:
+        """Put the speed back if ``owner`` still holds it. The operator always wins.
+
+        A no-op for any other owner, so a stale or repeated release from an earlier analysis cannot lift a
+        later analysis's hold. A speed the operator chose while the hold was on is left exactly as they set
+        it: ``set_speed`` ends the hold, and as a second guard only the value this service imposed is ever
+        replaced (the check runs on the simulation thread). Serialized with ``hold_speed``.
+        """
+        async with self._speed_lock:
+            hold = self._speed_hold
+            if hold is None or hold.owner != owner:
+                return
+            restored = await self._runner.restore_speed(hold.imposed, hold.previous)
+            # cleared only now, after the restore is in effect; set_speed may have cleared it while we awaited
+            if self._speed_hold is hold:
+                self._speed_hold = None
+            if restored:
+                self.events.add(EventLevel.INFO, f"Live simulation back to {hold.previous:g}x", self._sim_time())
 
     async def reset(self) -> None:
         async with self.live_change_lock:  # wait for an apply in flight, and keep the next one out until we reboot

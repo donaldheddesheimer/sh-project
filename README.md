@@ -8,10 +8,11 @@ rule-based mock offline) drives them, applies its choice to the live twin and le
 the result (see [the autonomous episode](#the-autonomous-self-learning-episode)).
 
 This repository has completed **milestone 2** and built **milestone 3** (the autonomous
-episode; it has not been run yet). Milestone 4 is planned (see [Next: milestone 4](#next-milestone-4)). It
+episode; it has not been run yet). Milestone 4 is planned, with part 1 built and unrun (see
+[Next: milestone 4](#next-milestone-4)). It
 has a live SUMO digital twin of a 3×3 downtown grid and a FastAPI backend that streams city
 state over WebSocket. There is a React/MapLibre operations console: inject a collision,
-watch the queue spill back, then click **Analyze Response** to test up to 8 candidate plans
+watch the queue spill back, then click **Analyze Response** to test up to 9 candidate plans
 in parallel SUMO branches. Those plans include signal timing, an EMS green corridor and a
 diversion advisory. The console compares each plan against the baseline and recommends one.
 The **autonomous episode** runs that loop without clicks: a scripted crash, an agent that
@@ -222,7 +223,7 @@ Built but not yet run end to end, so the timings below are estimates. Use the
    the scorecard's delay numbers, `memory/episodes/EP-0001.md` is written, and the live sim
    pauses.
 6. Run **Crash ahead** again. The analysis lists `EP-0001` under lessons used and, if that
-   lesson was `effective`, simulates 4 plans instead of 8.
+   lesson was `effective`, simulates 4 plans instead of 9.
 7. **Different crash** (`varied-crash`) resembles the first crash but is not the same, so the
    lesson only reorders the plans. **Second crash mid-response** (`double-crash`) shows the
    two-crash rule: one episode `superseded`, one `completed` over both incidents.
@@ -485,6 +486,8 @@ Endpoints are in the [API](#api) table. Every setting is in `backend/app/config.
 | `EPISODE_PAUSE_ON_FINISH` | true | Pause the live sim when an episode completes |
 | `AGENT_MAY_IMPLEMENT` | true | Let the agent apply its recommendation (the operator path works either way) |
 | `MEMORY_ENABLED`, `MEMORY_DIR` | true, `<repo>/memory` | Memory on/off and where it lives |
+| `SCENARIO_MAX_CANDIDATES` | 9 | Most plans an analysis simulates, the baseline included. The mock proposes exactly 9 on the grid when an EMS origin or responder exists |
+| `ANALYSIS_LIVE_SPEED` | unset | A speed multiplier above 0 and up to 64 (the console's limit). While an analysis is open the live sim runs at it, so the branches get more of the machine, and the previous speed comes back when the analysis ends. Any speed change by the operator, or a demo start, ends the hold and nothing is restored. Built, not measured |
 | `MCP_URL` | unset | Where the Nemotron analyst reaches the MCP tools; unset = this app's server, in-process |
 | `NEMOTRON_MODEL`, `NVIDIA_API_KEY`, `NEMOTRON_BASE_URL` | unset, unset, NIM | The model id has to be supplied (see [open questions](#decisions-and-open-questions)) |
 
@@ -527,10 +530,12 @@ reviewer, so no NIM key is needed except for step 7.
   Planned as part 2 of [milestone 4](#next-milestone-4), with a run protocol that adds a cold
   `varied-crash` control. Nothing has been measured yet.
 
-The items this list used to defer (embedding-based recall, reverting an applied plan when the
-scene clears, per-responder EMS metrics, verifying corridor and diversion lessons, the branch
-speed-up, a slower live speed during analysis, the REST `NemotronAgentProvider`) are planned
-in [milestone 4](#next-milestone-4). Still later: tests for `ScenarioService`, the MCP tools and
+The items this list used to defer are taken up in [milestone 4](#next-milestone-4). The branch
+speed-up, the slower live speed during analysis, per-responder EMS metrics on the twin side and
+the `revert_response()` primitive are built in part 1 (not run, not measured). Embedding-based
+recall, reverting an applied plan when the scene clears, per-responder EMS in the scorecard,
+verifying corridor and diversion lessons and the REST `NemotronAgentProvider` are still planned
+(part 2). Still later: tests for `ScenarioService`, the MCP tools and
 the learning package (the convention so far is no new test files, so agree on this first).
 
 ### Decisions and open questions
@@ -555,9 +560,9 @@ weights and the mock's pruning rules above; comparing predicted and realised on 
 simulation time.
 
 **Open:** which NIM model id to use (`nvidia/nemotron-3-super-120b-a12b` is built for agentic
-tool calling; `nvidia/nemotron-3-nano-30b-a3b` is faster); whether to slow the live sim
-during analysis to reduce staleness (milestone 4 plans it as an opt-in setting, off by
-default).
+tool calling; `nvidia/nemotron-3-nano-30b-a3b` is faster); whether to turn on
+`ANALYSIS_LIVE_SPEED` (built and off by default, not yet measured) to slow the live sim during
+analysis and reduce staleness.
 
 ### Risks and known gaps
 
@@ -567,17 +572,24 @@ default).
   the least verification, so check them before trusting their lessons.
 - **Live-apply paths have never run on the live sim.** The corridor's `setPhase` jump in
   particular was never exercised. A pre-emption command that fails the runtime transition
-  check raises on the live runner, which puts the live sim in `error`; **Reset** recovers.
+  check no longer stops the live twin: it drops the corridor, logs at `ERROR` and adds a
+  note starting `pre-emption disabled:`, and the city keeps running. Branch simulations still
+  fail loudly, because a candidate that needs an unsafe signal change must not be measured as
+  if it were safe.
+  This degraded path is read from the code, not run — nothing in the scenario provokes it.
 - **Snapshots go stale** while the agent works, so the branches predicted a slightly
   earlier city than the one the plan is applied to. The comparison on absolute simulation
   time makes this visible as prediction error rather than hiding it.
 - **Snapshots after a live timing change** rely on a fix (`custom_programs`) that was
   checked against the SUMO source, not by a run. Without it every branch of a later analysis
   would fail with `Unknown program`.
-- **Two-crash EMS numbers are one figure.** Branch and live both time every responder the plan
-  involves (its own dispatches, and any already on the way at the snapshot) from the same
-  origin, and report the last one to arrive. Per-responder times are not shown (planned in
-  [milestone 4](#next-milestone-4), parts 1 and 2). Read from the code, not run.
+- **Two-crash EMS numbers are one figure in the console.** Branch and live both time every
+  responder the plan involves (its own dispatches, and any already on the way at the
+  snapshot) from the same origin, and report the last one to arrive. The twin now also
+  reports each responder separately in `TrafficMetrics.emergency_responses`, from the same
+  window and the same responder set, so a plan that helps one unit and hurts another is
+  visible in the API; **no UI shows it yet**, and the scorecard that will read it is part 2 of
+  [milestone 4](#next-milestone-4). Read from the code, not run.
 - **Nemotron is untested.** Its latency, rate limits and tool-calling reliability on NIM are
   unknown, and the fallback to the mock can hide a failure, so read the episode's steps.
 - **The in-process MCP connection** uses the SDK's in-memory transport, which the SDK
@@ -639,7 +651,7 @@ Details, design decisions and the NVIDIA integration plan are in
 ```
 backend/app/
   main.py               FastAPI app + lifespan
-  config.py             env settings (SMART_CITY_PROVIDER, AGENT_PROVIDER, SIM_*, EPISODE_*, MEMORY_*)
+  config.py             env settings (SMART_CITY_PROVIDER, AGENT_PROVIDER, SIM_*, SCENARIO_*, ANALYSIS_LIVE_SPEED, EPISODE_*, MEMORY_*)
   providers.py          provider and analyst factories + service assembly
   api/routes.py         REST + /ws/state
   api/mcp_tools.py      the scenario engine as MCP tools at /mcp
@@ -660,7 +672,7 @@ backend/app/
   simulation/network.py static topology, phase labelling, geo projection
   simulation/metrics.py live + horizon TrafficMetrics
   smart_city/           SmartCityProvider: base, mock (ground truth + detection delay), nvidia (stub)
-  agent/                AgentProvider: base, mock (8 rule-based plans, pruned by lessons);
+  agent/                AgentProvider: base, mock (9 rule-based plans, pruned by lessons);
                         nemotron.py: the NIM chat client (its REST AgentProvider is a stub)
   safety/validator.py   SafetyValidator (signal policies + corridors) and rule-based MVP limits
   websocket/hub.py      non-blocking WebSocket fan-out
@@ -730,19 +742,49 @@ docs/
 ## Current limitations
 
 - **An applied plan stays on the live signals until a reset.** Nothing reverts it when
-  the scene clears.
+  the scene clears. The twin now has the primitive for it — `revert_response()` puts the
+  signals back on their base program keeping the running phase and its remaining time,
+  disables the corridor and stops the diversion — but no caller uses it yet; the service
+  that will is part 2 of [milestone 4](#next-milestone-4).
 - **The EMS corridor rarely helps once the queue has formed.** Pre-emption turns the
   signals green, but the responder still waits behind the queue in the blocked lane.
-  Measured on main with the analysis started about 75 s after the crash:
+  Measured on main before the twin-engine branch, with the analysis started about 75 s
+  after the crash:
   - `ems-corridor`: 334 s EMS response, against 292 s for the baseline;
   - `divert-advisory`: 242 s, because shortening the queue is what helps.
 
-  The mock's EMS tolerance keeps a slower corridor from being recommended. Levers to try:
-  a longer detection distance, or a combined corridor + diversion plan.
+  The mock's EMS tolerance keeps a slower corridor from being recommended. Two levers are
+  now built and **not yet measured**: the mock asks for a 350 m detection distance instead
+  of the 150 m default (blocks are 250 m, so pre-emption used to start once the responder
+  was already in the queue), and a ninth plan, `corridor-plus-divert`, combines the corridor
+  with the diversion so there is less queue to clear. A third lever, SUMO's own blue-light
+  device, is not built: it changes how responders drive, and that is a modelling decision
+  for the user to make.
+
+  A run's notes now say *why* each responder was slow — how long it stood still, on which
+  segment, how many vehicles were ahead of it, and which signals were pre-empted for it —
+  so the number can be explained rather than only observed. A responder gets the stall line
+  only if it was held up for at least 3 s (standing still while en route, not counting the
+  step in which it stops at its scene). Read from the code, not run.
 - **Branches are slow-ish.** Each takes 10–16 s of wall time when 4 run in parallel, so a
-  full run takes about 25 s. About half of that is per-step rubbernecking bookkeeping in
-  `sumo.py`, which is the obvious optimisation.
-- The mock agent is rule-based: it proposes a fixed set of 8 plans (fewer when a close
+  full run takes about 25 s. The per-step rubbernecking, responder and diagnostics
+  bookkeeping no longer makes a TraCI round trip per vehicle (lane and lane position ride
+  on the existing subscription), and starting a branch no longer pays SUMO's fixed ~1 s
+  connect wait. **Neither speed-up has been timed**: the wall-clock figures above are the
+  ones measured before the change. The opt-in `ANALYSIS_LIVE_SPEED` setting (see
+  [Settings](#settings)) is a further, equally unmeasured lever.
+- **Known deviations in the twin-engine speed-up, deliberately left as they are** (read from
+  the code, not run):
+  - *Rubbernecking with two crashes on one segment.* The old code tested a vehicle against
+    each crash's window in turn; the new one maps each open lane to one crash, so on a lane
+    left open by both, only the later crash's window applies. A vehicle inside the earlier
+    crash's window but outside the later one is no longer slowed. Rare (the demo scripts put
+    crashes on different segments), but it means the "same metrics as before, to the digit"
+    claim holds only where crashes do not share an open lane.
+  - *Branch start-up may still serialise on Windows.* Each `traci.connect` attempt runs under
+    the module lock; if a refused loopback connect takes about a second there, parallel
+    branches still wait on each other and the ~1 s saving shrinks. Not timed.
+- The mock agent is rule-based: it proposes a fixed set of 9 plans (fewer when a close
   lesson prunes them) and recommends with a fixed rule (see
   [architecture.md](docs/architecture.md#analyze-response-pipeline)).
 - `NvidiaSmartCityProvider` and the REST pipeline's `NemotronAgentProvider` are documented
@@ -760,7 +802,8 @@ docs/
 
 ## Next: milestone 4
 
-**Planned. Nothing in milestone 4 is built or run.**
+**Mostly planned. Part 1 is built on `feature/twin-engine` and none of it has been run or
+measured; parts 2 and 3 are not built.**
 
 **First, milestone 3 has to be run.** It is built, not yet run end to end. What remains is to
 run it (the [review notes](#review-notes-the-episode-pass) list what to try, in order), to run
@@ -774,7 +817,7 @@ kept.
 
 | Part | Branch and plan | What it delivers | Status |
 |---|---|---|---|
-| 1. Twin engine | `feature/twin-engine`, [plan](docs/milestone-4/feature-twin-engine.md) | The branch speed-up in `sumo.py`; the EMS corridor explained and its levers tried (a longer detection distance, a combined corridor and diversion plan); per-responder EMS response from the twin; a `revert_response()` primitive; a pre-emption failure on the live twin that degrades instead of stopping it; an opt-in slower live speed during analysis | Planned |
+| 1. Twin engine | `feature/twin-engine`, [plan](docs/milestone-4/feature-twin-engine.md) | The branch speed-up in `sumo.py`; the EMS corridor explained and its levers tried (a longer detection distance, a combined corridor and diversion plan); per-responder EMS response from the twin; a `revert_response()` primitive; a pre-emption failure on the live twin that degrades instead of stopping it; an opt-in slower live speed during analysis | Built, none of it measured or run |
 | 2. Agent and memory | `feature/agent-memory`, [plan](docs/milestone-4/feature-agent-memory.md) | Reverting an applied plan when the scene clears (automatic, and by the operator); per-responder EMS in the scorecard; response checks, so corridor and diversion lessons are verified before they are trusted; embedding-based recall; a learning report and the cold, warm and varied run protocol; the REST `NemotronAgentProvider` | Planned |
 | 3. VSS input | `feature/vss-input`, [plan](docs/milestone-4/feature-vss-input.md) | `NvidiaSmartCityProvider` on the VSS Video Analytics MCP tools, with a replay client for development; a map matcher (lat/lon and place names → segment and lane); mirroring a reported incident into the twin so it can be analyzed; cameras and match details in the UI; Oakland demo scripts | Planned |
 

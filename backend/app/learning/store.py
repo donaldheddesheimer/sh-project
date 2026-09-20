@@ -22,6 +22,7 @@ from collections.abc import Callable
 from app.agent.base import CandidatePlan
 from app.learning.embeddings import NimEmbedder
 from app.learning.scorecard import MATERIAL_DELAY_PCT, MATERIAL_EMS_S, MATERIAL_QUEUE, PROVISIONAL_CONFIDENCE_CAP
+from app.models.api import EventLevel
 from app.models.domain import Incident
 from app.models.episode import (
     Experience,
@@ -370,7 +371,7 @@ class ExperienceStore:
         directory: Path,
         enabled: bool = True,
         embedder: NimEmbedder | None = None,
-        on_embedding_event: Callable[[str], None] | None = None,
+        on_embedding_event: Callable[[str, EventLevel], None] | None = None,
     ):
         self.directory = directory
         self.enabled = enabled
@@ -404,7 +405,8 @@ class ExperienceStore:
         """Rank eligible memory without ever letting semantic similarity grant pruning authority."""
         if not self.enabled or not current:
             return []
-        experiences = [exp for exp in self.load() if exp.eligible_for_recall]
+        # load() reads every episode file; recall runs on the event loop during capture, so keep it off it.
+        experiences = [exp for exp in await asyncio.to_thread(self.load) if exp.eligible_for_recall]
         if not experiences:
             return []
         structured = [(similarity(current, exp.incidents), exp) for exp in experiences]
@@ -537,14 +539,7 @@ class ExperienceStore:
         }
 
     async def _experience_vectors(self, experiences: list[Experience]) -> dict[str, list[float]] | None:
-        cached: dict[str, list[float]] = {}
-        stale: list[Experience] = []
-        for exp in experiences:
-            vector = self._read_vector(exp)
-            if vector is None:
-                stale.append(exp)
-            else:
-                cached[exp.id] = vector
+        cached, stale = await asyncio.to_thread(self._cached_vectors, experiences)
         if not stale:
             return cached
         vectors = await self._request_vectors([_experience_text(exp) for exp in stale], "passage")
@@ -579,6 +574,18 @@ class ExperienceStore:
         self._embedding_recovered()
         return vectors
 
+    def _cached_vectors(self, experiences: list[Experience]) -> tuple[dict[str, list[float]], list[Experience]]:
+        """Split experiences into the ones with a usable sidecar and the ones still to embed. One sidecar read each."""
+        cached: dict[str, list[float]] = {}
+        stale: list[Experience] = []
+        for exp in experiences:
+            vector = self._read_vector(exp)
+            if vector is None:
+                stale.append(exp)
+            else:
+                cached[exp.id] = vector
+        return cached, stale
+
     def _read_vector(self, exp: Experience) -> list[float] | None:
         if self._embedder is None:
             return None
@@ -606,18 +613,18 @@ class ExperienceStore:
             return
         self._embedding_outage = True
         log.warning("embedding recall unavailable: %s", exc)
-        self._emit_embedding_event("Embedding recall unavailable; using structured memory only")
+        self._emit_embedding_event("Embedding recall unavailable; using structured memory only", EventLevel.WARNING)
 
     def _embedding_recovered(self) -> None:
         if not self._embedding_outage:
             return
         self._embedding_outage = False
         log.info("embedding recall recovered")
-        self._emit_embedding_event("Embedding recall recovered")
+        self._emit_embedding_event("Embedding recall recovered", EventLevel.INFO)
 
-    def _emit_embedding_event(self, message: str) -> None:
+    def _emit_embedding_event(self, message: str, level: EventLevel) -> None:
         if self._on_embedding_event is not None:
-            self._on_embedding_event(message)
+            self._on_embedding_event(message, level)
 
 
 def _num(value: float | None, unit: str = "", fmt: str = ".0f") -> str:

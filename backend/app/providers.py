@@ -160,8 +160,7 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
         else None
     )
 
-    def report_embedding_event(message: str) -> None:
-        level = EventLevel.WARNING if "unavailable" in message else EventLevel.INFO
+    def report_embedding_event(message: str, level: EventLevel) -> None:
         city.events.add(level, message, city.sim_time)
 
     memory = ExperienceStore(

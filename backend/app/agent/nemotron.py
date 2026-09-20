@@ -25,8 +25,9 @@ import httpx2
 from pydantic import ValidationError
 
 from app.agent.base import AgentProvider, CandidatePlan, IncidentContext, Recommendation
-from app.api.mcp_tools import INSTRUCTIONS, _candidate, _metrics
+from app.agent.briefing import PLAN_DESIGN, candidate_row, metrics_row
 from app.models.domain import SimulationCandidate
+
 
 class NimError(RuntimeError):
     pass
@@ -85,7 +86,7 @@ class NemotronAgentProvider(AgentProvider):
             {
                 "role": "system",
                 "content": (
-                    INSTRUCTIONS
+                    PLAN_DESIGN
                     + "\nReturn only a JSON array of CandidatePlan objects. "
                     "Plans are data, never commands: choose safe timing, corridor or reroute ideas for later validation "
                     "and branch simulation. Respect candidate_budget, do not include the baseline, and use lessons only "
@@ -96,11 +97,26 @@ class NemotronAgentProvider(AgentProvider):
         ]
         for attempt in range(2):
             message = await self._nim.chat(messages)
+            reported = len(self._diagnostics)
             plans = self._validated_plans(message.get("content"), budget)
             if plans:
                 return plans
             if attempt == 0:
-                self._diagnostics.append("Nemotron returned no valid candidates; retrying once")
+                # The retry has to show the model what was wrong with its reply. Re-sending the identical two
+                # messages only resamples the same prompt, which is a NIM call spent on nothing.
+                faults = self._diagnostics[reported:] or ["the reply contained no CandidatePlan entries"]
+                raw = message.get("content")
+                messages += [
+                    {"role": "assistant", "content": raw if isinstance(raw, str) else ""},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"That reply was rejected: {'; '.join(faults[:4])}. "
+                            "Return only a JSON array of valid CandidatePlan objects."
+                        ),
+                    },
+                ]
+                self._diagnostics.append("Nemotron returned no valid candidates; retrying once with the errors")
         diagnostics = "; ".join(self._diagnostics[:4])
         raise NimError(f"Nemotron returned no valid CandidatePlan entries after one retry: {diagnostics[:400]}")
 
@@ -232,5 +248,5 @@ def _recommendation_context(context: IncidentContext) -> dict:
 
 def _result_table(results: list[SimulationCandidate]) -> list[dict]:
     baseline = next((candidate for candidate in results if candidate.id == "baseline" and candidate.metrics), None)
-    baseline_metrics = _metrics(baseline.metrics) if baseline is not None else None
-    return [_candidate(candidate, baseline_metrics) for candidate in results]
+    baseline_metrics = metrics_row(baseline.metrics) if baseline is not None else None
+    return [candidate_row(candidate, baseline_metrics) for candidate in results]

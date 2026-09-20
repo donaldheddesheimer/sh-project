@@ -202,8 +202,15 @@ the mock prunes or reorders these proposals. `NemotronAgentProvider` drives REST
 Response through one NIM proposal call and one recommendation call. It validates JSON into
 `CandidatePlan` / `Recommendation` data only; ScenarioService still validates plans, simulates
 them and accepts only a completed candidate. Its first provider failure switches that run to
-the mock (`nemotron→mock`) when `AGENT_FALLBACK_TO_MOCK=true`, or fails it when false. Nemotron
-also drives the [MCP tools](#mcp-tools-for-agents) in episodes (`learning/analysts.py`).
+the mock (`nemotron→mock`) when `AGENT_FALLBACK_TO_MOCK=true`, or fails it when false. A proposal
+that returns nothing valid is retried once with the validation errors appended to the conversation,
+because re-sending the identical prompt only resamples it. Nemotron also drives the
+[MCP tools](#mcp-tools-for-agents) in episodes (`learning/analysts.py`).
+
+`agent/briefing.py` holds what both analysts share: the candidate rows they read results from, the MCP
+server's `instructions` workflow prompt, and `PLAN_DESIGN`, the same plan-design and result-reading
+guidance without the tool-calling steps. The one-shot REST provider has no tools, so it is given
+`PLAN_DESIGN` rather than a workflow it cannot follow.
 
 **Safety.** `RuleBasedSafetyValidator` checks min/max green (including a pedestrian
 floor), non-shortened yellow and all-red clearance, cycle bounds, and offset range.

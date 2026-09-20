@@ -45,14 +45,14 @@ def _corridor_check(notes: list[str], available: bool) -> ResponseCheck:
 
 
 def _diversion_check(implementation: Implementation, available: bool) -> ResponseCheck:
-    result = next((match for note in implementation.notes if (match := _DIVERSION_RESULT.fullmatch(note))), None)
-    if implementation.diverted > 0:
+    if implementation.diverted > 0:  # the apply call's own count: the only number attributable to this response
         count = implementation.diverted
         return ResponseCheck(
             kind="diversion",
             ok=True,
             detail=f"{count} vehicle{'s' if count != 1 else ''} diverted when the response was applied",
         )
+    result = next((match for note in implementation.notes if (match := _DIVERSION_RESULT.fullmatch(note))), None)
     if result is None:
         detail = "response notes did not contain diversion evidence" if available else "response notes unavailable"
         return ResponseCheck(kind="diversion", ok=None, detail=detail)

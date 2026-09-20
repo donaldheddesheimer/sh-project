@@ -69,7 +69,8 @@ venv directly (this is what works in PowerShell or Git Bash):
 | To change | Look at |
 |---|---|
 | REST endpoints, `/ws/state` | [backend/app/api/routes.py](backend/app/api/routes.py) |
-| MCP tools and their `instructions` prompt | [backend/app/api/mcp_tools.py](backend/app/api/mcp_tools.py) |
+| MCP tools | [backend/app/api/mcp_tools.py](backend/app/api/mcp_tools.py) |
+| The analyst prompt and candidate rows both analysts share | [backend/app/agent/briefing.py](backend/app/agent/briefing.py) |
 | Live orchestration, ops log, WebSocket frames | [backend/app/services/city.py](backend/app/services/city.py) |
 | Analyze Response pipeline (`open → capture → evaluate → finish/fail`) | [backend/app/services/scenarios.py](backend/app/services/scenarios.py) |
 | One candidate branch in a fresh SUMO process | [backend/app/simulation/branching.py](backend/app/simulation/branching.py) |

@@ -757,7 +757,8 @@ backend/app/
   simulation/metrics.py live + horizon TrafficMetrics
   smart_city/           provider boundary, mock, VSS MCP/replay clients, mapping and map matching
   agent/                AgentProvider: base, mock (9 rule-based plans, pruned by lessons);
-                        nemotron.py: the NIM chat client (its REST AgentProvider is a stub)
+                        nemotron.py: the NIM chat client and the REST AgentProvider;
+                        briefing.py: the analyst prompt and candidate rows both analysts share
   safety/validator.py   SafetyValidator (signal policies + corridors) and rule-based MVP limits
   websocket/hub.py      non-blocking WebSocket fan-out
   learning/episode.py   EpisodeService: demo scripts, the episode state machine, two-crash rule
@@ -945,7 +946,8 @@ the previous pass, plus five fixes found while reading the code. The single-cras
 | | `services/city.py` | `incident_listeners`, `reset_listeners`, `add_frame_observer`, `set_scripted_events`, `crash_command` (fills defaults the same way as Inject), `publish_episode`, and `episode` in `hello`. |
 | | `simulation/branching.py` | `apply_plan` also returns the vehicles diverted. |
 | | `agent/mock.py` | `_apply_lessons`: close lessons prune the plan set, looser ones reorder it. |
-| | `agent/nemotron.py`, `learning/embeddings.py` | OpenAI-compatible NIM chat and optional `/embeddings` clients over the existing `httpx2`. |
+| | `agent/nemotron.py`, `learning/embeddings.py` | OpenAI-compatible NIM chat and optional `/embeddings` clients over the existing `httpx2`. A failed proposal is retried once with the validation errors fed back. |
+| | `agent/briefing.py` (new) | The analyst prompt and candidate rows both analysts share, so the agent layer no longer imports them from `api/mcp_tools.py`. The REST provider gets `PLAN_DESIGN`, the tool-free half. |
 | | `api/mcp_tools.py`, `api/routes.py`, `models/*`, `providers.py`, `main.py`, `config.py` | The tools, endpoints, records, settings and wiring described above, including transfer controls and the learning report. |
 | UI | `components/EpisodePanel.tsx` (new), `plans/ResponsePlans.tsx`, `hooks/useCityStream.ts`, `lib/plans.ts`, `api/*`, `dev/replay.ts`, `styles.css` | The Autonomous agent panel, **Apply to live signals**, the applied/advisory footer, collapsed Learning report, Analyze Response disabled while an episode is working, and the types in sync. |
 | Config and docs | `.env.example`, `requirements.txt` (`httpx2`, already a dependency of `mcp`), `.gitignore` (`memory/`), `CLAUDE.md`, `docs/architecture.md`, `docs/specs/scenario-engine-mcp.md`, this README | The safety rule now names its one gated exception everywhere. |

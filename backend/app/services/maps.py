@@ -76,6 +76,13 @@ class MapManager:
             if current.city.scenario.id == map_id:
                 return current.city.geometry
 
+            # Stop the old episode service before the replacement is built. Its EpisodeService snapshots the
+            # next episode id from the memory directory at construction, so a review still writing EP-0003 would
+            # otherwise hand the same id to both graphs and one lesson would overwrite the other. The city keeps
+            # running until the replacement has started; only the autonomous half pauses here, and if the
+            # replacement then fails to start the operator keeps a live city with no armed agent.
+            await current.episodes.shutdown()
+
             settings = self._base_settings.model_copy(update={"scenario_dir": directory})
             replacement = build_services(settings, self._hub, self._mcp_server)
             replacement.episodes.arm_at_startup()

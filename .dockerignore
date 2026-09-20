@@ -1,5 +1,4 @@
-# The backend image needs backend/ and simulation/ only — keep everything else out.
-frontend
+# The image needs backend/, simulation/ and the frontend production bundle source.
 node_modules
 **/__pycache__
 **/*.pyc
@@ -11,9 +10,16 @@ venv
 .env
 .env.*
 !.env.example
+!.env.demo.example
 docs
 scripts
 *.md
 dist
 .vercel
 memory
+backend/.venv
+backend/.pytest_cache
+frontend/node_modules
+frontend/dist
+*.log
+.DS_Store

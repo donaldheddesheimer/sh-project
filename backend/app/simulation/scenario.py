@@ -35,17 +35,20 @@ class DemoCrash(BaseModel):
 
 
 class DemoScript(BaseModel):
-    """A scripted demo episode: the "real data" the live simulation plays back.
+    """A demo episode: scheduled crashes, or an armed operator-controlled collision.
 
     A crash before the end of warm-up has already happened when the console opens (it is injected while the
-    simulation warms up, so a queue is already forming); a later one happens while the demo runs. Two crashes
-    close together show the agent being superseded by one that sees both.
+    simulation warms up, so a queue is already forming); a later one happens while the demo runs. No crashes
+    means wait for the operator to inject one. Two crashes close together show the agent being superseded by one
+    that sees both.
     """
 
     id: str
     name: str
     description: str = ""
-    crashes: list[DemoCrash] = Field(min_length=1)
+    # An empty list is an operator-controlled demo: it arms autonomous response without scheduling a crash,
+    # so the presenter can start the episode with the console's Inject collision button.
+    crashes: list[DemoCrash] = Field(default_factory=list)
     monitor_s: float | None = Field(None, ge=60, description="Sim seconds the applied plan is watched (default: horizon)")
     speed: float | None = Field(None, gt=0, le=64, description="Live speed multiplier to run the demo at")
 

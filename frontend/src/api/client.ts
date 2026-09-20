@@ -63,6 +63,7 @@ export const api = {
   demoStart: (script: string, memoryMode: MemoryMode = 'use') =>
     request<Episode>('POST', '/api/demo/start', { script, memory_mode: memoryMode }),
   demoStop: () => request<DemoInfo>('POST', '/api/demo/stop'),
+  selectAnalyst: (analyst: string) => request<DemoInfo>('POST', '/api/demo/analyst', { analyst }),
   clearMemory: () => request<{ removed: number }>('DELETE', '/api/memory'),
   learningReport: () => request<LearningReport>('GET', '/api/learning/report'),
 }

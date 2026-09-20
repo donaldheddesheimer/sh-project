@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Deploy the backend to Google Cloud Run. Run from the repo root:
+# Deploy the full demo (React console + FastAPI + SUMO) to Google Cloud Run. Run from the repo root:
 #
-#   PROJECT_ID=my-gcp-project CORS_ORIGINS=https://my-app.vercel.app scripts/deploy-cloudrun.sh
+#   PROJECT_ID=my-gcp-project scripts/deploy-cloudrun.sh
 #
 # Prerequisites you do yourself, once:
 #   1. Install the gcloud CLI      https://cloud.google.com/sdk/docs/install
@@ -14,9 +14,9 @@
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID to your GCP project id}"
-SERVICE="${SERVICE:-traffic-ops-backend}"
+SERVICE="${SERVICE:-traffic-ops-demo}"
 REGION="${REGION:-us-central1}"
-# Comma-separated browser origins allowed to call the API, e.g. the Vercel URL.
+# Optional comma-separated origins for a separately hosted frontend. The bundled console is same-origin.
 CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:5173}"
 
 gcloud services enable \
@@ -25,8 +25,8 @@ gcloud services enable \
   artifactregistry.googleapis.com \
   --project "$PROJECT_ID"
 
-# Why these flags. The backend is a stateful, always-running digital twin, not a request
-# handler, so several Cloud Run defaults are wrong for it:
+# Why these flags. The demo contains a stateful, always-running digital twin, not only a
+# request handler, so several Cloud Run defaults are wrong for it:
 #
 #   --no-cpu-throttling   Required. By default Cloud Run throttles CPU to ~0 between
 #                         requests; the live SUMO thread would freeze whenever nobody was
@@ -43,9 +43,8 @@ gcloud services enable \
 #                         reconnects after a second, so a drop is invisible.
 #   --session-affinity    Belt and braces behind max-instances 1.
 #
-# CORS_ORIGINS is passed with gcloud's '^@^' delimiter syntax because the value itself
-# contains commas, which gcloud would otherwise read as its own separator. (SUMO_GUI is
-# already false in the image, so it is not repeated here.)
+# The alternate delimiter lets CORS_ORIGINS itself contain commas. Startup remains Mock so
+# deployment does not spend model credits; attach provider secrets after this path works.
 gcloud run deploy "$SERVICE" \
   --project "$PROJECT_ID" \
   --region "$REGION" \
@@ -60,19 +59,16 @@ gcloud run deploy "$SERVICE" \
   --concurrency 80 \
   --timeout 3600 \
   --session-affinity \
-  --set-env-vars "^@^CORS_ORIGINS=${CORS_ORIGINS}"
+  --set-env-vars "^@^CORS_ORIGINS=${CORS_ORIGINS}@SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland@SMART_CITY_PROVIDER=mock@AGENT_PROVIDER=mock@EPISODE_ANALYST=mock@SIM_SPEED=16@SCENARIO_WORKERS=4@MEMORY_DIR=/tmp/traffic-memory"
 
 URL="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
 cat <<MSG
 
 Deployed: $URL
+  console  $URL
   health   $URL/api/health
   API docs $URL/docs
   MCP      $URL/mcp
-
-Point the frontend at it (Vercel project -> Settings -> Environment Variables):
-  VITE_API_BASE_URL=$URL
-  VITE_WS_BASE_URL=${URL/https:/wss:}
 
 Billed while idle by design, on the order of \$0.30/hour at us-central1 list prices.
 When the demo is over, either of:

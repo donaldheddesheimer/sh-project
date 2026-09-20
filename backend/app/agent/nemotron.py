@@ -47,7 +47,9 @@ class NimClient:
         # Nemotron 3 model cards recommend temperature 1.0 / top_p 0.95 for every task, tool calling included.
         body: dict = {
             "model": self.model,
-            "messages": messages,
+            # ``is_error`` is an internal hint used by the Claude adapter; OpenAI-compatible tool messages
+            # represent failures in their content and reject that extra field.
+            "messages": [{k: v for k, v in message.items() if k != "is_error"} for message in messages],
             "temperature": 1.0,
             "top_p": 0.95,
             "max_tokens": max_tokens,

@@ -1,11 +1,11 @@
 """Analysts: the agent that answers an episode's incidents by testing plans in branches and picking one.
 
 ``MockAnalyst`` drives the ScenarioService pipeline with the rule-based mock (no model, no key).
-``NemotronAnalyst`` is an MCP client of this app's scenario tools (in-process by default, or MCP_URL over HTTP):
-NIM does not speak MCP, so the loop lists the tools, hands them to the OpenAI-compatible NIM endpoint and runs
-each tool call the model makes. Either returns the id of the analysis it completed. When AGENT_MAY_IMPLEMENT is on
-the analyst applies its recommendation through the implementor (the mock directly, Nemotron with the
-``implement_recommendation`` tool); the episode service implements it if Nemotron forgets.
+``ModelAnalyst`` is an MCP client of this app's scenario tools (in-process by default, or MCP_URL over HTTP).
+It lists the tools, hands them to Claude or Nemotron and runs each tool call the model makes. Either analyst
+returns the id of the analysis it completed. When AGENT_MAY_IMPLEMENT is on, the analyst applies its
+recommendation through the implementor (the mock directly, a model with ``implement_recommendation``); the
+episode service implements it if the model forgets.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from collections.abc import Callable
 from mcp import Client
 from mcp.server.mcpserver import MCPServer
 
-from app.agent.nemotron import NimClient
+from app.agent.chat import ChatClient
 from app.learning.implementor import Implementor
 from app.models.episode import MemoryMode
 from app.models.scenario import ScenarioStatus
@@ -70,11 +70,12 @@ Lessons in `experience` come from earlier episodes; use them to choose what to s
 instead of simulating."""
 
 
-class NemotronAnalyst:
-    name = "nemotron"
-
-    def __init__(self, nim: NimClient, server: MCPServer | str, timeout_s: float, may_implement: bool):
-        self._nim = nim
+class ModelAnalyst:
+    def __init__(
+        self, name: str, chat: ChatClient, server: MCPServer | str, timeout_s: float, may_implement: bool
+    ):
+        self.name = name
+        self._chat = chat
         self._server = server
         self._timeout_s = timeout_s
         self._may_implement = may_implement
@@ -102,7 +103,7 @@ class NemotronAnalyst:
             run_id: str | None = None
             submitted = implemented = False
             for _ in range(MAX_STEPS):
-                message = await self._nim.chat(messages, tools)
+                message = await self._chat.chat(messages, tools)
                 calls = message.get("tool_calls") or []
                 # keep the history small: no reasoning text, just what the model said and called
                 messages.append({"role": "assistant", "content": message.get("content") or "", **({"tool_calls": calls} if calls else {})})
@@ -122,11 +123,18 @@ class NemotronAnalyst:
                             on_run(run_id)
                     submitted |= ok and name == "submit_recommendation"
                     implemented |= ok and name == "implement_recommendation"
-                    messages.append({"role": "tool", "tool_call_id": call["id"], "content": text[:MAX_TOOL_RESULT_CHARS]})
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "content": text[:MAX_TOOL_RESULT_CHARS],
+                            "is_error": not ok,
+                        }
+                    )
                 if submitted and (implemented or not self._may_implement):
                     break
             if run_id is None or not submitted:
-                raise AnalystError(f"Nemotron did not submit a recommendation within {MAX_STEPS} turns")
+                raise AnalystError(f"{self.name} did not submit a recommendation within {MAX_STEPS} turns")
             return run_id
 
     async def _call(

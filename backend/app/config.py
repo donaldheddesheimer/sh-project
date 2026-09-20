@@ -49,15 +49,16 @@ class Settings(BaseSettings):
 
     # --- autonomous demo episode (app/learning/) ----------------------------
     demo_script: str | None = None  # arm this demos/*.json script at startup
-    episode_analyst: Literal["auto", "mock", "nemotron"] = "auto"  # auto: nemotron if NVIDIA_API_KEY + NEMOTRON_MODEL
+    # Startup default only; the operator can switch among configured providers from the demo panel.
+    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "auto"
     episode_monitor_s: float | None = None  # sim seconds a plan is watched (default: script monitor_s, else horizon)
-    episode_agent_timeout_s: float = 300.0  # wall-clock limit for one Nemotron analyst run
-    episode_fallback_to_mock: bool = True  # run the mock analyst when the Nemotron loop fails
+    episode_agent_timeout_s: float = 300.0  # wall-clock limit for one model-backed analyst run
+    episode_fallback_to_mock: bool = True  # use mock analyst/reviewer when Claude or Nemotron fails
     episode_pause_on_finish: bool = True  # pause the live simulation when an episode completes
     agent_may_implement: bool = True  # allow the MCP implement_recommendation tool (the operator path is separate)
     memory_enabled: bool = True  # store lessons and recall them for the next incident
     memory_dir: Path = REPO_ROOT / "memory"
-    mcp_url: str | None = None  # where the Nemotron loop reaches /mcp; unset = this app's MCP server, in-process
+    mcp_url: str | None = None  # where a model loop reaches /mcp; unset = this app's MCP server, in-process
 
     # --- memory and agents --------------------------------------------------
     embedding_model: str | None = None  # unset keeps recall structured-only
@@ -77,6 +78,12 @@ class Settings(BaseSettings):
     vss_default_severity: Literal["minor", "major", "critical"] = "major"
     nemotron_base_url: str = "https://integrate.api.nvidia.com/v1"  # NIM, OpenAI-compatible
     nemotron_model: str | None = None
+
+    # --- Anthropic integration (unused unless Claude is configured) --------
+    anthropic_api_key: SecretStr | None = None
+    anthropic_workspace_id: str | None = None  # required by organization-level keys; scoped keys omit it
+    claude_base_url: str = "https://api.anthropic.com"
+    claude_model: str | None = None
 
     # NoDecode: pydantic-settings json.loads() a list-typed env var inside the settings source,
     # before any validator runs, so a comma-separated CORS_ORIGINS would raise there rather than

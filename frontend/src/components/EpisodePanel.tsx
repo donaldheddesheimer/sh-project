@@ -257,8 +257,11 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
 
   const act = (name: string, fn: () => Promise<unknown>) => onRun(name, fn).then(() => setRefreshes((n) => n + 1))
   const script = picked || info?.armed || info?.scripts[0]?.id || ''
-  const description = info?.scripts.find((s) => s.id === script)?.description
+  const selectedScript = info?.scripts.find((s) => s.id === script)
+  const description = selectedScript?.description
+  const operatorControlled = selectedScript?.crashes_at.length === 0
   const memory = info?.memory
+  const analystLocked = !!episode && ['armed', 'detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status)
 
   return (
     <Section
@@ -296,7 +299,7 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
           title={description ?? 'Reset the city and play this script'}
           onClick={() => act('demo', () => api.demoStart(script, memoryMode))}
         >
-          <Icon name="play" size={12} /> Run
+          <Icon name="play" size={12} /> {operatorControlled ? 'Arm' : 'Run'}
         </button>
         <button
           className="btn btn-sm"
@@ -308,7 +311,30 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
         </button>
       </div>
       <div className="episode-meta">
-        Analyst <span className="mono">{info?.analyst ?? '—'}</span>
+        <label className="episode-provider">
+          Analyst
+          <select
+            value={info?.analyst ?? ''}
+            disabled={!!busy || analystLocked}
+            title={
+              analystLocked
+                ? 'Stop or finish the current episode before changing the analyst'
+                : 'Analyst and reviewer for the next episode'
+            }
+            onChange={(e) => void act('analyst', () => api.selectAnalyst(e.target.value))}
+          >
+            {info?.analysts.map((analyst) => (
+              <option key={analyst.id} value={analyst.id}>
+                {analyst.id === 'mock' ? 'Mock' : analyst.id === 'claude' ? 'Claude' : 'Nemotron'}
+              </option>
+            ))}
+          </select>
+        </label>
+        {info?.analyst_model && (
+          <span className="episode-model mono" title={info.analyst_model}>
+            {info.analyst_model}
+          </span>
+        )}
         <span className="sep">·</span>
         Memory{' '}
         {memory?.enabled ? `${memory.episodes} stored episode${memory.episodes === 1 ? '' : 's'}` : 'off'}
@@ -323,6 +349,11 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
           </button>
         )}
       </div>
+      {operatorControlled && episode?.status === 'armed' && (
+        <div className="episode-next-action" role="status">
+          Agent armed. Click <strong>Inject collision</strong> in the top bar when you are ready.
+        </div>
+      )}
       {episode ? (
         <EpisodeCard episode={episode} />
       ) : (

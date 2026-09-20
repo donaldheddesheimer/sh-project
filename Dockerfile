@@ -1,9 +1,17 @@
-# Backend container for the Traffic Operations Center (FastAPI + Eclipse SUMO).
-# Built for Google Cloud Run, but it runs on any container host (Fly.io, Render, a VM).
+# Single-container Traffic Operations Center: React console, FastAPI and Eclipse SUMO.
+# Built for Google Cloud Run, but it runs on any container host.
 #
 # The build context is the REPO ROOT: app.config.REPO_ROOT resolves SCENARIO_DIR and
 # MEMORY_DIR relative to the directory that holds backend/, so simulation/ must sit
 # alongside backend/ in the image.
+FROM node:24-bookworm-slim AS frontend-build
+
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 # Runtime shared libraries the SUMO binaries link against. SUMO itself ships inside the
@@ -37,8 +45,9 @@ RUN pip install --upgrade pip && pip install -r backend/requirements.txt
 # Application code plus the network/demand data it reads relative to REPO_ROOT.
 COPY backend ./backend
 COPY simulation ./simulation
+COPY --from=frontend-build /build/frontend/dist/ ./frontend/dist/
 # Lessons are written here at runtime. On Cloud Run the filesystem is ephemeral, so the
-# memory store resets when the instance restarts (see README, "Hosting the backend").
+# memory store resets when the instance restarts (see README, "Google Cloud Run demo").
 RUN mkdir -p ./memory
 
 WORKDIR /srv/backend

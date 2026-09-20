@@ -8,15 +8,16 @@ from itertools import count
 from mcp.server.mcpserver import MCPServer
 
 from app.agent.base import AgentProvider
+from app.agent.claude import ClaudeClient
 from app.agent.mock import MockAgentProvider
 from app.agent.nemotron import NemotronAgentProvider, NimClient
 from app.config import Settings
 from app.learning.embeddings import NimEmbedder
-from app.learning.analysts import MockAnalyst, NemotronAnalyst
-from app.learning.episode import Analyst, EpisodeService, Reviewer
+from app.learning.analysts import MockAnalyst, ModelAnalyst
+from app.learning.episode import AgentTeam, EpisodeService
 from app.learning.implementor import Implementor
 from app.learning.monitor import LiveMonitor
-from app.learning.reviewer import MockReviewer, NemotronReviewer
+from app.learning.reviewer import MockReviewer, ModelReviewer
 from app.learning.store import ExperienceStore
 from app.models.domain import Severity
 from app.models.api import EventLevel
@@ -83,25 +84,70 @@ def build_agent_provider(settings: Settings) -> AgentProvider:
     )
 
 
-def build_episode_agents(
+def build_episode_teams(
     settings: Settings, scenarios: ScenarioService, implementor: Implementor, mcp_server: MCPServer
-) -> tuple[Analyst, Analyst | None, Reviewer]:
-    """The analyst new episodes use, its fallback, and the reviewer.
+) -> tuple[dict[str, AgentTeam], str]:
+    """Configured analyst/reviewer teams and the startup selection.
 
-    EPISODE_ANALYST=auto picks Nemotron when NVIDIA_API_KEY and NEMOTRON_MODEL are set, the mock otherwise.
+    ``EPISODE_ANALYST`` is only the startup default; the operator may switch teams between episodes.
+    ``auto`` prefers Claude, then Nemotron, then the mock so configured NVIDIA credits are not spent by surprise.
     """
     mock = MockAnalyst(scenarios, implementor, settings.agent_may_implement)
-    api_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
+    mock_reviewer = MockReviewer()
+    teams = {"mock": AgentTeam(mock, None, mock_reviewer)}
+    fallback_analyst = mock if settings.episode_fallback_to_mock else None
+    fallback_reviewer = mock_reviewer if settings.episode_fallback_to_mock else None
+
+    claude_key = settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None
+    if claude_key and settings.claude_model:
+        claude = ClaudeClient(
+            settings.claude_base_url,
+            settings.claude_model,
+            claude_key,
+            settings.anthropic_workspace_id,
+        )
+        teams["claude"] = AgentTeam(
+            ModelAnalyst(
+                "claude",
+                claude,
+                settings.mcp_url or mcp_server,
+                settings.episode_agent_timeout_s,
+                settings.agent_may_implement,
+            ),
+            fallback_analyst,
+            ModelReviewer("claude", claude, fallback_reviewer),
+            settings.claude_model,
+        )
+
+    nvidia_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
+    if nvidia_key and settings.nemotron_model:
+        nim = NimClient(settings.nemotron_base_url, settings.nemotron_model, nvidia_key)
+        teams["nemotron"] = AgentTeam(
+            ModelAnalyst(
+                "nemotron",
+                nim,
+                settings.mcp_url or mcp_server,
+                settings.episode_agent_timeout_s,
+                settings.agent_may_implement,
+            ),
+            fallback_analyst,
+            ModelReviewer("nemotron", nim, fallback_reviewer),
+            settings.nemotron_model,
+        )
+
     wanted = settings.episode_analyst
-    if wanted == "mock" or (wanted == "auto" and not (api_key and settings.nemotron_model)):
-        return mock, None, MockReviewer()
-    if not settings.nemotron_model:
-        raise RuntimeError("EPISODE_ANALYST=nemotron requires NEMOTRON_MODEL (a NIM model id)")
-    nim = NimClient(settings.nemotron_base_url, settings.nemotron_model, api_key)
-    analyst = NemotronAnalyst(
-        nim, settings.mcp_url or mcp_server, settings.episode_agent_timeout_s, settings.agent_may_implement
-    )
-    return analyst, (mock if settings.episode_fallback_to_mock else None), NemotronReviewer(nim, MockReviewer())
+    if wanted == "auto":
+        selected = "claude" if "claude" in teams else "nemotron" if "nemotron" in teams else "mock"
+    else:
+        selected = wanted
+    if selected not in teams:
+        needed = (
+            "ANTHROPIC_API_KEY and CLAUDE_MODEL"
+            if selected == "claude"
+            else "NVIDIA_API_KEY and NEMOTRON_MODEL"
+        )
+        raise RuntimeError(f"EPISODE_ANALYST={selected} requires {needed}")
+    return teams, selected
 
 
 def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer) -> Services:
@@ -169,7 +215,7 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
         embedder=embedder,
         on_embedding_event=report_embedding_event,
     )
-    analyst, fallback, reviewer = build_episode_agents(settings, scenarios, implementor, mcp_server)
+    teams, selected_team = build_episode_teams(settings, scenarios, implementor, mcp_server)
     episodes = EpisodeService(
         settings=settings,
         city=city,
@@ -177,8 +223,7 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
         implementor=implementor,
         monitor=LiveMonitor(),
         store=memory,
-        analyst=analyst,
-        fallback=fallback,
-        reviewer=reviewer,
+        teams=teams,
+        selected_team=selected_team,
     )
     return Services(city=city, scenarios=scenarios, implementor=implementor, episodes=episodes, memory=memory)

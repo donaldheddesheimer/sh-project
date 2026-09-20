@@ -963,6 +963,7 @@ scripts/deploy-cloudrun.sh  deploy the full demo to Google Cloud Run with the fl
 vercel.json             optional static frontend-only deployment when the API is hosted separately
 docs/
   architecture.md       design notes, both pipelines stage by stage, MCP tools
+  mcp-curl.md           calling the MCP tools by hand with curl or PowerShell: headers, helpers, a walkthrough, refusals
   milestone-2/          the milestone-2 plan, per-feature specs and results (historical)
   milestone-4/          the milestone-4 plan: MASTER.md, one handoff per part, the step-0 contract
   specs/                scenario-engine-mcp.md (MCP tools spec + client snippet)
@@ -997,7 +998,7 @@ docs/
 | GET, DELETE | `/api/memory` | remembered episodes and the playbook; DELETE forgets them (a cold run) |
 | GET | `/api/learning/report` | durable episodes plus same-script warm-versus-control comparisons and the configured transfer status |
 | WS | `/ws/state` | `hello` (network geometry, state, events, trend, latest run, latest episode) then `state` / `status` / `event` / `scenario` / `episode` messages; a new `hello` announces a runtime map switch |
-| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md)) |
+| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md); [calling it with curl](docs/mcp-curl.md)) |
 
 ## Current limitations
 
@@ -1162,10 +1163,13 @@ the previous pass, plus five fixes found while reading the code. The single-cras
   mock smoke run documented under [Tests](#tests) predates this work. CLAUDE.md hard rule 1
   prohibits agents from running tests, scratch scripts or the app without a user request, so
   the existing suite was not re-run.
+- **MCP tools, run by hand on 2026-09-19** (mock providers, grid, no episode): a scratch Python
+  MCP client took a timing plan through `submit_recommendation` and `implement_recommendation`,
+  and the next analysis completed every branch instead of failing with `Unknown program`. The
+  tools were then driven with curl and PowerShell; [docs/mcp-curl.md](docs/mcp-curl.md) lists
+  what was and was not run.
 - **Next:** follow the single ordered [demo-readiness gate](#demo-readiness-gate). After the
-  stage path works, use an MCP client to exercise a timing-plan implementation followed by a
-  second analysis; every branch must load the changed signal program instead of failing with
-  `Unknown program`. Then exercise `crash-already` and `double-crash` before relying on those
+  stage path works, exercise `crash-already` and `double-crash` before relying on those
   non-stage paths.
 
 ### Where a reviewer should look hardest

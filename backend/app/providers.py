@@ -73,6 +73,21 @@ def build_smart_city_provider(settings: Settings, network: RoadNetwork) -> tuple
     return provider, [provider.observe]
 
 
+def check_keyed_deployment(settings: Settings) -> None:
+    """A deployment holding an NVIDIA key must name a model.
+
+    Both the REST agent and the episode teams depend on this, and whichever is built first
+    would otherwise report its own narrower complaint: `build_agent_provider` raises about a
+    missing model id, which reads like a typo rather than a deployment that cannot serve what
+    its key promises. Checked once, up front, so the message is the accurate one.
+    """
+    if settings.nvidia_api_key and settings.nvidia_api_key.get_secret_value() and not settings.nemotron_model:
+        raise RuntimeError(
+            "NVIDIA_API_KEY is set but NEMOTRON_MODEL is empty. A deployment holding a key is not "
+            "served by the deterministic local team; set a model id, or drop the key to run locally."
+        )
+
+
 def build_agent_provider(settings: Settings) -> AgentProvider:
     if settings.agent_provider == "mock":
         return MockAgentProvider()
@@ -101,12 +116,8 @@ def build_episode_teams(
     # The key is what suppresses the local team, but the team below is only built when a model id
     # is set too. Without this check that pair blanks the registry: no deterministic team because a
     # key is attached, no Nemotron team because it has no model, and a backend that cannot start.
-    # Refuse loudly instead of quietly handing a keyed deployment back to the local team.
-    if nvidia_key and not settings.nemotron_model:
-        raise RuntimeError(
-            "NVIDIA_API_KEY is set but NEMOTRON_MODEL is empty. A deployment holding a key is not "
-            "served by the deterministic local team; set a model id, or drop the key to run locally."
-        )
+    # `build_services` has already checked this; repeated here so a direct caller is covered too.
+    check_keyed_deployment(settings)
 
     if not nvidia_key:
         deterministic = MockAnalyst(scenarios, implementor, settings.agent_may_implement)
@@ -176,6 +187,7 @@ _branch_labels = count(1)
 
 
 def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer) -> Services:
+    check_keyed_deployment(settings)
     scenario = load_scenario(settings.scenario_dir)
     network = RoadNetwork(scenario)
 

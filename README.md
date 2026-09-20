@@ -525,7 +525,7 @@ Used the same way everywhere in this README, the code and the ops log.
 | Term | Meaning |
 |---|---|
 | **Crash** | The physical event scripted into the simulation (a `Disruption`). |
-| **Incident** | A Smart City provider's report (`INC-0001`): a mock-detected crash or an external VSS event. |
+| **Incident** | A Smart City provider's report (`INC-0001`): a crash the built-in `simulation` feed detected, or an external VSS event. |
 | **Analysis / run** | One `ScenarioRun` (`SCN-0001`): one snapshot, a baseline plus candidate plans, one recommendation. |
 | **Plan / candidate** | A `CandidatePlan` (signal timing changes, an EMS corridor, reroutes) before simulating; a `SimulationCandidate` once it has metrics. `baseline` is the do-nothing plan. |
 | **Implement** | Apply the recommended plan to the *live* simulation, as opposed to simulating it in a branch. Recorded with who did it: `agent`, `operator`, or `coordinator` (the episode service, when a model recommended but did not apply). |
@@ -811,7 +811,7 @@ The defaults a demo run depends on, all in `backend/app/config.py`:
 | `embedding_model` | unset | Optional semantic recall through an OpenAI-compatible embedding NIM; unset keeps recall structured-only |
 | `claude_model`, `nemotron_model` | `claude-haiku-4-5-20251001`, `nvidia/nemotron-3-super-120b-a12b` | The model each selectable team calls |
 | `mcp_url` | unset | Where a model analyst reaches the MCP tools; unset = this app's server, in-process |
-| `smart_city_provider`, `nvidia_va_mcp_url`, `vss_*` | mock, unset, defaults | The NVIDIA VSS input path, off unless the code selects it |
+| `smart_city_provider`, `nvidia_va_mcp_url`, `vss_*` | mock, unset, defaults | The NVIDIA VSS input path, off unless the code selects it. The built-in feed is selected by the value `mock` but reports itself as `simulation` in `/api/state` and the map caption: it is the twin's own ground truth standing in for VSS, never a fallback for a model that failed |
 
 An analysis automatically holds the live city at 1× so its snapshot stays inside the branch
 horizon; an operator time-scale change during a run overrides the hold and becomes the

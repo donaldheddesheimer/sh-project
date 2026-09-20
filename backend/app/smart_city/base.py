@@ -42,7 +42,7 @@ EventSink = Callable[[SmartCityEvent], Awaitable[None]]
 
 class SmartCityProvider(ABC):
     name: str
-    # A mock reports the twin's own disruptions. External providers set this false so CityService mirrors them.
+    # The simulation feed reports the twin's own disruptions. External providers set this false so CityService mirrors them.
     simulation_is_source: bool = True
 
     @abstractmethod

@@ -19,7 +19,8 @@ LANE_NAMES = {0: "right lane", 1: "left lane"}
 
 
 class MockSmartCityProvider(SmartCityProvider):
-    name = "mock"
+    # This is the real-time SUMO feed used by the demo, not an AI-provider fallback.
+    name = "simulation"
 
     def __init__(self, network: RoadNetwork, detection_delay_s: float = 4.0):
         self._network = network

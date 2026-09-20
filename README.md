@@ -142,8 +142,10 @@ cp .env.demo.example .env
 ```
 
 Only model credentials belong in this file, and they are the only names the app reads from
-the environment at all. The app starts on the credit-free Mock team; model ids, safe analysis
-behavior and every other default live in code ([Settings](#settings)). The **Analyst**
+the environment at all. Startup follows the keys: with `NVIDIA_API_KEY` set the app starts on
+Nemotron and stops offering the credit-free local team, and with no model key at all it starts on
+that local team. Model ids, safe analysis behavior and every other default live in code
+([Settings](#settings)). The **Analyst**
 selector switches the analyst and reviewer between runs without editing `.env` or restarting
 the backend:
 
@@ -196,8 +198,9 @@ gcloud secrets add-iam-policy-binding nvidia-api-key \
   --role="roles/secretmanager.secretAccessor"
 ```
 
-First deploy the credit-free mock to prove that the container, Oakland network, UI and
-WebSocket work. Run this from the repository root:
+First deploy with no model keys attached, to prove that the container, Oakland network, UI and
+WebSocket work; with no key the backend runs the credit-free local team. Run this from the
+repository root:
 
 ```bash
 gcloud run deploy traffic-ops-demo \
@@ -215,7 +218,9 @@ gcloud run deploy traffic-ops-demo \
   --no-cpu-throttling
 ```
 
-After the mock deployment works, attach both API keys without rebuilding:
+After that deployment works, attach the API keys without rebuilding. Attaching `NVIDIA_API_KEY`
+makes the backend Nemotron-first at its next start and withdraws the local team, so no deployed
+endpoint reports a `mock` provider:
 
 ```bash
 gcloud run services update traffic-ops-demo \
@@ -227,7 +232,8 @@ Add `--update-env-vars=ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID` when the Anthro
 organization-level. It is the only environment name besides the two keys that the app reads;
 `--set-env-vars` would replace the whole list, so use `--update-env-vars`.
 
-Reload the console and select Mock, Claude or Nemotron from the panel. Lessons live on the
+Reload the console. With the NVIDIA key attached the panel offers Nemotron, plus Claude when its
+key is set; the local team is no longer listed. Lessons live on the
 container's ephemeral filesystem, so they survive repeated runs on the warm instance but
 not a replacement or restart. Keep `--max=1`; multiple instances would create different
 live cities. Because the service is public, anyone with
@@ -794,7 +800,7 @@ The defaults a demo run depends on, all in `backend/app/config.py`:
 | `scenario_dir` | `downtown_grid` | The city at startup; the **Map** selector switches it |
 | `sim_speed` | 4 | Time scale at startup. An armed script sets its own; `operator-collision` asks for 16× |
 | `agent_provider` | `nemotron` | Who proposes plans for REST **Analyze Response**. Needs `NVIDIA_API_KEY`; without one the run fails visibly when called (no silent Mock fallback). Set `mock` in code for offline use. Not verified: Nemotron remains unrun |
-| `episode_analyst` | `mock` | Startup team, so a restart never spends model credits |
+| `episode_analyst` | `auto` | Startup team: Nemotron when `NVIDIA_API_KEY` is set, else Claude when its key is set, else the credit-free local team. A configured NVIDIA key also withdraws the local team from the selector, so a keyed deployment stays model-backed and reports no `mock` provider |
 | `episode_agent_timeout_s` | 420 | Wall-clock limit for one Claude or Nemotron analysis, plus a cap of 16 model turns |
 | `episode_fallback_to_mock`, `agent_fallback_to_mock` | false | A model failure fails the run instead of silently completing through Mock |
 | `episode_monitor_s` | unset | The script's `monitor_s`, else the analysis horizon (see [Monitor](#the-autonomous-self-learning-episode)) |

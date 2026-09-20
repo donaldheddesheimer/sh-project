@@ -41,8 +41,10 @@ gcloud services enable \
 #                         reconnects after a second, so a drop is invisible.
 #   --session-affinity    Belt and braces behind max-instances 1.
 #
-# Startup remains Mock so deployment does not spend model credits; attach API-key secrets
-# after this path works. Operational behavior uses code defaults and runtime controls.
+# This first deploy attaches no model key, so it costs no model credits and comes up on the
+# credit-free local team. Attach the key secrets after this path works: once NVIDIA_API_KEY is
+# present the backend starts Nemotron-first and stops offering the local team, so no deployed
+# endpoint reports a `mock` provider. Operational behavior uses code defaults and runtime controls.
 gcloud run deploy "$SERVICE" \
   --project "$PROJECT_ID" \
   --region "$REGION" \

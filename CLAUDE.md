@@ -45,7 +45,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Task | POSIX (`make`) | Windows |
 |---|---|---|
 | Set up | `make setup` | `python -m venv backend\.venv`, then `backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt`, then `npm --prefix frontend install` |
-| Backend tests (24, real SUMO; the 5 demo-readiness ones passed once, run by the user's request). **Reference only: never run unasked (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
+| Backend tests (24, real SUMO; for what has and has not been run see README "Tests"). **Reference only: never run unasked (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
 | One test. **Reference only: never run unasked (Hard rules)** | `cd backend && .venv/bin/pytest -q -k <name>` | `.venv\Scripts\python.exe -m pytest -q -k <name>` (in `backend`) |
 | Backend on :8000 | `make backend` | `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` |
 | Frontend on :5173 | `make frontend` | `npm --prefix frontend run dev` |
@@ -197,7 +197,9 @@ venv directly (this is what works in PowerShell or Git Bash):
 - **Tests.** Never run them, and write them only when asked (Hard rules). The team chose demo
   over coverage (recorded in `docs/milestone-2/MASTER.md`); the five demo-readiness tests
   (`test_demo_setup.py`, `test_demo_smoke.py`, one in `test_simulation.py`; README "Tests")
-  passed on one run the user asked for. Verify by reading the code and report what was not run. Known gaps:
+  passed on one run the user asked for, which predates the async `ExperienceStore`:
+  `test_memory_store_round_trip` was updated for it and has not been re-run.
+  Verify by reading the code and report what was not run. Known gaps:
   pre-emption, reroute, the MCP tools, Nemotron, warm recall and the two-crash rule have no
   tests; `ScenarioService` and the episode are covered only by the two smoke tests. The suite
   is in `backend/tests/`; the `make_sim` fixture in `tests/conftest.py` starts real SUMO

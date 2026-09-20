@@ -89,6 +89,11 @@ do not run tests unasked (CLAUDE.md hard rule 1). The 19 older ones were not re-
 new test is written so that a failure means a bug in the app and not in the test; read the
 failure message before touching the test.
 
+That run predates this branch. `ExperienceStore.save` and `.recall` are async here, so
+`test_memory_store_round_trip` was updated to `asyncio.run` them and to expect the provisional
+ranking discount its fixture now earns (a diversion lesson with no response evidence, see
+[Memory](#the-autonomous-self-learning-episode)). **The updated test has not been run.**
+
 | Test | Needs SUMO | What it shows |
 |---|---|---|
 | `test_demo_setup.py::test_demo_scripts_name_real_segments_and_lanes` | no | every grid demo script names a real segment and valid lanes, so `POST /api/demo/start` can arm it |

@@ -1031,7 +1031,7 @@ docs/
   - *Branch start-up may still serialise on Windows.* Each `traci.connect` attempt runs under
     the module lock; if a refused loopback connect takes about a second there, parallel
     branches still wait on each other and the ~1 s saving shrinks. Not timed.
-- **A vehicle SUMO is teleporting is not counted while it is in transfer.** SUMO lifts a
+- **A vehicle that SUMO is teleporting is not counted while it is in transfer.** SUMO lifts a
   vehicle that has been stuck longer than `--time-to-teleport` (300 s in both scenarios) out
   of its lane and re-inserts it downstream; in between it is on no lane, so the twin leaves it
   out of the live metrics, the map and the vehicle count until it comes back. A long incident

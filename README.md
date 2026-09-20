@@ -792,7 +792,7 @@ The defaults a demo run depends on, all in `backend/app/config.py`:
 | Default | Value | Meaning |
 |---|---|---|
 | `scenario_dir` | `downtown_grid` | The city at startup; the **Map** selector switches it |
-| `sim_speed` | 4 | Time scale at startup. An armed script sets its own (the stage scripts ask for 16×) |
+| `sim_speed` | 4 | Time scale at startup. An armed script sets its own; `operator-collision` asks for 16× |
 | `episode_analyst` | `mock` | Startup team, so a restart never spends model credits |
 | `episode_agent_timeout_s` | 420 | Wall-clock limit for one Claude or Nemotron analysis, plus a cap of 16 model turns |
 | `episode_fallback_to_mock`, `agent_fallback_to_mock` | false | A model failure fails the run instead of silently completing through Mock |

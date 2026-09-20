@@ -309,8 +309,10 @@ it overlays the map and can be opened from the rail and closed from its header. 
 scrolls horizontally at that size to keep every command reachable. The palette uses slate
 surfaces, a restrained blue interaction accent and state-only alert colors; it does not use
 proprietary design assets. `frontend/src/styles.css` holds base component styles and
-`frontend/src/console.css` holds the workspace presentation and responsive layout. This
-redesign has not been run, built or visually verified in this change.
+`frontend/src/console.css` holds the workspace presentation and responsive layout. The
+Oakland desktop view was visually inspected with a live collision and dispatched EMS;
+see the [demo screenshot](docs/screenshots/map-first-demo-oakland.png). Automated checks
+were not run for this change.
 
 ## Second city: Oakland, Pittsburgh
 
@@ -968,6 +970,7 @@ frontend/src/
   dev/                  ?fixture=scenario replay of a recorded run
 frontend/public/        static Oakland OSM building, park and water context GeoJSON
 frontend/scripts/       reproducible Overpass download for the Oakland context asset
+docs/screenshots/        Oakland map-first console demo capture
 simulation/
   networks/grid3x3/     build_network.py → grid3x3.net.xml (named streets, 9 signals)
   networks/pittsburgh_oakland/  OSM extract (ODbL) + build_network.py → oakland.net.xml (33 signals)

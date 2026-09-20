@@ -177,6 +177,11 @@ WebSockets, but they remain subject to the service request timeout; this deploym
 60-minute maximum and a reconnecting frontend. The service is limited to one instance
 because the live SUMO twin and episode state are process-local.
 
+`/mcp` is mounted as an externally served endpoint, so the Cloud Run `*.run.app` hostname
+(or a configured custom-domain hostname) is accepted rather than being rejected by the MCP
+SDK's loopback-only Host check. It remains subject to Cloud Run's HTTPS, ingress and IAM
+configuration; the sample deployment below is intentionally public for the demo.
+
 Install and authenticate the Google Cloud CLI, then replace the uppercase placeholders:
 
 ```bash
@@ -1020,7 +1025,7 @@ docs/
 | GET, DELETE | `/api/memory` | remembered episodes and the playbook; DELETE forgets them (a cold run) |
 | GET | `/api/learning/report` | durable episodes plus same-script warm-versus-control comparisons and the configured transfer status |
 | WS | `/ws/state` | `hello` (network geometry, state, events, trend, latest run, latest episode) then `state` / `status` / `event` / `scenario` / `episode` messages; a new `hello` announces a runtime map switch |
-| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md); [calling it with curl](docs/mcp-curl.md)) |
+| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md); [calling it with curl](docs/mcp-curl.md)). Model-driven analysts keep each tool's complete JSON result, including larger city contexts. |
 
 ## Current limitations
 

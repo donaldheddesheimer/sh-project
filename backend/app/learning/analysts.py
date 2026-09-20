@@ -26,7 +26,6 @@ from app.services.scenarios import ScenarioService
 OnRun = Callable[[str], None]  # told the analysis run id as soon as it exists
 
 MAX_STEPS = 16  # model turns per analysis
-MAX_TOOL_RESULT_CHARS = 16000
 TOOL_READ_TIMEOUT_S = 180.0  # simulate_plans blocks while its branches run
 TOOLS = {
     "start_analysis",
@@ -104,10 +103,23 @@ class ModelAnalyst:
             submitted = implemented = False
             for _ in range(MAX_STEPS):
                 message = await self._chat.chat(messages, tools)
-                calls = message.get("tool_calls") or []
-                # keep the history small: no reasoning text, just what the model said and called
-                messages.append({"role": "assistant", "content": message.get("content") or "", **({"tool_calls": calls} if calls else {})})
+                if not isinstance(message, dict):
+                    raise AnalystError(f"{self.name} returned an invalid chat response")
+                content = message.get("content")
+                reply_errors: list[str] = []
+                if not isinstance(content, str):
+                    if content is not None:
+                        reply_errors.append("assistant content was not text")
+                    content = ""
+                calls, call_errors = self._tool_calls(message.get("tool_calls"))
+                reply_errors.extend(call_errors)
+                # Keep the history small and syntactically valid for the next model turn. A malformed tool call
+                # must not be replayed to the model provider, where it can make an otherwise recoverable reply fail.
+                messages.append({"role": "assistant", "content": content, **({"tool_calls": calls} if calls else {})})
                 if not calls:
+                    if reply_errors:
+                        messages.append({"role": "user", "content": self._retry_message(reply_errors)})
+                        continue
                     if submitted:
                         break  # done; the episode service implements if the model did not
                     messages.append({"role": "user", "content": "Continue with the tools until you have called submit_recommendation."})
@@ -127,31 +139,105 @@ class ModelAnalyst:
                         {
                             "role": "tool",
                             "tool_call_id": call["id"],
-                            "content": text[:MAX_TOOL_RESULT_CHARS],
+                            # Tool results are JSON. Do not slice them to an arbitrary character limit: a partial
+                            # object makes the next model turn see invalid JSON, especially for start_analysis on
+                            # a larger network. MCP payloads are deliberately compact at their source instead.
+                            "content": text,
                             "is_error": not ok,
                         }
                     )
+                if reply_errors:
+                    messages.append({"role": "user", "content": self._retry_message(reply_errors)})
                 if submitted and (implemented or not self._may_implement):
                     break
             if run_id is None or not submitted:
                 raise AnalystError(f"{self.name} did not submit a recommendation within {MAX_STEPS} turns")
             return run_id
 
+    def _tool_calls(self, raw_calls: object) -> tuple[list[dict], list[str]]:
+        """Keep only provider-safe calls, so one malformed model reply remains recoverable."""
+        if raw_calls is None:
+            return [], []
+        if not isinstance(raw_calls, list):
+            return [], ["tool_calls was not a list"]
+        allowed = TOOLS if self._may_implement else TOOLS - {"implement_recommendation"}
+        calls: list[dict] = []
+        errors: list[str] = []
+        call_ids: set[str] = set()
+        for index, call in enumerate(raw_calls, start=1):
+            if not isinstance(call, dict):
+                errors.append(f"tool call {index} was not an object")
+                continue
+            call_id = call.get("id")
+            if not isinstance(call_id, str) or not call_id:
+                errors.append(f"tool call {index} had no string id")
+                continue
+            if call_id in call_ids:
+                errors.append(f"tool call {index} repeated id {call_id!r}")
+                continue
+            function = call.get("function")
+            if not isinstance(function, dict):
+                errors.append(f"tool call {index} had no function object")
+                continue
+            name = function.get("name")
+            if not isinstance(name, str) or name not in allowed:
+                errors.append(f"tool call {index} named an unavailable tool")
+                continue
+            raw_arguments = function.get("arguments")
+            if raw_arguments is None:
+                arguments = "{}"
+            elif isinstance(raw_arguments, str):
+                arguments = raw_arguments
+            else:
+                try:
+                    arguments = json.dumps(raw_arguments, separators=(",", ":"))
+                except (TypeError, ValueError):
+                    errors.append(f"tool call {index} had unserializable arguments")
+                    continue
+            call_ids.add(call_id)
+            calls.append({"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}})
+        return calls, errors
+
+    @staticmethod
+    def _retry_message(errors: list[str]) -> str:
+        detail = "; ".join(errors[:4])
+        return (
+            f"Some requested tool calls were not run: {detail}. "
+            "Call one of the listed tools with a string id, function name and JSON-object arguments."
+        )
+
     async def _call(
-        self, client: Client, name: str, raw_args: str | None, incident_ids: list[str], memory_mode: MemoryMode
+        self, client: Client, name: str, raw_args: object, incident_ids: list[str], memory_mode: MemoryMode
     ) -> tuple[str, bool]:
         """Run one tool call; returns the result text and whether it succeeded (tool errors go back to the model)."""
-        try:
-            args = raw_args if isinstance(raw_args, dict) else json.loads(raw_args or "{}")
-        except json.JSONDecodeError as exc:
-            return f"arguments are not valid JSON: {exc}", False
-        if name not in TOOLS or not isinstance(args, dict):
+        if not isinstance(name, str) or name not in TOOLS:
+            return f"unknown tool {name}", False
+        if isinstance(raw_args, dict):
+            args = raw_args
+        elif raw_args is None:
+            args = {}
+        elif not isinstance(raw_args, str):
+            return "arguments are not valid JSON: expected an object or JSON string", False
+        else:
+            try:
+                args = json.loads(raw_args)
+            except (json.JSONDecodeError, TypeError) as exc:
+                return f"arguments are not valid JSON: {exc}", False
+        if not isinstance(args, dict):
             return f"unknown tool {name} or arguments that are not an object", False
         if name == "start_analysis":  # the episode decides which incidents are solved together
             args.update(incident_ids=incident_ids, agent=self.name, memory_mode=memory_mode)
-        result = await client.call_tool(name, args)
-        text = "\n".join(getattr(c, "text", "") for c in result.content)
-        return text, not result.is_error
+        try:
+            result = await client.call_tool(name, args)
+            text = "\n".join(text for c in result.content if isinstance(text := getattr(c, "text", None), str))
+            if not text:
+                raise ValueError("tool returned no text content")
+            return text, not result.is_error
+        except asyncio.CancelledError:
+            raise  # a superseded or stopped episode must still cancel its outstanding MCP request
+        except Exception as exc:
+            detail = " ".join(str(exc).split())[:500] or type(exc).__name__
+            return f"{name} failed before returning a result: {type(exc).__name__}: {detail}", False
 
 
 def _field(text: str, key: str) -> str | None:

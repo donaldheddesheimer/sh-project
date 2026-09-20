@@ -38,8 +38,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(router)
     app.include_router(ws_router)
-    # MCP tools for agents at /mcp (streamable HTTP; stateless, so no session affinity is needed)
-    app.router.routes.extend(mcp.streamable_http_app(stateless_http=True, json_response=True).routes)
+    # MCP tools for agents at /mcp (streamable HTTP; stateless, so no session affinity is needed).
+    # This is mounted behind FastAPI and Cloud Run, not bound directly to a loopback socket. Tell the SDK that so
+    # it does not apply its loopback-only DNS-rebinding Host allowlist to the public Cloud Run hostname.
+    app.router.routes.extend(
+        mcp.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True).routes
+    )
     # The Cloud Run image builds the console into frontend/dist. Keep local development unchanged: without that
     # directory, Vite still serves the UI and proxies /api and /ws to this app.
     frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

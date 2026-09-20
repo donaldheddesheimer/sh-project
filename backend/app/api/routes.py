@@ -219,13 +219,16 @@ async def demo(episodes: Episodes) -> DemoInfo:
 
 @router.post("/demo/start", response_model=Episode, status_code=202)
 async def demo_start(episodes: Episodes, city: City, request: DemoStartRequest) -> Episode:
-    """Reset the city and arm a demo script; detected crashes then start autonomous episodes."""
+    """Arm autonomous response: reset the city, then let detected crashes start episodes.
+
+    An omitted ``script`` arms AUTONOMOUS_SCRIPT, the console's one-button path.
+    """
     if not city.smart_city.simulation_is_source:
         raise HTTPException(409, "demo scripts require the mock Smart City provider; VSS incidents are operator-analyzed")
     try:
         return await episodes.start_demo(request.script, request.memory_mode)
-    except KeyError as exc:
-        raise HTTPException(404, f"unknown demo script {request.script}") from exc
+    except KeyError as exc:  # exc carries the resolved id, which the request may have left out
+        raise HTTPException(404, f"unknown demo script {exc.args[0]}") from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

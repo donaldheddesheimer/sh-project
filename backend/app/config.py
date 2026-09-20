@@ -64,6 +64,9 @@ class Settings(BaseSettings):
 
     # --- autonomous demo episode (app/learning/) ----------------------------
     demo_script: str | None = None  # arm this demos/*.json script at startup
+    # What the console's single "Arm agent" button arms: a script with no scheduled crash, so the
+    # agent responds to whatever incident the operator injects. Other scripts stay an API-only path.
+    autonomous_script: str = "operator-collision"
     # Select Nemotron first when its API key is present; otherwise Claude, then the deterministic local team.
     episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "auto"
     episode_monitor_s: float | None = None  # sim seconds a plan is watched (default: script monitor_s, else horizon)

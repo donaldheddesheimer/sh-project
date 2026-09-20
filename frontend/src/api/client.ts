@@ -4,7 +4,6 @@ import type {
   Episode,
   Implementation,
   LearningReport,
-  MemoryMode,
   NetworkGeometry,
   ScenarioRun,
   ScenarioRunRequest,
@@ -61,10 +60,10 @@ export const api = {
   listScenarios: () => request<ScenarioRun[]>('GET', '/api/scenarios'),
   implement: (id: string) => request<Implementation>('POST', `/api/scenarios/${encodeURIComponent(id)}/implement`),
   demo: () => request<DemoInfo>('GET', '/api/demo'),
-  demoStart: (script: string, memoryMode: MemoryMode = 'use') =>
-    request<Episode>('POST', '/api/demo/start', { script, memory_mode: memoryMode }),
-  demoStop: () => request<DemoInfo>('POST', '/api/demo/stop'),
-  selectAnalyst: (analyst: string) => request<DemoInfo>('POST', '/api/demo/analyst', { analyst }),
+  // The console has one Arm agent button, so it sends no script and no memory mode: the backend arms
+  // AUTONOMOUS_SCRIPT with memory on. Other scripts and the no-recall control run are an API-only path.
+  armAgent: () => request<Episode>('POST', '/api/demo/start', {}),
+  disarmAgent: () => request<DemoInfo>('POST', '/api/demo/stop'),
   clearMemory: () => request<{ removed: number }>('DELETE', '/api/memory'),
   learningReport: () => request<LearningReport>('GET', '/api/learning/report'),
 }

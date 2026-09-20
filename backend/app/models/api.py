@@ -103,7 +103,13 @@ class MapSelectionRequest(BaseModel):
 
 
 class DemoStartRequest(BaseModel):
-    script: str = Field(description="A demo script id from simulation/scenarios/<scenario>/demos/*.json")
+    script: str | None = Field(
+        None,
+        description=(
+            "A demo script id from simulation/scenarios/<scenario>/demos/*.json. "
+            "Omit it to arm AUTONOMOUS_SCRIPT, which is what the console's Arm agent button sends."
+        ),
+    )
     memory_mode: MemoryMode = Field("use", description="use recalled lessons, or ignore them for a control run")
 
 

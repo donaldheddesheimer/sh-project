@@ -73,12 +73,13 @@ findings, and a recommendation that is still advisory until someone chooses to a
    response against doing nothing.
 5. Apply the recommendation, dispatch EMS, and watch the outcome unfold on the live map.
 
-Want the system to run the whole loop? Open **Agent**, arm the `operator-collision` episode,
-then inject the crash. It will detect, analyze, implement, monitor, review, and remember the
-result without changing the safety boundary.
+Want the system to run the whole loop? Press **Arm agent** in the command bar, then inject the
+crash. That one button is the entire autonomous path: it resets the city and hands the next
+reported incident to the configured analyst with memory on, which detects, analyzes,
+implements, monitors, reviews, and remembers the result without changing the safety boundary.
 
-The full [demo guide](docs/demo-guide.md) includes presenter cues, expected screen states,
-and the credit-conscious order for Mock, Claude, and Nemotron.
+The full [demo guide](docs/demo-guide.md) includes presenter cues, expected screen states, and
+which analyst runs for a given set of credentials.
 
 ## Why it is different
 
@@ -122,8 +123,11 @@ run. To enable a model-backed analyst:
 cp .env.demo.example .env
 ```
 
-Add an Anthropic or NVIDIA key, restart, and choose the provider from the **Agent** workspace.
-See [configuration](docs/configuration.md) for exact variables and Windows commands.
+Add an Anthropic or NVIDIA key and restart. The analyst is chosen from the credentials
+present, not in the console: an NVIDIA key makes every episode Nemotron. The **Agent**
+workspace prints the analyst and both model ids. See
+[configuration](docs/configuration.md#analyst-selection) for exact variables and Windows
+commands.
 
 ## Architecture
 

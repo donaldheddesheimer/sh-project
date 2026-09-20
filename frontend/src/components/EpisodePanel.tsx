@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { DemoInfo, Episode, EpisodeStatus, LearningReport, MemoryMode, Outcome } from '../api/types'
+import type { DemoInfo, Episode, EpisodeStatus, LearningReport, Outcome } from '../api/types'
 import { clock, duration } from '../lib/format'
 import { Icon, type IconName } from './Icon'
 import { Section } from './Section'
 
 interface Props {
   episode: Episode | null
+  demo: DemoInfo | null
   busy: string | null
-  onRun: (name: string, fn: () => Promise<unknown>) => Promise<void>
+  onClearMemory: () => void
 }
 
 // The happy path of an episode (EpisodeStatus in backend/app/models/episode.py); the other statuses end it early.
@@ -227,134 +228,63 @@ function Learning({ report }: { report: LearningReport | null }) {
   )
 }
 
-/** Autonomous, self-learning episodes: pick a demo script, watch the agent respond, see what it learned. */
-export function EpisodePanel({ episode, busy, onRun }: Props) {
-  const [info, setInfo] = useState<DemoInfo | null>(null)
-  const [refreshes, setRefreshes] = useState(0)
-  const [picked, setPicked] = useState('')
-  const [memoryMode, setMemoryMode] = useState<MemoryMode>('use')
+/**
+ * Readout for the autonomous episode. It has no controls: the whole loop is the one Arm agent button
+ * in the top bar, which arms AUTONOMOUS_SCRIPT with the configured analyst and memory on. What is left
+ * here is what the agent did — the step flow, the applied plan, the scorecard, the lesson and the
+ * learning table. `clear` stays because a cold first episode is a demo state, not a mode.
+ */
+export function EpisodePanel({ episode, demo, busy, onClearMemory }: Props) {
   const [report, setReport] = useState<LearningReport | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    // Retry like App's network loader: with no episode yet nothing else triggers a fetch, so a request that
-    // loses the startup race would leave the script list empty and Run disabled until a reload.
-    const load = () =>
-      api
-        .demo()
-        .then((next) => !cancelled && setInfo(next))
-        .catch(() => {
-          if (!cancelled) timer = setTimeout(load, 1500)
-        })
-    load()
     api.learningReport().then((next) => !cancelled && setReport(next)).catch(() => undefined)
     return () => {
       cancelled = true
-      clearTimeout(timer)
     }
-  }, [episode?.id, episode?.status, refreshes])
+  }, [episode?.id, episode?.status])
 
-  const act = (name: string, fn: () => Promise<unknown>) => onRun(name, fn).then(() => setRefreshes((n) => n + 1))
-  const script = picked || info?.armed || info?.scripts[0]?.id || ''
-  const selectedScript = info?.scripts.find((s) => s.id === script)
-  const description = selectedScript?.description
-  const operatorControlled = selectedScript?.crashes_at.length === 0
-  const memory = info?.memory
-  const analystLocked = !!episode && ['armed', 'detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status)
+  const armedId = demo?.armed ?? null
+  const armedScript = demo?.scripts.find((s) => s.id === armedId) ?? null
+  // No scheduled crash: the agent is waiting for the operator to inject one.
+  const awaitingOperator = armedScript != null && armedScript.crashes_at.length === 0
+  const memory = demo?.memory
 
   return (
     <Section
       key={episode?.id ?? 'idle'}
       title="Autonomous agent"
       icon="bolt"
-      meta={info?.armed ? <span className="tag tag-primary">armed</span> : 'off'}
+      meta={demo?.armed ? <span className="tag tag-primary">armed</span> : 'off'}
       defaultOpen
     >
-      <div className="episode-controls">
-        <select
-          className="episode-select"
-          value={script}
-          aria-label="Demo script"
-          onChange={(e) => setPicked(e.target.value)}
-        >
-          {info?.scripts.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-        <select
-          className="episode-memory-mode"
-          value={memoryMode}
-          aria-label="Memory mode"
-          onChange={(e) => setMemoryMode(e.target.value as MemoryMode)}
-        >
-          <option value="use">Use memory</option>
-          <option value="ignore">Ignore memory</option>
-        </select>
-        <button
-          className="btn btn-sm btn-primary"
-          disabled={!!busy || !script}
-          title={description ?? 'Reset the city and play this script'}
-          onClick={() => act('demo', () => api.demoStart(script, memoryMode))}
-        >
-          <Icon name="play" size={12} /> {operatorControlled ? 'Arm' : 'Run'}
-        </button>
-        <button
-          className="btn btn-sm"
-          disabled={!!busy || !info?.armed}
-          title="Disarm: no more scripted crashes and no autonomous response"
-          onClick={() => act('demo', api.demoStop)}
-        >
-          Stop
-        </button>
-      </div>
       <div className="episode-meta">
-        <label className="episode-provider">
-          Analyst
-          <select
-            value={info?.analyst ?? ''}
-            disabled={!!busy || analystLocked}
-            title={
-              analystLocked
-                ? 'Stop or finish the current episode before changing the analyst'
-                : 'Analyst and reviewer for the next episode'
-            }
-            onChange={(e) => void act('analyst', () => api.selectAnalyst(e.target.value))}
-          >
-            {info?.analysts.map((analyst) => (
-              <option key={analyst.id} value={analyst.id}>
-                {analyst.id === 'mock' ? 'Mock' : analyst.id === 'claude' ? 'Claude' : 'Nemotron'}
-              </option>
-            ))}
-          </select>
-        </label>
-        {info?.analyst_model && (
-          <span className="episode-model mono" title={info.analyst_model}>
-            analyst: {info.analyst_model}
+        <span className="episode-provider">Analyst {demo?.analyst === 'mock' ? 'Mock' : (demo?.analyst ?? '—')}</span>
+        {demo?.analyst_model && (
+          <span className="episode-model mono" title={demo.analyst_model}>
+            analyst: {demo.analyst_model}
           </span>
         )}
-        {info?.reviewer_model && (
-          <span className="episode-model mono" title={info.reviewer_model}>
-            reviewer: {info.reviewer_model}
+        {demo?.reviewer_model && (
+          <span className="episode-model mono" title={demo.reviewer_model}>
+            reviewer: {demo.reviewer_model}
           </span>
         )}
         <span className="sep">·</span>
-        Memory{' '}
-        {memory?.enabled ? `${memory.episodes} stored episode${memory.episodes === 1 ? '' : 's'}` : 'off'}
+        Memory {memory?.enabled ? `on · ${memory.episodes} stored episode${memory.episodes === 1 ? '' : 's'}` : 'off'}
         {memory?.enabled && memory.episodes > 0 && (
           <button
             className="episode-link"
             disabled={!!busy}
             title="Forget every lesson (a cold run)"
-            onClick={() => act('memory', api.clearMemory)}
+            onClick={onClearMemory}
           >
             clear
           </button>
         )}
       </div>
-      {operatorControlled && episode?.status === 'armed' && (
+      {awaitingOperator && episode?.status === 'armed' && (
         <div className="episode-next-action" role="status">
           Agent armed. Click <strong>Inject collision</strong> in the top bar when you are ready.
         </div>
@@ -363,8 +293,8 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
         <EpisodeCard episode={episode} />
       ) : (
         <p className="episode-last">
-          Run a script: a crash plays on the live twin, the agent tests plans in branches, applies the best one,
-          watches the result and stores a lesson for the next incident.
+          Press <strong>Arm agent</strong> in the top bar, then inject a collision: the agent tests plans in
+          branches, applies the best one, watches the result and stores a lesson for the next incident.
         </p>
       )}
       <Learning report={report} />

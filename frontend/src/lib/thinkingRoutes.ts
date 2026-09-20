@@ -53,7 +53,10 @@ const cache = new Map<string, ThinkingRoute[]>()
  * it; callers then show the crash pulse alone.
  */
 export function buildThinkingRoutes(network: NetworkGeometry, incident: ThinkingIncident): ThinkingRoute[] {
-  const key = `${network.id}|${incident.segmentId}|${Math.round(incident.positionM ?? -1)}`
+  // The point is part of the key, not just `positionM`: a report can carry a segment and a
+  // coordinate but no position, and two crashes on one segment still get different routes.
+  const at = incident.positionM == null ? 'na' : Math.round(incident.positionM)
+  const key = `${network.id}|${incident.segmentId}|${at}|${incident.lon.toFixed(5)},${incident.lat.toFixed(5)}`
   const hit = cache.get(key)
   if (hit) return hit
   const routes = compute(network, incident)
@@ -230,8 +233,10 @@ function emsPath(
     .sort((a, b) => a.away - b.away)[0]?.station
   if (!station) return null
   // The crash segment is out of the graph, so the search stops at its upstream junction and the
-  // last leg is that segment cut at the crash.
-  const tail = truncate(blocked.coordinates, incident.positionM, cosLat)
+  // last leg is that segment cut at the crash. Without a reported position the crash point
+  // still says where on the segment to cut, so the approach never overshoots the crash.
+  const cut = incident.positionM ?? alongPolyline(blocked.coordinates, [incident.lon, incident.lat], cosLat)
+  const tail = truncate(blocked.coordinates, cut, cosLat)
   const from = network.segments.find((s) => s.id === station.segment_id)
   if (!from) return null
   if (from.id === blocked.id) return tail
@@ -260,9 +265,40 @@ function dedupe(coords: [number, number][]): [number, number][] {
   return out
 }
 
+/**
+ * Metres along a polyline to the point on it nearest `point`. Recovers a crash position from a
+ * report that map-matched to a segment but carried no `position_m`. Distances are compared in
+ * the same flattened space the rest of this file uses, so longitude is not over-weighted.
+ */
+function alongPolyline(coords: [number, number][], point: [number, number], cosLat: number): number {
+  const px = point[0] * cosLat
+  const py = point[1]
+  let walked = 0
+  let bestAway = Infinity
+  let bestAt = 0
+  for (let i = 1; i < coords.length; i++) {
+    const ax = coords[i - 1][0] * cosLat
+    const ay = coords[i - 1][1]
+    const dx = coords[i][0] * cosLat - ax
+    const dy = coords[i][1] - ay
+    const span = Math.hypot(dx, dy)
+    if (span > 0) {
+      const t = Math.min(Math.max(((px - ax) * dx + (py - ay) * dy) / (span * span), 0), 1)
+      const away = Math.hypot(px - ax - dx * t, py - ay - dy * t)
+      if (away < bestAway) {
+        bestAway = away
+        bestAt = walked + span * t * EARTH_M_PER_DEG
+      }
+    }
+    walked += span * EARTH_M_PER_DEG
+  }
+  return bestAt
+}
+
 /** The first `metres` of a polyline, with an interpolated last vertex. */
 function truncate(coords: [number, number][], metres: number | null, cosLat: number): [number, number][] {
-  if (metres == null || metres <= 0 || coords.length < 2) return coords
+  if (metres == null || coords.length < 2) return coords
+  if (metres <= 0) return coords.slice(0, 1) // at the upstream junction: nothing of the segment
   const out: [number, number][] = [coords[0]]
   let walked = 0
   for (let i = 1; i < coords.length; i++) {

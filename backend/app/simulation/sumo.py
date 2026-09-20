@@ -55,7 +55,18 @@ from app.simulation.preemption import PreemptionController, ResponderApproach, S
 from app.simulation.reroute import DiversionAdvisory
 from app.simulation.scenario import Scenario
 
-VEHICLE_VARS = (tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED, tc.VAR_TYPE, tc.VAR_TIMELOSS)
+# VAR_LANE_ID and VAR_LANEPOSITION ride along so the per-step bookkeeping below (rubbernecking, the
+# responder walk, the wait diagnostics) needs no per-vehicle TraCI round trip. A subscription result is
+# the state after the last step, which is exactly what a getter called between steps returns.
+VEHICLE_VARS = (
+    tc.VAR_POSITION,
+    tc.VAR_ANGLE,
+    tc.VAR_SPEED,
+    tc.VAR_TYPE,
+    tc.VAR_TIMELOSS,
+    tc.VAR_LANE_ID,
+    tc.VAR_LANEPOSITION,
+)
 EDGE_VARS = (
     tc.LAST_STEP_MEAN_SPEED,
     tc.LAST_STEP_VEHICLE_NUMBER,
@@ -87,7 +98,13 @@ SPEED_TAU_S = 20.0  # smoothing of observed segment speeds used for responder ET
 RESPONDER_SPEED_TAU_S = 15.0  # smoothing of a responder's own speed (detects it being stuck in a queue)
 EXPECTED_SIGNAL_WAIT_S = 10.0  # mean wait at a fixed-time signal: P(red) ~0.5 x half of a ~40 s red
 
-_start_lock = threading.Lock()  # traci.start mutates module-level connection state
+# traci.start's own connect loop hard-codes a 1 s wait between attempts (traci/main.py: start -> init ->
+# connect(..., waitBetweenRetries=1)), and the first attempt is always made before SUMO is listening, so
+# every process paid about a second. SUMO is started here instead and the port is polled.
+CONNECT_POLL_S = 0.02
+CONNECT_TIMEOUT_S = 60.0  # generous: a large net (Oakland) is loaded before the remote port opens
+
+_start_lock = threading.Lock()  # traci registers a labelled connection in module-level state
 
 
 def resolve_sumo_binary(explicit: str | None = None, gui: bool = False) -> str:
@@ -177,18 +194,40 @@ class SumoSimulation(TrafficSimulation):
         cmd = [self._binary, "-c", str(self.scenario.sumocfg), "--save-state.rng", "true", "--save-state.precision", "8"]
         if self._gui:
             cmd += ["--start", "--quit-on-end", "--delay", "0"]
-        with _start_lock:
-            traci.start(
-                cmd,
-                port=sumolib.miscutils.getFreeSocketPort(),
-                label=self.label,
-                doSwitch=False,
-                stdout=subprocess.DEVNULL,
-            )
-            self._conn = traci.getConnection(self.label)
+        port = sumolib.miscutils.getFreeSocketPort()
+        # Same steps traci.start() takes (Popen with --remote-port, then connect), minus its fixed 1 s wait
+        # between connection attempts. stderr is inherited, as traci.start leaves it.
+        process = subprocess.Popen(cmd + ["--remote-port", str(port)], stdout=subprocess.DEVNULL)
+        try:
+            self._conn = self._connect(port, process)
+        except BaseException:
+            process.kill()  # without a connection nothing would ever close this SUMO
+            raise
         self._step_length = self.conn.simulation.getDeltaT()
         self._subscribe_all()
         self._read_state()
+
+    def _connect(self, port: int, process: subprocess.Popen) -> traci.connection.Connection:
+        """Poll ``port`` until SUMO is listening, then return the labelled connection.
+
+        ``numRetries=0`` makes each ``traci.connect`` a single attempt, so the waiting happens here and can
+        be short. The connection is registered under ``self.label`` exactly as ``traci.start`` registered it,
+        and ``process`` is handed over so ``Connection.close()`` reaps it.
+        """
+        deadline = time.monotonic() + CONNECT_TIMEOUT_S
+        while True:
+            with _start_lock:  # a labelled connection is written into traci's module-level pool
+                try:
+                    connection = traci.connect(port, numRetries=0, proc=process, label=self.label)
+                    connection.getVersion()  # the handshake traci.start does through init()
+                    return connection
+                except (traci.FatalTraCIError, traci.TraCIException) as exc:
+                    last = exc
+            if process.poll() is not None:
+                raise RuntimeError(f"SUMO exited with code {process.returncode} before accepting TraCI: {last}")
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"SUMO did not accept TraCI on port {port} within {CONNECT_TIMEOUT_S:.0f}s: {last}")
+            time.sleep(CONNECT_POLL_S)
 
     def close(self) -> None:
         if self._conn is not None:
@@ -315,22 +354,31 @@ class SumoSimulation(TrafficSimulation):
             self._speed_ema[edge_id] = prev_speed + alpha * (speed - prev_speed)
 
     def _apply_rubbernecking(self) -> None:
-        """Slow traffic squeezing past a crash on the lanes that remain open."""
+        """Slow traffic squeezing past a crash on the lanes that remain open.
+
+        The vehicles and their positions come from the subscription, not from a lane query plus a
+        getLanePosition per vehicle: the same set at the same positions (both are the state after the last
+        step), without the ~20k round trips a post-crash branch used to spend here.
+        """
         c = self.conn
+        # lane id -> the disruption whose open lane it is. Built in disruption order, so where two crashes on
+        # one segment leave the same lane open the later one's pass speed wins, as it did before.
+        open_lanes: dict[str, Disruption] = {
+            f"{d.segment_id}_{lane}": d
+            for d in self._disruptions.values()
+            if d.pass_speed is not None
+            for lane in range(d.total_lanes)
+            if lane not in d.lanes
+        }
         targets: dict[str, float] = {}
-        for d in self._disruptions.values():
-            if d.pass_speed is None:
-                continue
-            for lane in range(d.total_lanes):
-                if lane in d.lanes:
+        if open_lanes:
+            for vid, r in self._veh.items():
+                d = open_lanes.get(r[tc.VAR_LANE_ID])
+                if d is None or r[tc.VAR_TYPE] == EMS_TYPE:
                     continue
-                for vid in c.lane.getLastStepVehicleIDs(f"{d.segment_id}_{lane}"):
-                    r = self._veh.get(vid)
-                    if r is None or r[tc.VAR_TYPE] == EMS_TYPE:
-                        continue
-                    pos = c.vehicle.getLanePosition(vid)
-                    if d.position_m - RUBBERNECK_UPSTREAM_M <= pos <= d.position_m + RUBBERNECK_DOWNSTREAM_M:
-                        targets[vid] = d.pass_speed
+                pos = r[tc.VAR_LANEPOSITION]
+                if d.position_m - RUBBERNECK_UPSTREAM_M <= pos <= d.position_m + RUBBERNECK_DOWNSTREAM_M:
+                    targets[vid] = d.pass_speed
         for vid, speed in targets.items():
             if vid not in self._rubbernecking:
                 c.vehicle.setSpeed(vid, speed)
@@ -387,10 +435,11 @@ class SumoSimulation(TrafficSimulation):
                     continue
                 route = v.getRoute(vid)
                 index = v.getRouteIndex(vid)
-                on_junction = v.getRoadID(vid).startswith(":")
-                lane_pos = v.getLanePosition(vid)
             except traci.TraCIException:
                 continue  # arrived after the subscriptions were read
+            # an internal lane (":junction_n_m") means the responder is on the junction, as getRoadID said
+            on_junction = r[tc.VAR_LANE_ID].startswith(":")
+            lane_pos = r[tc.VAR_LANEPOSITION]
             if index < 0:
                 continue
             for a in self.network.signalized_approaches_ahead(route, index, lane_pos, on_junction):
@@ -682,13 +731,14 @@ class SumoSimulation(TrafficSimulation):
         so a unit stuck in an incident queue shows a growing ETA instead of the
         free-flow time of the road it is stuck on.
         """
-        if d.id not in self._veh:
+        r = self._veh.get(d.id)
+        if r is None:
             return None
         c = self.conn
         route = c.vehicle.getRoute(d.id)
         index = c.vehicle.getRouteIndex(d.id)
-        on_junction = c.vehicle.getRoadID(d.id).startswith(":")
-        lane_pos = c.vehicle.getLanePosition(d.id)
+        on_junction = r[tc.VAR_LANE_ID].startswith(":")
+        lane_pos = r[tc.VAR_LANEPOSITION]
         try:
             dest_index = len(route) - 1 - list(reversed(route)).index(d.destination_segment)
         except ValueError:

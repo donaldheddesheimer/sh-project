@@ -22,10 +22,13 @@ interface Props {
   busy: string | null
   analyze: AnalyzeState
   fixture: boolean
+  agentArmed: boolean
+  agentAnalyst: string | null
   onAction: (action: Action) => void
   onSpeed: (speed: number) => void
   onMap: (mapId: string) => void
   onAnalyze: () => void
+  onAgent: () => void
   layoutCustom: boolean
   onResetLayout: () => void
 }
@@ -33,7 +36,8 @@ interface Props {
 export function TopBar(props: Props) {
   const {
     networkName, mapId, simTime, status, connected, hasIncident, canDispatch,
-    busy, analyze, fixture, onAction, onSpeed, onMap, onAnalyze, layoutCustom, onResetLayout,
+    busy, analyze, fixture, agentArmed, agentAnalyst, onAction, onSpeed, onMap, onAnalyze, onAgent,
+    layoutCustom, onResetLayout,
   } = props
   const run = status?.status ?? 'starting'
   const live = connected && run !== 'starting' && run !== 'error'
@@ -43,6 +47,12 @@ export function TopBar(props: Props) {
     : canDispatch
       ? 'Send a responder from the configured station to the newest active incident'
       : 'Select the newest active incident to dispatch EMS'
+  // One button for the whole autonomous loop. Arming resets the city; the analyst and memory are not
+  // choices here, so the tooltip names what will run rather than offering it.
+  const agentTitle = agentArmed
+    ? 'Disarm: no autonomous response to the next incident'
+    : `Arm autonomous response${agentAnalyst ? ` (${agentAnalyst} analyst, memory on)` : ''}: resets the city, then ` +
+      'detects, analyzes, applies, monitors and remembers the next reported incident on its own'
   return (
     <header className="topbar">
       <div className="brand">
@@ -142,6 +152,22 @@ export function TopBar(props: Props) {
                 Reset layout
               </button>
             )}
+          </div>
+        </div>
+        <div className="control-cluster agent-cluster">
+          <span className="topbar-caption">
+            Autonomous {agentArmed && <span className="agent-ready">/ armed</span>}
+          </span>
+          <div className="control-group">
+            <button
+              className={`btn btn-agent${agentArmed ? ' btn-agent-on' : ''}`}
+              disabled={!live || !!busy}
+              title={agentTitle}
+              aria-pressed={agentArmed}
+              onClick={onAgent}
+            >
+              <Icon name="bolt" /> {agentArmed ? 'Agent armed' : 'Arm agent'}
+            </button>
           </div>
         </div>
         <div className="control-cluster response-cluster">

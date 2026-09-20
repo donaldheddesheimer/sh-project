@@ -256,13 +256,16 @@ An episode is one agent answering one set of active incidents, from detection to
 lesson. `EpisodeService` is the only thing that starts an agent, and only while a demo
 script is armed. The [demo guide](demo-guide.md#autonomous-path-respond-monitor-learn) covers
 the operator flow and two-crash behavior; this document owns the implementation stages and
-thresholds. The mock, Claude and Nemotron teams are built from the credentials present and the
-startup team comes from `episode_analyst` in `config.py`; there is no runtime selector.
-This table is the code path.
+thresholds. The console arms one script — `AUTONOMOUS_SCRIPT`, sent as an empty
+`POST /api/demo/start` body — with the configured analyst and memory on; every other script
+and the no-recall control run stay reachable through that endpoint's fields. The analyst team
+is chosen at startup from the credentials present, and can be changed between episodes through
+`POST /api/demo/analyst` (refused while an episode is armed or active). This table is the code
+path.
 
 | # | Stage | Code | Output |
 |---|---|---|---|
-| 1 | Script | `EpisodeService.start_demo` → `CityService.set_scripted_events` → `LiveSimulationRunner` | scheduled crashes fire on the runner thread; an empty script waits for operator injection; episode `armed` |
+| 1 | Script | `EpisodeService.start_demo` (no id = `AUTONOMOUS_SCRIPT`) → `CityService.set_scripted_events` → `LiveSimulationRunner` | scheduled crashes fire on the runner thread; an empty script waits for operator injection; episode `armed` |
 | 2 | Detect | `MockSmartCityProvider` → `CityService.incident_listeners` → `EpisodeService._on_incident` | episode `detected` over every active incident, or the working one superseded |
 | 3 | Analyze | `MockAnalyst` or Nemotron `PipelineAnalyst` (`ScenarioService.run_pipeline`), or Claude `ModelAnalyst` (MCP client, optional fallback to the mock). Nemotron makes bounded structured proposal and recommendation calls; application code validates and simulates. External MCP clients retain the full tool set. | a completed `ScenarioRun`; episode `analyzing` |
 | 4 | Implement | `Implementor.implement(run_id, by)` in one `run_on_live` command | re-validation on live programs, EMS probes, `apply_plan`; `Implementation` on the run and the episode; the plan joins the standing responses; episode `monitoring` |

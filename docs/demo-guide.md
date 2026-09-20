@@ -10,14 +10,15 @@ credits. The autonomous path adds Mock, Claude, or Nemotron as the analyst and r
 2. Open the console at <http://localhost:5173> and confirm the status is **running**.
 3. Select **Pittsburgh** for the most recognizable map, or **3×3 Grid** for the most
    predictable timing and comparison numbers.
-4. Start with **Mock** in the Agent workspace. Select Claude or Nemotron only after the Mock
-   path succeeds.
+4. Confirm which analyst will run: open **Agent** and read the analyst name and model ids. It
+   is set by the credentials in `.env`, not by a selector — an NVIDIA key means Nemotron. See
+   [configuration](configuration.md#analyst-selection) to change it.
 5. Keep API keys in the repository-root `.env`; never show that file on screen.
 
 The desktop console has five stable regions:
 
-- The **command bar** selects the map and speed, controls the simulation, and exposes the
-  incident, EMS, and analysis actions.
+- The **command bar** selects the map and speed, controls the simulation, arms the autonomous
+  agent, and exposes the incident, EMS, and analysis actions.
 - The **workspace rail** changes between Live, Analysis, and Agent.
 - The **map** always shows the live twin; scenario branches never replace it.
 - The **workspace drawer** contains the controls and details for the selected view.
@@ -47,48 +48,56 @@ Allow about three minutes.
 
 ## Autonomous path: respond, monitor, learn
 
-The stage script is `operator-collision`: it resets the city, arms the autonomous workflow,
-and waits for the presenter to inject the crash.
+This path is one button. **Arm agent** in the command bar arms `AUTONOMOUS_SCRIPT`
+(`operator-collision`): it resets the city, selects 16× speed, uses the configured analyst
+with memory on, and waits for the presenter to inject the crash. There is nothing else to
+choose on screen.
 
-1. Open **Agent** and select **Mock** as the analyst.
-2. Select **Operator collision**, choose **Use memory** or **Ignore memory**, and click
-   **Arm**.
-3. When the panel says the agent is armed, click **Inject collision** in the command bar.
-4. Follow the episode strip through Detect, Analyze, Monitor, Review, and Learn. The agent
+1. Click **Arm agent**. The button lights up, the console opens the **Agent** readout, and the
+   episode strip shows `armed`.
+2. Click **Inject collision** in the command bar.
+3. Follow the episode strip through Detect, Analyze, Monitor, Review, and Learn. The agent
    uses the same guarded scenario engine as the operator, applies only a completed and validated
    recommendation, then watches the live outcome.
-5. At completion, show the predicted-versus-realized scorecard, verdict, lesson, and updated
+4. At completion, show the predicted-versus-realized scorecard, verdict, lesson, and updated
    Learning report.
 
-The analyst selector is locked while an episode is armed or working. This prevents an episode
-from changing providers halfway through. To switch, finish or stop the current episode, then
-select the next provider.
+Click **Arm agent** again to disarm: no autonomous response to the next incident. Arming a
+second time resets the city, which is how the warm run in the checklist below is set up.
 
-## Credit-conscious provider order
+## Which analyst runs
 
-| Order | Analyst | Why use it |
+The analyst and reviewer come from the credentials in `.env`, decided at startup — an NVIDIA
+key means Nemotron for every episode. The **Agent** readout prints the analyst name and both
+model ids, so what ran is always on screen.
+
+| Analyst | How to get it | Why use it |
 |---|---|---|
-| 1 | Mock | Proves the UI, simulation, safety, apply, monitoring, and memory paths without an external request |
-| 2 | Claude | Qualifies the shared model/MCP loop while preserving NVIDIA credits |
-| 3 | Nemotron | Already qualified locally on 2026-09-20; repeat only after a change to its structured provider path |
+| Mock | No `NVIDIA_API_KEY` | Proves the UI, simulation, safety, apply, monitoring, and memory paths without an external request |
+| Claude | `ANTHROPIC_API_KEY` only | Qualifies the shared model/MCP loop while preserving NVIDIA credits |
+| Nemotron | `NVIDIA_API_KEY` | Already qualified locally on 2026-09-20; repeat only after a change to its structured provider path |
 
-Model-backed failures remain visible and do not silently fall back to Mock. If a run fails,
-preserve the episode error, switch back to Mock, and consult the [project status](project-status.md)
-before spending another request.
+Switching means changing `.env` and restarting, or calling `POST /api/demo/analyst` between
+episodes. Model-backed failures remain visible and do not silently fall back to Mock. If a run
+fails, preserve the episode error and consult the [project status](project-status.md) before
+spending another request.
 
 ## Other scripts
+
+`POST /api/demo/start` with an explicit `script` arms one of these instead. They are an
+API-only path; the console arms `operator-collision`, the clearest staged demo.
 
 - `crash-ahead` injects a scheduled crash and runs without the presenter's collision click.
 - `crash-already` begins with the crash already present.
 - `double-crash` exercises the rule that a newer incident supersedes a working episode so
   the next analysis can cover all active incidents.
 
-These are useful qualification paths, but `operator-collision` is the clearest staged demo.
+The same endpoint takes `{"memory_mode": "ignore"}` for a persisted no-recall control run,
+which the console does not offer.
 
 ## Presenter reset checklist
 
-- Stop an armed episode before changing analyst.
 - Use **Reset** between rehearsals; applied signal programs persist until reset.
-- Clear memory from the Agent panel when a genuinely cold episode is required.
+- Clear memory with **clear** in the Agent readout when a genuinely cold episode is required.
 - Remember that switching maps creates a fresh live simulation and clears map-local runs,
   incidents, trends, and episode state. Durable lessons remain.

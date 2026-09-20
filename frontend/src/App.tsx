@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client'
-import type { Camera, MemoryMode, MetricSample } from './api/types'
+import type { Camera, DemoInfo, MemoryMode, MetricSample } from './api/types'
 import { AnalyzeOverlay } from './components/AnalyzeOverlay'
 import { DecisionCard } from './components/DecisionCard'
 import { EpisodePanel } from './components/EpisodePanel'
@@ -57,6 +57,8 @@ export default function App() {
   const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [demo, setDemo] = useState<DemoInfo | null>(null)
+  const [demoRefreshes, setDemoRefreshes] = useState(0)
   const [pendingMapId, setPendingMapId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   // The last trend sample before each incident was detected, kept per incident. The history holds only 15
@@ -106,6 +108,27 @@ export default function App() {
       clearTimeout(timer)
     }
   }, [network])
+
+  // Whether the agent is armed, which analyst will run and what memory holds. The top bar's one
+  // Arm agent button and the episode readout both need it, so it is loaded here rather than in the
+  // panel. Retry like the camera loader: nothing else triggers a fetch before the first episode, so a
+  // request that loses the startup race would leave the button unlabelled until a reload.
+  useEffect(() => {
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const load = () =>
+      api
+        .demo()
+        .then((next) => !cancelled && setDemo(next))
+        .catch(() => {
+          if (!cancelled) timer = setTimeout(load, 1500)
+        })
+    void load()
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [network?.id, episode?.id, episode?.status, demoRefreshes])
 
   useEffect(() => {
     setSelection(null)
@@ -264,6 +287,18 @@ export default function App() {
     setDrawerOpen(true)
   }
 
+  const refreshDemo = () => setDemoRefreshes((n) => n + 1)
+
+  // The whole autonomous workflow behind one button: arming resets the city and waits for an incident,
+  // which the configured analyst then handles with memory on. Arming also opens the readout, so the
+  // operator sees the episode without hunting for the view.
+  const toggleAgent = async () => {
+    const armed = !!demo?.armed
+    if (!armed) showView('autonomous')
+    await run('agent', armed ? api.disarmAgent : api.armAgent)
+    refreshDemo()
+  }
+
   const incidentPanel = (
     <IncidentPanel
       incidents={incidents}
@@ -302,7 +337,7 @@ export default function App() {
   const viewInfo = {
     live: { title: 'Live network', description: 'Incident command and network state' },
     analysis: { title: 'Response analysis', description: 'Simulated plans, safety and recommendation' },
-    autonomous: { title: 'Autonomous agent', description: 'Scripted response, monitoring and learning' },
+    autonomous: { title: 'Autonomous agent', description: 'Autonomous response, monitoring and learning' },
   }[view]
 
   return (
@@ -318,6 +353,9 @@ export default function App() {
         busy={busy}
         analyze={analyze}
         fixture={!!FIXTURE_MODE}
+        agentArmed={!!demo?.armed}
+        agentAnalyst={demo?.analyst ?? null}
+        onAgent={() => void toggleAgent()}
         onAction={(action) => {
           if (action === 'reset') {
             const atStake = incidents.length > 0 || isRunning(scenario) || episodeWorking(episode)
@@ -441,7 +479,12 @@ export default function App() {
         )}
         {view === 'autonomous' && (
           <>
-            <EpisodePanel episode={episode} busy={busy} onRun={run} />
+            <EpisodePanel
+              episode={episode}
+              demo={demo}
+              busy={busy}
+              onClearMemory={() => void run('memory', api.clearMemory).then(refreshDemo)}
+            />
             {responsePlans}
             {incidentPanel}
           </>

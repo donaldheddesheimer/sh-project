@@ -37,12 +37,6 @@ Set by the user. They override anything else in this file or in the docs.
    what is built versus planned and what was not verified. If docs and code disagree, fix one
    of them; never leave both.
 
-3. **Never read `.env` files, and read nothing from the environment but the API keys.** `.env`
-   holds only `_CREDENTIAL_KEYS`. Every other setting is hardcoded in `config.py` or the code:
-   no `os.environ`, `process.env` or `import.meta.env` reads for configuration, and no new
-   environment variables (including platform-set ones such as `K_SERVICE` or `SUMO_HOME`). To
-   learn whether a key is set, ask the user.
-
 ## Commands
 
 Run from the repo root. SUMO comes from PyPI (`eclipse-sumo`), so nothing else is installed.
@@ -67,10 +61,12 @@ venv directly (this is what works in PowerShell or Git Bash):
 - Try the pipeline: `POST /api/incidents/inject` with `{}`, wait about 2 simulated minutes
   (30 s at the default 4×), then `POST /api/scenarios/run` with `{}`. The run takes ~25 s.
   Use `curl.exe` in PowerShell (`curl` is an alias for `Invoke-WebRequest`).
-- Try the stage episode: `POST /api/demo/start` with `{"script": "operator-collision"}` (or
-  **Arm** in the console's Autonomous agent panel), then click **Inject collision**.
-  `DELETE /api/memory` first for a cold run. `crash-ahead` remains the unattended version.
-- Vite always proxies to the backend on `127.0.0.1:8000` (hardcoded in `frontend/vite.config.ts`).
+- Try the stage episode: `POST /api/demo/start` with `{}` (or **Arm agent** in the console's
+  command bar), then click **Inject collision**. An empty body arms `AUTONOMOUS_SCRIPT`
+  (`operator-collision`) with memory on, which is the console's only autonomous control.
+  `DELETE /api/memory` first for a cold run. `crash-ahead` remains the unattended version, and
+  an explicit `script` / `memory_mode` is now an API-only path.
+- To test the UI against a non-default backend: `BACKEND_URL=http://127.0.0.1:8001` for Vite.
   `?fixture=scenario` replays a recorded run but still needs a running backend and an active incident.
 - Operational defaults live in [backend/app/config.py](backend/app/config.py) and runtime
   choices live in the console/API. `.env` accepts only the names in `_CREDENTIAL_KEYS`
@@ -113,9 +109,9 @@ venv directly (this is what works in PowerShell or Git Bash):
   matched collisions into the twin. `NemotronAgentProvider` powers REST Analyze Response with
   schema-validated plan data; the safety validator and completed-candidate gate still decide
   what can run. Model failures remain visible rather than silently changing providers.
-  Nemotron also runs as the episode analyst and reviewer of every episode (`episode_analyst`
-  defaults to it; the console has no selector). With no `NVIDIA_API_KEY` its calls fail
-  visibly; the backend never falls back to Mock. The Claude team is still built.
+  Nemotron also runs as an episode analyst. The episode analyst/reviewer team is chosen at
+  startup from the credentials present (`episode_analyst = "auto"` picks Nemotron with an
+  NVIDIA key, then Claude, then Mock); the console has no selector, only `POST /api/demo/analyst`.
 - **One thread owns the live TraCI connection.** TraCI is blocking and not thread-safe.
   Touch the live simulation only through `CityService.run_on_live(fn)`; scripted crashes are
   fired by the runner thread itself (`set_scripted_events`).

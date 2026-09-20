@@ -69,8 +69,12 @@ class Settings(BaseSettings):
 
     # --- autonomous demo episode (app/learning/) ----------------------------
     demo_script: str | None = None  # arm this demos/*.json script at startup
-    # Nemotron drives every episode; the mock team runs only when this is set to "mock" here in code.
-    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "nemotron"
+    # What the console's single "Arm agent" button arms: a script with no scheduled crash, so the
+    # agent responds to whatever incident the operator injects. Other scripts stay an API-only path.
+    autonomous_script: str = "operator-collision"
+    # Select Nemotron first when its API key is present; otherwise Claude, then the deterministic local team.
+    # Pinning "nemotron" here instead would refuse to boot without a key: that team is only built with one.
+    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "auto"
     episode_monitor_s: float | None = None  # sim seconds a plan is watched (default: script monitor_s, else horizon)
     episode_agent_timeout_s: float = 420.0  # wall-clock limit for one model-backed analyst run
     episode_fallback_to_mock: bool = False  # selected model failures stay visible; choose Mock explicitly if desired

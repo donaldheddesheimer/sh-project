@@ -2,8 +2,8 @@
 
 Traffic Operations Center keeps credentials in the environment and operational behavior in
 reviewed code or runtime controls. The application reads only Anthropic and NVIDIA credentials
-from `.env`; maps, simulation speed, demo scripts, memory mode, and analyst selection are
-controlled in the console or API.
+from `.env`. The map and simulation speed are console controls; the analyst, the armed script
+and memory are reviewed defaults in `config.py`, so the console needs no selector for them.
 
 ## API keys
 
@@ -27,31 +27,28 @@ The `.env` file is ignored by Git. Never put either key in `.env.demo.example`, 
 build argument, frontend code, or a `VITE_*` variable. A Claude web subscription is separate
 from Anthropic API billing.
 
-## Analyst teams
+## Analyst selection
 
-With no NVIDIA key, the backend starts with the credit-free Mock team. An NVIDIA key makes
-Nemotron the startup team and withdraws Mock; an Anthropic key adds Claude. The team is chosen
-at startup from the credentials present and `episode_analyst` in `config.py`, not in the console:
+Which analyst and reviewer run is decided at startup from the credentials present, not in the
+console. `EPISODE_ANALYST` in [`config.py`](../backend/app/config.py) defaults to `auto`:
 
-| Selection | Credential | Analyst / reviewer models |
+| Credentials | `auto` selects | Analyst / reviewer models |
 |---|---|---|
-| Mock | None | Local rule-based analyst and reviewer |
-| Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
-| Nemotron | `NVIDIA_API_KEY` | Analyst: `nvidia/nemotron-3-ultra-550b-a55b`; reviewer: `nvidia/nemotron-3.5-lightning-30b-a3b` |
+| `NVIDIA_API_KEY` | **Nemotron** | Analyst: `nvidia/nemotron-3-ultra-550b-a55b`; reviewer: `nvidia/nemotron-3.5-lightning-30b-a3b` |
+| `ANTHROPIC_API_KEY` only | Claude | `claude-haiku-4-5-20251001` |
+| None | Mock | Local rule-based analyst and reviewer |
 
-The large analyst model is slower and busier than the reviewer: one completion may take minutes,
-and the hosted endpoint answers 503 "Service temporarily overloaded" under load. `nemotron_timeout_s`
-(300 s) is the limit for a single completion, and a retryable status is retried three times with a
-growing pause; both are reviewed defaults in `config.py`, not environment settings.
+A keyed NVIDIA deployment is therefore always Nemotron: the deterministic Mock team is not
+even built while that key is attached, so the backend cannot silently present a deterministic
+run as model-backed. The exact analyst and reviewer model ids are printed in the **Agent**
+readout, and `GET /api/demo` returns them.
 
-Only configured providers appear. A keyed NVIDIA deployment deliberately withholds Mock, so
-it cannot silently present a deterministic run as model-backed. The exact analyst and reviewer
-models are shown beside the selector. Changing the selector does not require editing `.env` or
-restarting the backend, but it is disabled while an episode is armed or working.
+Selecting a team by hand is an API-only path (`POST /api/demo/analyst`), refused while an
+episode is armed or working. To run the credit-free Mock team instead, remove `NVIDIA_API_KEY`
+and restart.
 
-The selector confirms that a credential was loaded; it does not prove that the key is valid,
-funded, or authorized for an inference request. Run Mock first, then one controlled Claude
-episode, and use Nemotron only after the shared model path is known to work.
+A loaded credential does not prove that the key is valid, funded, or authorized for an
+inference request. Model-backed failures stay visible; the backend never falls back to Mock.
 
 ## Local development
 
@@ -93,14 +90,16 @@ npm --prefix frontend run dev
 
 - **Map** switches between the synthetic 3×3 grid and Oakland, Pittsburgh.
 - **Speed** changes the live simulation multiplier from 1× to 16×.
-- **Memory mode** chooses whether an episode may use stored lessons.
-- **Analyst** chooses Mock, Claude, or Nemotron for the next episode.
-- **Demo script** chooses the incident sequence; the stage path is `operator-collision`.
+- **Arm agent** is the whole autonomous workflow: one command-bar toggle that resets the city
+  and hands the next reported incident to the configured analyst with memory on. There is no
+  script, memory-mode or analyst choice beside it.
+- **clear**, in the Agent readout, forgets every stored lesson for a genuinely cold episode.
 
 Reviewed defaults—including simulation horizon, branch concurrency, model IDs, safety
-behavior, and provider startup choices—live in
+behavior, provider startup choices, and `AUTONOMOUS_SCRIPT` (`operator-collision`: the script
+the **Arm agent** button arms)—live in
 [`backend/app/config.py`](../backend/app/config.py). The application intentionally does not
-accept those operational choices through `.env`.
+accept those operational choices through `.env`; only the three credential names are read.
 
 ## Service endpoints
 
@@ -109,8 +108,10 @@ accept those operational choices through `.env`.
 | `GET /api/health` | Process and live-city health |
 | `GET /api/state` | Current city state |
 | `WS /ws/state` | Live state and workflow events |
-| `GET /api/demo` | Available scripts, analysts, model label, episode, and memory state |
-| `POST /api/demo/analyst` | Select the analyst/reviewer team for the next episode |
+| `GET /api/demo` | Available scripts, analysts, model ids, episode, and memory state |
+| `POST /api/demo/start` | Arm autonomous response. `{}` arms `AUTONOMOUS_SCRIPT` with memory on (what the **Arm agent** button sends); `{"script": ..., "memory_mode": ...}` selects another script or a no-recall control run |
+| `POST /api/demo/stop` | Disarm autonomous response |
+| `POST /api/demo/analyst` | Select the analyst/reviewer team for the next episode (API only) |
 | `/docs` | Interactive REST API documentation |
 | `POST /mcp` | Streamable HTTP MCP endpoint |
 

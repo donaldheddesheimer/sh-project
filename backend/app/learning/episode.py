@@ -187,10 +187,14 @@ class EpisodeService:
             self._load(script_id)
             self._arm()
 
-    async def start_demo(self, script_id: str, memory_mode: MemoryMode = "use") -> Episode:
-        """Reset the city and arm ``script_id``: scheduled crashes play, or the operator injects one."""
+    async def start_demo(self, script_id: str | None = None, memory_mode: MemoryMode = "use") -> Episode:
+        """Reset the city and arm ``script_id``: scheduled crashes play, or the operator injects one.
+
+        ``None`` arms AUTONOMOUS_SCRIPT. That is what the console's one Arm agent button sends, so the
+        console needs no script picker and every other script stays reachable through the API.
+        """
         self._memory_mode = memory_mode
-        script = self._load(script_id)
+        script = self._load(script_id or self._settings.autonomous_script)
         await self._city.reset()  # the reset hook aborts the working episode and arms a new one
         if script.speed:
             await self._city.set_speed(script.speed)

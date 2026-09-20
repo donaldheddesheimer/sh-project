@@ -3,20 +3,20 @@
 A city traffic operations center that extends the NVIDIA Smart City blueprint idea:
 when a camera-detected incident (collision, stalled vehicle, …) hits the network,
 candidate responses are **tested in a SUMO traffic simulation before anything is
-recommended**. The experiments are exposed as MCP tools. An agent (Nemotron over NIM, or a
-rule-based mock offline) drives them, applies its choice to the live twin and learns from
+recommended**. The experiments are exposed as MCP tools. An agent (Claude, Nemotron over NIM,
+or a rule-based mock offline) drives them, applies its choice to the live twin and learns from
 the result (see [the autonomous episode](#the-autonomous-self-learning-episode)).
 
 This repository has completed **milestone 2**, built **milestone 3** (the autonomous
-episode; only its cold mock run has been run, once, by a smoke test), and built two of milestone 4's three parts without running
-them (see [Next: milestone 4](#next-milestone-4)). It
+episode; only its cold mock run has been run, once, by a smoke test), and built two of
+milestone 4's three parts without running them (see [Next: milestone 4](#next-milestone-4)). It
 has a live SUMO digital twin of a 3×3 downtown grid and a FastAPI backend that streams city
 state over WebSocket. There is a React/MapLibre operations console: inject a collision,
 watch the queue spill back, then click **Analyze Response** to test up to 9 candidate plans
 in parallel SUMO branches. Those plans include signal timing, an EMS green corridor and a
 diversion advisory. The console compares each plan against the baseline and recommends one.
-The **autonomous episode** runs that loop without clicks: a scripted crash, an agent that
-tests plans, applies the best one to the live twin, watches it and stores a lesson for the
+The **autonomous episode** runs that loop after a scripted or operator-injected crash: an
+agent tests plans, applies the best one to the live twin, watches it and stores a lesson for the
 next incident. Its cold mock run has completed once in a smoke test (see [Tests](#tests));
 the rest is unrun (see [Review notes](#review-notes-the-episode-pass)). Everything runs on a laptop with no GPU. The
 NVIDIA Smart City input is implemented against the published VSS 3.2 MCP contract, with a
@@ -26,12 +26,21 @@ simulation-time replay client for development; neither client has been run here.
 
 Requirements: Python ≥ 3.11, Node ≥ 22.12. SUMO is installed from PyPI (`eclipse-sumo`), so
 there is no system package and no GPU. Local development needs no Docker; the Dockerfile at
-the repo root is for [hosting](#hosting-the-backend).
+the repo root is for the [Google Cloud Run demo](#google-cloud-run-demo).
 
 ```bash
 make setup   # backend/.venv (FastAPI + SUMO wheels) and frontend/node_modules; safe to re-run
 make dev     # backend on :8000 + UI on :5173
 ```
+
+For the Oakland stage configuration, copy the safe template before starting:
+
+```bash
+cp .env.demo.example .env
+```
+
+The copied `.env` is git-ignored. Put local API keys only in that file, never in
+`.env.demo.example`; see [Model API keys](#model-api-keys).
 
 Open http://localhost:5173. Or run the two halves in separate terminals:
 
@@ -116,63 +125,126 @@ monitor window, not the walkthrough's 4× and 600 s. It asserts no plan, delay o
 "a valid verdict", so it says the loop works and nothing about how well it responds.
 
 Not covered: a warm second episode (recall), the two-crash rule, Oakland, the MCP tools,
-Nemotron and pre-emption. Tests are written only when the user asks for them.
+Claude, Nemotron and pre-emption. Tests are written only when the user asks for them.
 
-## Hosting the backend
+## Model API keys
 
-The root `Dockerfile` builds the backend alone (`backend/` plus the `simulation/` data it
-reads); the frontend is a static bundle and is hosted separately. `scripts/deploy-cloudrun.sh`
-deploys that image to **Google Cloud Run**, which suits this service because it terminates
-TLS for free — a browser on an `https://` frontend can only open `wss://`, not `ws://`, so
-`/ws/state` needs a certificate the platform provides.
-
-Once: install the [gcloud CLI](https://cloud.google.com/sdk/docs/install), run
-`gcloud auth login`, and have a project with billing enabled. Then, from the repo root:
+Local secrets belong in the repository-root `.env`, which is git-ignored. Start from the
+demo template:
 
 ```bash
-PROJECT_ID=my-gcp-project CORS_ORIGINS=https://my-app.vercel.app scripts/deploy-cloudrun.sh
+cp .env.demo.example .env
 ```
 
-It enables the Run, Cloud Build and Artifact Registry APIs, builds the image on Cloud Build
-(so no local Docker, and no arm64/amd64 mismatch from an Apple Silicon Mac), deploys, and
-prints the service URL. `SERVICE` and `REGION` override the defaults
-(`traffic-ops-backend`, `us-central1`).
+Keep `EPISODE_ANALYST=mock` as the credit-free startup selection and configure either or
+both credential sets. The **Analyst** selector in the Autonomous agent panel switches the
+analyst and reviewer between runs without editing `.env` or restarting the backend:
 
-The twin is stateful and always running, so the service is pinned to exactly one
-always-on instance. The script's comments say what each flag is for and why the Cloud Run
-defaults would break the simulation.
+```dotenv
+ANTHROPIC_API_KEY=your-anthropic-api-key
+ANTHROPIC_WORKSPACE_ID=your-anthropic-workspace-id
+CLAUDE_MODEL=claude-haiku-4-5-20251001
 
-Point the frontend at the printed URL — on Vercel, as project environment variables:
+NVIDIA_API_KEY=your-nvidia-api-key
+NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b
+NEMOTRON_BASE_URL=https://integrate.api.nvidia.com/v1
+```
 
-| Variable | Value |
-|---|---|
-| `VITE_API_BASE_URL` | `https://<service>.run.app` |
-| `VITE_WS_BASE_URL` | `wss://<service>.run.app` (optional; derived from the API URL when unset) |
+`ANTHROPIC_WORKSPACE_ID` is required for an organization-level Anthropic key. Omit it only
+when the key is already scoped to a workspace. The selector lists only providers whose key
+and model are configured. It is locked while an episode is armed or running so one episode
+cannot change models halfway through.
 
-`CORS_ORIGINS` on the backend must list the frontend's origin, or the browser blocks every
-call. Unset, both variables fall back to the page's own origin, which is what local
-`make dev` uses through the Vite proxy.
+For a provider qualification run, set `EPISODE_FALLBACK_TO_MOCK=false`; otherwise a failed
+analyst or reviewer call intentionally falls back to the deterministic mock. With fallback
+disabled, either failure marks the episode failed. `AGENT_PROVIDER` should stay `mock`: it
+belongs to the separate one-click Analyze Response path.
 
-What to know before relying on it:
+Never place either key in a tracked file, a Docker build argument, the frontend, or a
+`VITE_*` variable. A Claude web subscription and Claude API billing are separate.
 
-- **It bills while idle**, because keeping the twin running is the whole point. Budget by
-  the hour, not the month: 4 vCPU + 4 GiB with CPU always allocated is on the order of
-  **$0.30/hour** at us-central1 list prices, so a two-hour demo is well under a dollar, and
-  a new account's $300 free credit covers it. It is a monthly bill only if you leave it up
-  for a month. Between demos,
-  `gcloud run services update <service> --region <region> --min-instances 0` stops the
-  charge without deleting the service; the next request then pays a cold start plus the
-  300 s warm-up. `gcloud run services delete <service> --region <region>` stops it
-  entirely. Confirm the current rate on Google's pricing page before relying on the
-  figure.
-- **Lessons do not survive a restart.** `memory/` is container-local, and Cloud Run
-  instances are replaced at will. Each new instance starts cold, so a "warm run" demo has
-  to happen within one instance's life. A durable store (GCS or a volume mount) is not
-  built.
-- **There is no auth** (see [Current limitations](#current-limitations)), and the script
-  deploys with `--allow-unauthenticated`. That publishes `/mcp`, including
-  `implement_recommendation`, to anyone with the URL. Acceptable for a demo; not for
-  anything left running.
+## Google Cloud Run demo
+
+The root `Dockerfile` builds the React console and serves it from the FastAPI app, so one
+Cloud Run URL carries the UI, REST API, MCP endpoint and WebSocket. Cloud Run supports
+WebSockets, but they remain subject to the service request timeout; this deployment uses the
+60-minute maximum and a reconnecting frontend. The service is limited to one instance
+because the live SUMO twin and episode state are process-local.
+
+Install and authenticate the Google Cloud CLI, then replace the uppercase placeholders:
+
+```bash
+gcloud auth login
+gcloud config set project PROJECT_ID
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com iam.googleapis.com
+
+gcloud iam service-accounts create traffic-ops-runner \
+  --display-name="Traffic Ops Cloud Run"
+
+gcloud secrets create anthropic-api-key --replication-policy=automatic
+gcloud secrets versions add anthropic-api-key --data-file=-
+# Paste only the Claude key, then press Ctrl-D.
+
+gcloud secrets create nvidia-api-key --replication-policy=automatic
+gcloud secrets versions add nvidia-api-key --data-file=-
+# Paste only the NVIDIA key, then press Ctrl-D.
+
+gcloud secrets add-iam-policy-binding anthropic-api-key \
+  --member="serviceAccount:traffic-ops-runner@PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+gcloud secrets add-iam-policy-binding nvidia-api-key \
+  --member="serviceAccount:traffic-ops-runner@PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+First deploy the credit-free mock to prove that the container, Oakland network, UI and
+WebSocket work. Run this from the repository root:
+
+```bash
+gcloud run deploy traffic-ops-demo \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --service-account=traffic-ops-runner@PROJECT_ID.iam.gserviceaccount.com \
+  --cpu=2 \
+  --memory=4Gi \
+  --min=1 \
+  --max=1 \
+  --concurrency=80 \
+  --timeout=3600 \
+  --session-affinity \
+  --no-cpu-throttling \
+  --set-env-vars=SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland,SMART_CITY_PROVIDER=mock,AGENT_PROVIDER=mock,EPISODE_ANALYST=mock,SIM_SPEED=16,SCENARIO_WORKERS=2,MEMORY_DIR=/tmp/traffic-memory
+```
+
+After the mock deployment works, attach both keys without rebuilding. Add
+`ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID` to `--update-env-vars` when the Anthropic key is
+organization-level:
+
+```bash
+gcloud run services update traffic-ops-demo \
+  --region us-central1 \
+  --update-env-vars=EPISODE_ANALYST=mock,CLAUDE_MODEL=claude-haiku-4-5-20251001,ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID,NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b \
+  --update-secrets=ANTHROPIC_API_KEY=anthropic-api-key:latest,NVIDIA_API_KEY=nvidia-api-key:latest
+```
+
+Reload the console and select Mock, Claude or Nemotron from the panel. Keep
+`EPISODE_FALLBACK_TO_MOCK=false` for a qualification run if a failed paid-provider call must
+be impossible to mistake for success.
+
+`MEMORY_DIR=/tmp/traffic-memory` is deliberately temporary: lessons survive repeated runs
+on the warm demo instance, but not a replacement or restart. Keep `--max=1`; multiple
+instances would create different live cities. Because the service is public, anyone with
+the URL can operate the simulation. After the event, avoid paying for an always-warm
+instance:
+
+```bash
+gcloud run services update traffic-ops-demo --region us-central1 --min=0
+```
+
+Google references: [source deployment](https://docs.cloud.google.com/run/docs/deploying-source-code),
+[WebSockets](https://docs.cloud.google.com/run/docs/triggering/websockets), and
+[Secret Manager integration](https://docs.cloud.google.com/run/docs/configuring/services/secrets).
 
 ## Demo walkthrough: Analyze Response
 
@@ -264,10 +336,11 @@ Only a smoke test at different settings has run it (see [Tests](#tests)), so the
 **Autonomous agent** panel at the top of the side column, or the API.
 
 1. For a cold run, clear the memory: the panel's **clear**, or `DELETE /api/memory`.
-2. Pick **Crash ahead** and click **Run** (`POST /api/demo/start {"script": "crash-ahead"}`).
-   The city resets, resumes if the previous episode paused it, and the episode is `armed`.
-3. The crash happens at sim 420 s (about 30 s later at 4×). About 4 simulated seconds
-   after that, INC-0001 is detected and the episode goes `detected → analyzing`. The
+2. Pick **Operator collision** and click **Arm**
+   (`POST /api/demo/start {"script": "operator-collision"}`). The city resets, switches to
+   16×, and waits without scheduling a crash.
+3. When the audience is ready, click **Inject collision** in the top bar. About 4 simulated
+   seconds later, INC-0001 is detected and the episode goes `detected → analyzing`. The
    analysis streams into Response plans as in the walkthrough above.
 4. The agent applies its recommendation. The ops log lists the new signal programs and the
    EMS probe it dispatched, and the recommendation footer reads "Applied to live signals".
@@ -275,8 +348,8 @@ Only a smoke test at different settings has run it (see [Tests](#tests)), so the
 5. `reviewing → completed`: the panel shows the lesson (verdict, summary, next time) and
    the scorecard's delay numbers, `memory/episodes/EP-0001.md` is written, and the live sim
    pauses.
-6. Run **Crash ahead** again. The analysis lists `EP-0001` under lessons used and, if that
-   lesson was `effective`, simulates 4 plans instead of 9.
+6. Reset, arm **Operator collision**, and inject again. The analysis lists `EP-0001` under
+   lessons used and, if that lesson was `effective`, simulates 4 plans instead of 9.
 7. **Different crash** (`varied-crash`) resembles the first crash but is not the same, so the
    lesson only reorders the plans. **Second crash mid-response** (`double-crash`) shows the
    two-crash rule: one episode `superseded`, one `completed` over both incidents.
@@ -298,11 +371,11 @@ Nothing else about it has run: the UI, warm recall, `varied-crash`, `crash-alrea
 | Piece | State | Where |
 |---|---|---|
 | Live twin, incidents, Analyze Response, MCP tools | Working | milestones 1–2 |
-| Scripted crash scenarios, fired by the live runner | Built, not run | `simulation/scenarios/downtown_grid/demos/`, `simulation/runner.py` |
+| Scripted and operator-controlled crash scenarios | Built, not run | `simulation/scenarios/*/demos/`, `simulation/runner.py` |
 | One analysis over several incidents; branches that replay standing responses; abandoning an analysis | Written, not run | `services/scenarios.py`, `simulation/branching.py` |
 | Episode service, implementor, monitor, scorecard, reviewer, memory, recall, the mock acting on lessons | Built, not run | `backend/app/learning/`, `agent/mock.py` |
-| Nemotron analyst and reviewer (MCP client over NIM) | Built, never called: needs `NVIDIA_API_KEY` and `NEMOTRON_MODEL` | `learning/analysts.py`, `agent/nemotron.py` |
-| Autonomous agent panel, **Apply to live signals** | Built; type-checked and linted, not run | `frontend/src/components/EpisodePanel.tsx`, `plans/ResponsePlans.tsx` |
+| Runtime-selectable mock, Claude and Nemotron analyst/reviewer teams | Built, not run: model teams need their API key and model id | `learning/analysts.py`, `agent/claude.py`, `agent/nemotron.py` |
+| Autonomous agent panel, runtime selector, **Apply to live signals** | Written, not run | `frontend/src/components/EpisodePanel.tsx`, `plans/ResponsePlans.tsx` |
 
 ### The idea
 
@@ -311,7 +384,8 @@ to it end to end, then remembers what happened, so the next incident starts with
 experience instead of cold.
 
 ```
-scripted crash ─► live sim plays it as "real data" ─► crash detected, state sent to the agent
+scripted or operator-injected crash ─► live sim presents it as "real data" ─► crash detected
+   ─► state sent to the agent
    ─► agent tests alternatives in parallel branches (the live view keeps running)
    ─► agent's chosen plan is IMPLEMENTED on the live sim (really applied)
    ─► live data is cached for a fixed number of simulated seconds
@@ -322,11 +396,11 @@ scripted crash ─► live sim plays it as "real data" ─► crash detected, st
 
 | Role | What it is | Uses a model? |
 |---|---|---|
-| **Analyst agent** | The loop that reads the incident state, tests plans in parallel branches, picks one, then calls the implementor. Nemotron over MCP (`EPISODE_ANALYST`); the rule-based mock when offline or as the fallback. | Nemotron / no (mock) |
+| **Analyst agent** | The loop that reads the incident state, tests plans in parallel branches, picks one, then calls the implementor. The panel selects Claude, Nemotron or the rule-based mock between episodes. | Claude / Nemotron / no (mock) |
 | **Implementor** | The gated step that applies the agent's *recommended, already-simulated* plan to the live sim. Not a model. | No |
 | **Monitor** | Caches live data before and after the plan goes live, for a fixed number of **simulated** seconds. | No |
 | **Scorecard** | Deterministic numbers: what was predicted, what really happened, how far apart. | No |
-| **Reviewer** | A separate call that sees only the scorecard and the condensed episode (never the analyst's reasoning) and writes the lesson. The mock reviewer uses templates. | Nemotron / no (mock) |
+| **Reviewer** | A separate call from the selected team that sees only the scorecard and condensed episode (never the analyst's reasoning) and writes the lesson. The mock reviewer uses templates. | Claude / Nemotron / no (mock) |
 | **Memory** | Stores lessons, records whether they were used, and recalls relevant eligible lessons for the next incident. | No (optional embedding NIM) |
 | **Episode service** | The state machine that ties these together. It is the only thing that starts an agent, and only while a demo script is armed. | No |
 
@@ -340,7 +414,7 @@ Used the same way everywhere in this README, the code and the ops log.
 | **Incident** | A Smart City provider's report (`INC-0001`): a mock-detected crash or an external VSS event. |
 | **Analysis / run** | One `ScenarioRun` (`SCN-0001`): one snapshot, a baseline plus candidate plans, one recommendation. |
 | **Plan / candidate** | A `CandidatePlan` (signal timing changes, an EMS corridor, reroutes) before simulating; a `SimulationCandidate` once it has metrics. `baseline` is the do-nothing plan. |
-| **Implement** | Apply the recommended plan to the *live* simulation, as opposed to simulating it in a branch. Recorded with who did it: `agent`, `operator`, or `coordinator` (the episode service, when Nemotron recommended but did not apply). |
+| **Implement** | Apply the recommended plan to the *live* simulation, as opposed to simulating it in a branch. Recorded with who did it: `agent`, `operator`, or `coordinator` (the episode service, when a model recommended but did not apply). |
 | **Standing response** | A plan already applied to the live sim. Every later branch starts with it re-applied, because corridors and diversions are not part of a SUMO snapshot. |
 | **Episode** | One agent working one set of active incidents, from detection to a stored lesson (`EP-0001`). |
 | **Monitor window** | The fixed number of simulated seconds the applied plan is watched (how it is chosen: see Monitor under [How the pieces work](#how-the-pieces-work)). |
@@ -352,7 +426,7 @@ Used the same way everywhere in this README, the code and the ops log.
 | **Learning report** | The durable cold/warm and cross-script comparison at `GET /api/learning/report`; it reports the configured useful-transfer rule, not an unsupported causal claim. |
 | **Playbook** | A short, generated digest of recent lessons (`memory/playbook.md`), handed to an MCP agent with every analysis. |
 | **Superseded** | An episode stopped because another crash arrived while its agent was still working. |
-| **Demo script** | A JSON file in `demos/` that says when each crash happens (`DemoScript`). Not the [demo walkthroughs](#demo-walkthrough-analyze-response) above. |
+| **Demo script** | A JSON file in `demos/` that arms an episode and optionally schedules crashes (`DemoScript`). Not the [demo walkthroughs](#demo-walkthrough-analyze-response) above. |
 | **Armed** | A demo script is loaded. While one is armed, every detected crash starts an episode (a manual Inject too); `POST /api/demo/stop` disarms. |
 | **Mirror** | Reflect an externally reported collision in the twin as one linked disruption, removed when the report clears. |
 | **Map match** | Turn a report's lat/lon, place or sensor into a road segment, position and assumed lane, with method and confidence. |
@@ -360,16 +434,18 @@ Used the same way everywhere in this README, the code and the ops log.
 
 ### Scripted crash scenarios
 
-A demo script says when each crash happens. The live runner fires each crash at its
-simulation time, on every boot. A crash before the end of warm-up (300 s) has **already
-happened** when the console opens, so a queue is forming. A later crash **will happen** while
-the demo runs. Scripts live in each scenario's `demos/*.json` and are
+A demo script arms autonomous response and may say when crashes happen. The live runner
+fires scheduled crashes at their simulation times. A script with no crashes waits for the
+operator's **Inject collision** click. A crash before the end of warm-up (300 s) has
+**already happened** when the console opens, so a queue is forming. A later crash **will
+happen** while the demo runs. Scripts live in each scenario's `demos/*.json` and are
 loaded by `simulation/scenario.py`. `POST /api/demo/start` resets the city and arms one;
 `DEMO_SCRIPT` arms one at startup. They are available for both the grid and Oakland with the
 same ids; Oakland uses Forbes Avenue eastbound and Fifth Avenue westbound instead of the grid roads.
 
 | Script | Crashes | What it shows |
 |---|---|---|
+| `operator-collision` | None scheduled; the presenter clicks **Inject collision** | The stage workflow with an operator-controlled start. It selects 16× speed. |
 | `crash-ahead` | Main St eastbound at sim 420 s | The normal workflow, live. |
 | `crash-already` | Main St eastbound at sim 240 s (inside warm-up) | Opening on a crash that has already happened. |
 | `double-crash` | Main St eastbound at 400 s, then Central Ave northbound (`B1_B2`, which feeds the same intersection) at 460 s | The two-crash rule below. |
@@ -409,7 +485,7 @@ incident of the run is no longer active, and rejected (400) if the validator obj
 live programs. A `baseline` recommendation applies nothing but still dispatches the probes
 and is monitored and reviewed: doing nothing can be the right answer.
 
-- **Who applies it.** The mock analyst applies its own recommendation. If Nemotron submits
+- **Who applies it.** The mock analyst applies its own recommendation. If a model submits
   without applying, the episode service does (`coordinator`). With `AGENT_MAY_IMPLEMENT=false`
   neither does: the episode waits in `analyzing` until an operator clicks **Apply to live
   signals**.
@@ -475,10 +551,11 @@ below these a difference is noise. The outcome:
 **Reviewer** (`learning/reviewer.py`). It writes a `Lesson`: verdict, summary, what worked,
 what did not, what to try next time, and a confidence. It is given only the scorecard and
 the condensed episode (the situation, one line per plan tried, the plan applied). The mock
-reviewer uses templates. The Nemotron reviewer asks NIM for the prose as JSON and falls back
-to the mock. Either way the verdict is the scorecard's outcome: the model explains it and
-cannot overrule it. A provisional lesson's confidence is capped at 0.4 after either reviewer
-returns. The raw samples are condensed into the scorecard and discarded.
+reviewer uses templates. Claude or Nemotron writes the prose as JSON. When
+`EPISODE_FALLBACK_TO_MOCK=true`, a failed review call falls back to the mock; when false, the
+episode fails. Either way the verdict is the scorecard's outcome: the reviewer explains it
+and cannot overrule it. A provisional lesson's confidence is capped at 0.4 after either
+reviewer returns. The raw samples are condensed into the scorecard and discarded.
 
 **Memory** (`learning/store.py`). Each completed episode becomes
 `memory/episodes/EP-NNNN.md`: a JSON front-matter block holding the whole `Experience` (so
@@ -593,10 +670,10 @@ Endpoints are in the [API](#api) table. Every setting is in `backend/app/config.
 | Setting | Default | Meaning |
 |---|---|---|
 | `DEMO_SCRIPT` | unset | Arm a script at startup |
-| `EPISODE_ANALYST` | `auto` | `auto` (Nemotron if `NVIDIA_API_KEY` and `NEMOTRON_MODEL` are set, else mock), `mock` or `nemotron` |
+| `EPISODE_ANALYST` | `auto` | Startup selection only: `auto` prefers configured Claude, then Nemotron, then mock; or set `mock`, `claude`, `nemotron`. The panel can switch configured teams later. The demo template pins Mock so startup never spends credits. |
 | `EPISODE_MONITOR_S` | unset | Overrides the monitor window (see Monitor above) |
-| `EPISODE_AGENT_TIMEOUT_S` | 300 | Wall-clock limit for one Nemotron analysis (plus a cap of 16 model turns) |
-| `EPISODE_FALLBACK_TO_MOCK` | true | Run the mock analyst when the Nemotron loop fails |
+| `EPISODE_AGENT_TIMEOUT_S` | 300 | Wall-clock limit for one Claude or Nemotron analysis (plus a cap of 16 model turns) |
+| `EPISODE_FALLBACK_TO_MOCK` | true | Use the mock analyst or reviewer when the selected model fails; false makes either failure fail the episode |
 | `EPISODE_PAUSE_ON_FINISH` | true | Pause the live sim when an episode completes |
 | `AGENT_MAY_IMPLEMENT` | true | Let the agent apply its recommendation (the operator path works either way) |
 | `MEMORY_ENABLED`, `MEMORY_DIR` | true, `<repo>/memory` | Memory on/off and where it lives |
@@ -605,8 +682,9 @@ Endpoints are in the [API](#api) table. Every setting is in `backend/app/config.
 | `EMBEDDING_MODEL` | unset | Enables optional semantic recall through an OpenAI-compatible embedding NIM; unset preserves structured-only recall |
 | `EMBEDDING_BASE_URL` | `NEMOTRON_BASE_URL` | OpenAI-compatible `/embeddings` endpoint for `EMBEDDING_MODEL` |
 | `AGENT_FALLBACK_TO_MOCK` | true | REST Analyze Response changes `agent` to `nemotron→mock` and continues with the mock after the first NIM failure |
-| `MCP_URL` | unset | Where the Nemotron analyst reaches the MCP tools; unset = this app's server, in-process |
+| `MCP_URL` | unset | Where a model analyst reaches the MCP tools; unset = this app's server, in-process |
 | `NEMOTRON_MODEL`, `NVIDIA_API_KEY`, `NEMOTRON_BASE_URL` | unset, unset, NIM | The model id has to be supplied (see [open questions](#decisions-and-open-questions)) |
+| `CLAUDE_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID`, `CLAUDE_BASE_URL` | unset, unset, unset, Anthropic | Claude model and credentials. Organization-level keys require a workspace id; workspace-scoped keys do not. |
 | `NVIDIA_VA_MCP_URL` | unset | Streamable-HTTP VSS Video Analytics MCP endpoint; required for live VSS unless replay is set |
 | `VSS_REPLAY_FILE` | unset | Development-only VSS-shaped timeline; with `SMART_CITY_PROVIDER=nvidia`, takes precedence over the live URL |
 | `VSS_POLL_S` | 5 | Base wall-clock polling interval; failures back off to 60 s |
@@ -616,11 +694,11 @@ Endpoints are in the [API](#api) table. Every setting is in `backend/app/config.
 
 ### Task list
 
-`[x]` = written. **None of it has been run**, so each *Done when* is still to be seen (see
-[Review notes](#review-notes-the-episode-pass)). Every step works with the **mock** analyst and
-reviewer, so no NIM key is needed except for step 7.
+`[x]` = written. **None of the episode behavior has been run**, so each *Done when* is still
+to be seen (see [Review notes](#review-notes-the-episode-pass)). Every step works with the
+**mock** analyst and reviewer; Claude and Nemotron are optional selectable teams.
 
-- [x] Demo scripts (crash already happened / will happen / second crash / different crash)
+- [x] Demo scripts (operator-injected / crash already happened / will happen / second crash / different crash)
 - [x] Scenario engine solves several incidents together; branches replay standing responses
 - [x] Two-crash mechanics in the engine (`abandon`, per-incident EMS probes, combined mock plans)
 - [x] **1. Episode service** (`learning/episode.py`). Detection through a `CityService`
@@ -640,6 +718,9 @@ reviewer, so no NIM key is needed except for step 7.
 - [x] **6. Finish step.** Stop the monitor, pause the live sim, store the lesson.
 - [x] **7. Nemotron analyst** (`learning/analysts.py`, `agent/nemotron.py`). *Done when:*
   the same script runs with `EPISODE_ANALYST=nemotron`.
+- [x] **7a. Claude and runtime selection.** Claude Messages API adapter plus an operator
+  selector for configured mock, Claude and Nemotron teams. *Done when:* each model completes
+  the same operator-controlled episode without a restart. Not run yet.
 - [x] **8. Recall and injection**, plus the mock acting on lessons. *Done when:* a second
   episode's run lists the first episode under `recalled`.
 - [x] **9. Frontend.** The Autonomous agent panel, **Apply to live signals**, accessible
@@ -811,16 +892,17 @@ backend/app/
   simulation/metrics.py live + horizon TrafficMetrics
   smart_city/           provider boundary, mock, VSS MCP/replay clients, mapping and map matching
   agent/                AgentProvider: base, mock (9 rule-based plans, pruned by lessons);
+                        claude.py: the Messages API adapter;
                         nemotron.py: the NIM chat client and the REST AgentProvider;
                         briefing.py: the analyst prompt and candidate rows both analysts share
   safety/validator.py   SafetyValidator (signal policies + corridors) and rule-based MVP limits
   websocket/hub.py      non-blocking WebSocket fan-out
   learning/episode.py   EpisodeService: demo scripts, the episode state machine, two-crash rule
-  learning/analysts.py  MockAnalyst (the mock pipeline) and NemotronAnalyst (MCP client over NIM)
+  learning/analysts.py  MockAnalyst and the shared Claude/Nemotron MCP ModelAnalyst
   learning/implementor.py  applies a recommendation to the live sim; standing responses
   learning/monitor.py   live sample ring and monitor windows
   learning/scorecard.py predicted vs realised, materiality thresholds, outcome
-  learning/reviewer.py  mock and Nemotron reviewers (scorecard → lesson)
+  learning/reviewer.py  mock and shared Claude/Nemotron reviewers (scorecard → lesson)
   learning/store.py     markdown memory, playbook, structured/semantic recall and learning report
   learning/embeddings.py optional OpenAI-compatible embedding NIM client
 backend/tests/          network, simulation, runner, safety/agent, mock provider, API, demo setup and smoke tests
@@ -838,14 +920,14 @@ simulation/
   networks/grid3x3/     build_network.py → grid3x3.net.xml (named streets, 9 signals)
   networks/pittsburgh_oakland/  OSM extract (ODbL) + build_network.py → oakland.net.xml (33 signals)
   scenarios/downtown_grid/  scenario.sumocfg, demand, vehicle types, scenario.json,
-                        demos/*.json scripted crash scenarios for episodes
+                        demos/*.json scheduled or operator-controlled episode scenarios
   scenarios/pittsburgh_oakland/  the same files and demo scripts for Oakland; synthetic demand
   scenarios/*/vss/      development-only VSS-shaped replay timelines (coordinates not run/verified)
   controllers/          how pre-emption plugs in (the code lives in backend/app/simulation/)
 memory/                 written at runtime: episodes/EP-NNNN.md lessons, EP-NNNN.vec.json sidecars and playbook.md (git-ignored)
-Dockerfile              backend image (backend/ + simulation/); build context is the repo root
-scripts/deploy-cloudrun.sh  deploy that image to Google Cloud Run, with the flags the twin needs
-vercel.json             static build of frontend/ for the separately hosted UI
+Dockerfile              single Cloud Run image: built frontend + backend + simulation
+scripts/deploy-cloudrun.sh  deploy the full demo to Google Cloud Run with the flags the twin needs
+vercel.json             optional static frontend-only deployment when the API is hosted separately
 docs/
   architecture.md       design notes, both pipelines stage by stage, MCP tools
   milestone-2/          the milestone-2 plan, per-feature specs and results (historical)
@@ -874,8 +956,9 @@ docs/
 | GET | `/api/scenarios/{id}` | one run with candidates, metrics, timelines, the recommendation, and `implementation` once applied |
 | POST | `/api/scenarios/{id}/implement` | operator path: apply the run's recommendation to the live sim (same code as the agent's) → `Implementation`. 404 unknown run; 409 not completed, already applied, predating a reset or an incident cleared; 400 rejected by the validator on the live programs |
 | GET | `/api/demo` | demo scripts, the armed script, the analyst, the latest episode, memory stats |
-| POST | `/api/demo/start` | `{"script": "crash-ahead", "memory_mode": "use"}`: reset and resume the city, then arm the script → the `armed` `Episode` (202). Use `ignore` for a persisted no-recall control |
+| POST | `/api/demo/start` | `{"script": "operator-collision", "memory_mode": "use"}`: reset and resume the city, then arm the script → the `armed` `Episode` (202). Use `ignore` for a persisted no-recall control; 409 with an external VSS provider |
 | POST | `/api/demo/stop` | disarm: no more scripted crashes or autonomous response; aborts the working episode |
+| POST | `/api/demo/analyst` | `{"analyst":"claude"}` (or `mock` / `nemotron`) selects a configured analyst/reviewer team for future episodes; 409 while one is armed or active |
 | GET | `/api/episodes`, `/api/episodes/{id}` | recent episodes (newest first, last 20), one episode |
 | GET, DELETE | `/api/memory` | remembered episodes and the playbook; DELETE forgets them (a cold run) |
 | GET | `/api/learning/report` | durable episodes plus same-script warm-versus-control comparisons and the configured transfer status |
@@ -951,12 +1034,29 @@ docs/
 ## Next: milestone 4
 
 **Parts 1 and 3 are built and merged; neither has been run or measured. Agent-memory transfer
-(part 2) is built but not run.**
+(part 2) is built but not run. The immediate milestone is a qualified, visible demo.**
 
-**First, the rest of milestone 3 has to be run.** Its cold mock run has passed one smoke test
-(see [Tests](#tests)). What remains is to run the rest of it (the
-[review notes](#review-notes-the-episode-pass) list what to try, in order), to run
-it with Nemotron once a model id is chosen, and to measure the learning (see the task list).
+### Demo-readiness gate
+
+The code path is built and both local credentials passed authenticated model-catalog checks
+on 2026-09-19: Anthropic returned the configured Claude model and NVIDIA returned the
+configured Nemotron model. Those read-only checks did not invoke either model, exercise tool
+calling or prove billing. Use this order to protect the Nemotron credit balance:
+
+| Order | Gate | Status | Evidence / exit condition |
+|---|---|---|---|
+| 1 | Operator-controlled flow, runtime Mock / Claude / Nemotron selector, exact model label and single-container Cloud Run packaging | Built | Code and documentation are in this branch; these new paths have not been run. |
+| 2 | Local mock episode | **Next** | Start Oakland, select **Mock**, arm `operator-collision`, inject one collision and reach `completed`; confirm an applied response, scorecard and readable lesson. This proves the whole path without paid calls. |
+| 3 | Local Claude qualification | Pending | Set `EPISODE_FALLBACK_TO_MOCK=false`, select **Claude** without restarting, repeat one operator-controlled episode and confirm the episode identifies Claude as analyst and reviewer. |
+| 4 | Recall and failure drills | Pending | Repeat the mock incident warm, then run `varied-crash`; confirm recall is visible. During separate mock runs, verify **Reset** and **Clear scene** abort monitoring cleanly. |
+| 5 | Local Nemotron qualification | Pending | Only after gates 2–4 pass, keep fallback off, select **Nemotron** and run one operator-controlled episode. Stop after the first successful analysis/review cycle to conserve credits. |
+| 6 | Cloud Run and stage rehearsal | Pending | Deploy Mock first, open the public URL and prove the UI, REST API and reconnecting WebSocket. Then attach Secret Manager values, qualify the stage model once, rehearse the visible click path, and set `--min=0` after the event. |
+
+The demo is ready when gates 2–4 and 6 pass with Claude as the stage model. Gate 5 proves
+the optional Nemotron path but is deliberately last; it is not required to spend Nemotron
+credits before the rest of the demo is known to work. The deeper snapshot, two-crash and
+live-apply checks remain important engineering follow-up, but they are not on the shortest
+stage-critical path.
 
 Milestone 4 takes what milestones 2 and 3 deferred: the NVIDIA Smart City input that was the
 second half of milestone 3, the episode's "Later" items, and the measurement of the learning.
@@ -991,6 +1091,9 @@ the previous pass, plus five fixes found while reading the code. The single-cras
 
 | Area | Files | Change |
 |---|---|---|
+| Demo qualification | `agent/claude.py`, `agent/chat.py`, `learning/{analysts,reviewer,episode}.py`, `providers.py`, `api/routes.py`, `components/EpisodePanel.tsx` | Claude Messages API support, runtime Mock / Claude / Nemotron selection between episodes, exact model visibility and a credit-free Mock startup. |
+| | `simulation/scenarios/*/demos/operator-collision.json`, `simulation/scenario.py` | An operator-controlled script that arms autonomous response and waits for the presenter to click **Inject collision**. |
+| | `Dockerfile`, `.dockerignore`, `.env.demo.example`, `main.py`, `scripts/deploy-cloudrun.sh` | One Cloud Run image serves the console, API, MCP and WebSocket; the safe demo template keeps secrets local and starts on Mock. |
 | Fixes | `simulation/sumo.py`, `models/domain.py` | Programs installed at runtime are recorded, carried in the snapshot (`custom_programs`) and re-created before `loadState`. Without this, every branch after a live timing change fails with `Unknown program` (SUMO's `MSStateHandler`). |
 | | `api/mcp_tools.py` | `start_analysis` read `a.probe`, which does not exist (`Analysis.probes`). Every call raised after the snapshot and left the run locked until the idle timeout. |
 | | `services/scenarios.py` | `finish` and `evaluate` refuse an analysis that is already closed, so a pipeline still running after `abandon` can no longer complete the failed run. `run_pipeline` is public (the mock analyst awaits it); new `ScenarioRun.rounds` and `.recalled`. |
@@ -1009,29 +1112,24 @@ the previous pass, plus five fixes found while reading the code. The single-cras
 
 ### What was and was not checked
 
-- **Run: build checks only.** `python -m compileall app` and an import of `app.main` both
+- **Earlier checks recorded on main:** `python -m compileall app` and an import of `app.main` both
   passed. The import builds the app and registers every MCP tool, so the tool schemas load;
   it starts no SUMO and no server. `make build` (tsc + vite) and
   `npm --prefix frontend run lint` are clean.
-- **Not run:** every behavior in this pass. CLAUDE.md hard rule 1 then allowed no tests, no
-  scratch scripts and no running the app. Nothing has started an episode, applied a plan to a
-  live sim, loaded a snapshot with `custom_programs`, called NIM, or rendered the new panel.
-  The existing test suite was not run either.
-- **To try, in order:**
-  1. A cold `crash-ahead` with the mock (steps 1–5 of the
-     [walkthrough](#demo-walkthrough-autonomous-episode)). Check the ops log for the applied
-     programs and the EMS probe, and that `memory/episodes/EP-0001.md` is readable.
-  2. A warm `crash-ahead`. `recalled` lists the first episode, and it uses fewer candidates
-     if that lesson was `effective`.
-  3. `varied-crash`, `crash-already` and `double-crash`.
-  4. The snapshot fix. From any MCP client (for example `npx @modelcontextprotocol/inspector`
-     on `http://127.0.0.1:8000/mcp`), call `start_analysis`, `simulate_plans` with a timing
-     plan, `submit_recommendation` for it and `implement_recommendation`. Then run another
-     analysis: its branches must complete, not fail with `Unknown program`.
-  5. Reset and **Clear scene** during `monitoring`: both should give `aborted`. With
-     `AGENT_MAY_IMPLEMENT=false`, the episode should wait for **Apply to live signals**.
-  6. Nemotron: set `NVIDIA_API_KEY`, `NEMOTRON_MODEL` and `EPISODE_ANALYST=nemotron`. A wrong
-     key should fall back to the mock, visible in the episode's steps.
+- **Credential and catalog checks:** on 2026-09-19, authenticated read-only model-list calls
+  returned HTTP 200 for the Claude and Nemotron credentials in the local `.env`, and each
+  configured model id appeared in its provider's catalog. No secret value was printed or
+  added to Git. These checks made no inference call.
+- **Not run in this branch:** the operator-controlled flow, runtime provider selection,
+  Claude/Nemotron inference, the single-container deployment and the updated panel. The cold
+  mock smoke run documented under [Tests](#tests) predates this work. CLAUDE.md hard rule 1
+  prohibits agents from running tests, scratch scripts or the app without a user request, so
+  the existing suite was not re-run.
+- **Next:** follow the single ordered [demo-readiness gate](#demo-readiness-gate). After the
+  stage path works, use an MCP client to exercise a timing-plan implementation followed by a
+  second analysis; every branch must load the changed signal program instead of failing with
+  `Unknown program`. Then exercise `crash-already` and `double-crash` before relying on those
+  non-stage paths.
 
 ### Where a reviewer should look hardest
 
@@ -1046,9 +1144,9 @@ the previous pass, plus five fixes found while reading the code. The single-cras
    reboots it.
 4. **The scorecard** (`scorecard.py`): the absolute-time window, the empty-window cases, and
    whether the thresholds give sensible verdicts on real runs.
-5. **The Nemotron loop** (`analysts.py`): message shapes against NIM's OpenAI-compatible API
-   (tool calls, `tool_call_id`, arguments as a JSON string), the forced `incident_ids`, and
-   the nudge when the model stops early.
+5. **The model loop** (`analysts.py`, `agent/claude.py`, `agent/nemotron.py`): message shapes
+   for Claude content blocks and NIM's OpenAI-compatible API, forced `incident_ids`, tool
+   result errors, and the nudge when a model stops early.
 6. **Still unexercised from the groundwork pass:**
    - `_realised_emergency_eta` returns `None` while any responder has not arrived.
    - Closing an analysis while branches run (`_close`, `_run_round`, `_drop_snapshot`).

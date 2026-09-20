@@ -1,0 +1,8 @@
+{
+  "id": "operator-collision",
+  "name": "Operator collision",
+  "description": "Arm autonomous response without scheduling a crash. Click Inject collision when you are ready to start the episode.",
+  "crashes": [],
+  "monitor_s": 600,
+  "speed": 16
+}

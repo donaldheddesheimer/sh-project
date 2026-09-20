@@ -60,8 +60,9 @@ venv directly (this is what works in PowerShell or Git Bash):
 - Try the pipeline: `POST /api/incidents/inject` with `{}`, wait about 2 simulated minutes
   (30 s at the default 4×), then `POST /api/scenarios/run` with `{}`. The run takes ~25 s.
   Use `curl.exe` in PowerShell (`curl` is an alias for `Invoke-WebRequest`).
-- Try an episode: `POST /api/demo/start` with `{"script": "crash-ahead"}` (or the console's
-  Autonomous agent panel). `DELETE /api/memory` first for a cold run.
+- Try the stage episode: `POST /api/demo/start` with `{"script": "operator-collision"}` (or
+  **Arm** in the console's Autonomous agent panel), then click **Inject collision**.
+  `DELETE /api/memory` first for a cold run. `crash-ahead` remains the unattended version.
 - To test the UI against a non-default backend: `BACKEND_URL=http://127.0.0.1:8001` for Vite.
   `?fixture=scenario` replays a recorded run but still needs a running backend and an active incident.
 - Config is env vars or `.env` (repo root or `backend/`); every setting is in
@@ -85,7 +86,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Applying a recommendation to the live city (the only live apply) | [backend/app/learning/implementor.py](backend/app/learning/implementor.py) |
 | Live monitor, scorecard thresholds and outcome rules | `backend/app/learning/monitor.py`, `scorecard.py` |
 | Reviewer (lesson text), memory files, recall similarity | `backend/app/learning/reviewer.py`, `store.py` |
-| Analysts: mock pipeline, Nemotron MCP loop over NIM | `backend/app/learning/analysts.py`, `backend/app/agent/nemotron.py` (NIM client) |
+| Analysts: mock pipeline, shared model MCP loop, Claude/Nemotron API adapters | `backend/app/learning/analysts.py`, `backend/app/agent/{claude,nemotron}.py` |
 | Data models | `backend/app/models/{domain,api,scenario,episode}.py` |
 | Network, demand, incident defaults | `simulation/networks/grid3x3/`, `simulation/scenarios/downtown_grid/` (`scenario.json`) |
 | The Oakland city (OSM map, synthetic demand and timing) | `simulation/networks/pittsburgh_oakland/` (README, build), `simulation/scenarios/pittsburgh_oakland/` |
@@ -104,7 +105,8 @@ venv directly (this is what works in PowerShell or Git Bash):
   schema-validated plan data; the safety validator and completed-candidate gate still decide
   what can run. Its first failure switches that run to the mock when
   `AGENT_FALLBACK_TO_MOCK=true`, or fails it when false. Nemotron also runs as an episode
-  analyst (`EPISODE_ANALYST`).
+  analyst. Claude and Nemotron are runtime-selectable episode analyst/reviewer teams;
+  `EPISODE_ANALYST` is only their startup default.
 - **One thread owns the live TraCI connection.** TraCI is blocking and not thread-safe.
   Touch the live simulation only through `CityService.run_on_live(fn)`; scripted crashes are
   fired by the runner thread itself (`set_scripted_events`).
@@ -206,7 +208,8 @@ venv directly (this is what works in PowerShell or Git Bash):
   processes, and the smoke tests boot the whole app with `Settings(_env_file=None, ...)`.
 - **README.** It is the source of truth for the episode and the roadmap; keep it consistent
   (Hard rules).
-- **Git.** Work happens on feature branches merged by PR; don't push to `main`.
+- **Git.** Work happens on branches named `feature/<description>` and is merged by PR; do not
+  create new `codex/*` branches and do not push to `main`.
 
 ## Docs map
 

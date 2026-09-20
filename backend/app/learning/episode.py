@@ -3,8 +3,8 @@
 The episode service is the only thing that starts an agent. While a demo script is armed, every detected crash
 starts or supersedes an episode:
 
-- ``armed``: the script is loaded; the live runner fires its crashes at their simulation time (one before the end
-  of warm-up has already happened when the console opens);
+- ``armed``: the script is loaded; the live runner fires scheduled crashes at their simulation time, or an empty
+  script waits for an operator-injected collision;
 - ``detected`` → ``analyzing``: the analyst tests plans in parallel branches and recommends one;
 - ``monitoring``: the recommendation is live (applied by the agent, or by this service if the agent did not) and
   the monitor caches live samples for a fixed number of simulated seconds;
@@ -27,6 +27,7 @@ import itertools
 import logging
 import time
 from collections import deque
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -41,6 +42,7 @@ from app.learning.store import ExperienceStore, incident_features
 from app.models.api import EventLevel
 from app.models.domain import Incident
 from app.models.episode import (
+    ACTIVE_STATUSES,
     WORKING_STATUSES,
     DemoInfo,
     Episode,
@@ -79,6 +81,16 @@ class Reviewer(Protocol):
     ) -> Lesson: ...
 
 
+@dataclass(frozen=True)
+class AgentTeam:
+    """One selectable analyst/reviewer pair and its optional analyst fallback."""
+
+    analyst: Analyst
+    fallback: Analyst | None
+    reviewer: Reviewer
+    model: str | None = None
+
+
 class EpisodeService:
     def __init__(
         self,
@@ -89,9 +101,8 @@ class EpisodeService:
         implementor: Implementor,
         monitor: LiveMonitor,
         store: ExperienceStore,
-        analyst: Analyst,
-        fallback: Analyst | None,
-        reviewer: Reviewer,
+        teams: dict[str, AgentTeam],
+        selected_team: str,
     ):
         self._settings = settings
         self._city = city
@@ -99,9 +110,12 @@ class EpisodeService:
         self._implementor = implementor
         self._monitor = monitor
         self._store = store
-        self._analyst = analyst
-        self._fallback = fallback  # runs when the primary analyst fails (EPISODE_FALLBACK_TO_MOCK)
-        self._reviewer = reviewer
+        self._teams = teams
+        self._analyst: Analyst
+        self._fallback: Analyst | None
+        self._reviewer: Reviewer
+        self._team: AgentTeam
+        self._select_team(selected_team)
         self._episodes: deque[Episode] = deque(maxlen=HISTORY)
         self._working: Episode | None = None  # armed, detected, analyzing or monitoring
         self._agent: asyncio.Task | None = None
@@ -141,6 +155,11 @@ class EpisodeService:
             ],
             armed=self._script.id if self._script else None,
             analyst=self._analyst.name,
+            analyst_model=self._team.model,
+            analysts=[
+                {"id": name, "model": team.model}
+                for name, team in self._teams.items()
+            ],
             current=self._episodes[-1] if self._episodes else None,
             memory=self._store.stats(),
         )
@@ -154,7 +173,7 @@ class EpisodeService:
             self._arm()
 
     async def start_demo(self, script_id: str, memory_mode: MemoryMode = "use") -> Episode:
-        """Reset the city and arm ``script_id``: its crashes play again from the start."""
+        """Reset the city and arm ``script_id``: scheduled crashes play, or the operator injects one."""
         self._memory_mode = memory_mode
         script = self._load(script_id)
         await self._city.reset()  # the reset hook aborts the working episode and arms a new one
@@ -177,6 +196,16 @@ class EpisodeService:
             self._abort(self._working, "the demo was stopped")
         return self.info()
 
+    def select_analyst(self, name: str) -> DemoInfo:
+        """Select the analyst/reviewer used by future episodes; never switch a live episode mid-run."""
+        if name not in self._teams:
+            raise KeyError(name)
+        if self._working is not None or any(ep.status in ACTIVE_STATUSES for ep in self._episodes):
+            raise RuntimeError("stop or finish the current episode before changing the analyst")
+        self._select_team(name)
+        self._city.events.add(EventLevel.INFO, f"Autonomous analyst changed to {name}", self._city.sim_time)
+        return self.info()
+
     def _load(self, script_id: str) -> DemoScript:
         script = self._city.scenario.demos.get(script_id)
         if script is None:
@@ -193,8 +222,12 @@ class EpisodeService:
         script = self._script
         ep = self._new(EpisodeStatus.ARMED)
         self._working = ep
-        times = ", ".join(f"{c.at_sim_s:.0f}" for c in script.crashes)
-        self._step(ep, EpisodeStatus.ARMED, f"armed '{script.name}' (crash at sim {times} s)")
+        if script.crashes:
+            times = ", ".join(f"{c.at_sim_s:.0f}" for c in script.crashes)
+            message = f"armed '{script.name}' (crash at sim {times} s)"
+        else:
+            message = f"armed '{script.name}'; waiting for the operator to inject a collision"
+        self._step(ep, EpisodeStatus.ARMED, message)
 
     # ---------------------------------------------------------------- hooks
 
@@ -462,6 +495,13 @@ class EpisodeService:
         task, self._agent = self._agent, None
         if task is not None and not task.done():
             task.cancel()  # a simulation round already running finishes on its own (the service shields it)
+
+    def _select_team(self, name: str) -> None:
+        team = self._teams[name]
+        self._team = team
+        self._analyst = team.analyst
+        self._fallback = team.fallback
+        self._reviewer = team.reviewer
 
     def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)

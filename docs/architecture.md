@@ -251,17 +251,19 @@ An episode is one agent answering one set of active incidents, from detection to
 lesson. `EpisodeService` is the only thing that starts an agent, and only while a demo
 script is armed. The README's
 [autonomous episode section](../README.md#the-autonomous-self-learning-episode) has the
-rules (two-crash rule, decisions, thresholds). This table is the code path.
+rules (two-crash rule, decisions, thresholds). Configured mock, Claude and Nemotron teams
+can be selected between episodes through `POST /api/demo/analyst`; selection is refused
+while an episode is armed or active. This table is the code path.
 
 | # | Stage | Code | Output |
 |---|---|---|---|
-| 1 | Script | `EpisodeService.start_demo` → `CityService.set_scripted_events` → `LiveSimulationRunner` | crashes fired on the runner thread at their simulation time: inside the warm-up (already happened) or while running; episode `armed` |
+| 1 | Script | `EpisodeService.start_demo` → `CityService.set_scripted_events` → `LiveSimulationRunner` | scheduled crashes fire on the runner thread; an empty script waits for operator injection; episode `armed` |
 | 2 | Detect | `MockSmartCityProvider` → `CityService.incident_listeners` → `EpisodeService._on_incident` | episode `detected` over every active incident, or the working one superseded |
-| 3 | Analyze | `MockAnalyst` (`ScenarioService.run_pipeline`) or `NemotronAnalyst` (MCP client over NIM, fallback to the mock) | a completed `ScenarioRun`; episode `analyzing` |
+| 3 | Analyze | `MockAnalyst` (`ScenarioService.run_pipeline`) or `ModelAnalyst` (MCP client driven by Claude or Nemotron, optional fallback to the mock) | a completed `ScenarioRun`; episode `analyzing` |
 | 4 | Implement | `Implementor.implement(run_id, by)` in one `run_on_live` command | re-validation on live programs, EMS probes, `apply_plan`; `Implementation` on the run and the episode; the plan joins the standing responses; episode `monitoring` |
 | 5 | Monitor | `LiveMonitor` (a frame observer) | `LiveSample` every 5 simulated seconds; a `LiveRecord` after the window |
 | 6 | Score | live `response_notes()` → `build_scorecard` | `Scorecard` (code only): predicted vs realised on absolute simulation time, typed corridor/diversion checks, provisional state, outcome |
-| 7 | Review | `MockReviewer` / `NemotronReviewer` | `Lesson` (verdict = the scorecard's outcome); episode `reviewing` |
+| 7 | Review | `MockReviewer` / selected Claude or Nemotron `ModelReviewer` | `Lesson` (verdict = the scorecard's outcome); model errors use Mock only when `EPISODE_FALLBACK_TO_MOCK=true`, otherwise the episode fails; episode `reviewing` |
 | 8 | Remember | `ExperienceStore.save` | `memory/episodes/EP-NNNN.md` + `playbook.md`; episode `completed`; live sim paused |
 | 9 | Recall | `ScenarioService.lessons_source` → `ExperienceStore.recall` | structured/semantic/combined/ranking scores and query-scoped trust in `IncidentContext.lessons`, `ScenarioRun.recalled`, MCP `experience` |
 

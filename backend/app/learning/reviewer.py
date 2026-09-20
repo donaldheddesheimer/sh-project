@@ -2,8 +2,8 @@
 
 It sees only the scorecard and the condensed episode (the situation, the plans tried, the plan applied), never
 the analyst's reasoning, so a lesson rests on measured numbers. The verdict is always the scorecard's outcome,
-computed by code; the reviewer writes the prose around it. The mock reviewer uses templates; the Nemotron
-reviewer asks NIM for the prose and falls back to the mock on any failure.
+computed by code; the reviewer writes the prose around it. The mock reviewer uses templates; a model reviewer
+asks Claude or Nemotron for the prose and, when configured, falls back to the mock on any failure.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import json
 import logging
 import re
 
-from app.agent.nemotron import NimClient
+from app.agent.chat import ChatClient
 from app.learning.store import describe, plan_family
 from app.models.domain import CandidateStatus, SimulationCandidate
 from app.models.episode import IncidentFeatures, Lesson, PlanSummary, Scorecard
@@ -129,17 +129,16 @@ Answer with one JSON object and nothing else:
 """
 
 
-class NemotronReviewer:
-    name = "nemotron"
-
-    def __init__(self, nim: NimClient, fallback: MockReviewer):
-        self._nim = nim
+class ModelReviewer:
+    def __init__(self, name: str, chat: ChatClient, fallback: MockReviewer | None):
+        self.name = name
+        self._chat = chat
         self._fallback = fallback
 
     async def review(
         self, incidents: list[IncidentFeatures], chosen: PlanSummary, tried: list[PlanSummary], sc: Scorecard
     ) -> Lesson:
-        draft = await self._fallback.review(incidents, chosen, tried, sc)
+        draft = await self._fallback.review(incidents, chosen, tried, sc) if self._fallback else None
         episode = {
             "situation": [describe(f) for f in incidents],
             "applied": chosen.model_dump(),
@@ -152,7 +151,7 @@ class NemotronReviewer:
             {"role": "user", "content": json.dumps(episode)},
         ]
         try:
-            reply = await self._nim.chat(messages, max_tokens=2048)
+            reply = await self._chat.chat(messages, max_tokens=2048)
             match = re.search(r"\{.*\}", reply.get("content") or "", re.DOTALL)
             data = json.loads(match.group(0)) if match else {}
             return Lesson(
@@ -161,9 +160,11 @@ class NemotronReviewer:
                 what_worked=[str(x) for x in data.get("what_worked", [])][:5],
                 what_didnt=[str(x) for x in data.get("what_didnt", [])][:5],
                 next_time=[str(x) for x in data.get("next_time", [])][:5],
-                confidence=min(0.95, max(0.05, float(data.get("confidence", draft.confidence)))),
+                confidence=min(0.95, max(0.05, float(data.get("confidence", draft.confidence if draft else 0.3)))),
                 reviewer=self.name,
             )
-        except Exception as exc:  # noqa: BLE001 - any NIM or parsing failure falls back to the template lesson
-            log.warning("Nemotron review failed, using the mock reviewer: %s", exc)
-            return draft.model_copy(update={"reviewer": f"mock (nemotron failed: {type(exc).__name__})"})
+        except Exception as exc:  # noqa: BLE001 - model and parsing failures follow the configured fallback policy
+            if draft is None:
+                raise
+            log.warning("%s review failed, using the mock reviewer: %s", self.name, exc)
+            return draft.model_copy(update={"reviewer": f"mock ({self.name} failed: {type(exc).__name__})"})

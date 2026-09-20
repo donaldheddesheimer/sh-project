@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.mcp_tools import build_mcp
 from app.api.routes import router, ws_router
@@ -46,6 +48,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ws_router)
     # MCP tools for agents at /mcp (streamable HTTP; stateless, so no session affinity is needed)
     app.router.routes.extend(mcp.streamable_http_app(stateless_http=True, json_response=True).routes)
+    # The Cloud Run image builds the console into frontend/dist. Keep local development unchanged: without that
+    # directory, Vite still serves the UI and proxies /api and /ws to this app.
+    frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if frontend_dist.is_dir():
+        app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="console")
     return app
 
 

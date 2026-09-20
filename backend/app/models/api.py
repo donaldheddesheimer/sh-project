@@ -103,6 +103,10 @@ class DemoStartRequest(BaseModel):
     memory_mode: MemoryMode = Field("use", description="use recalled lessons, or ignore them for a control run")
 
 
+class AnalystSelectionRequest(BaseModel):
+    analyst: str = Field(description="A configured episode analyst id returned by GET /api/demo")
+
+
 class ControlResponse(BaseModel):
     status: RunStatus
     speed: float

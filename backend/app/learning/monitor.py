@@ -10,12 +10,15 @@ numbers can be compared directly.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from app.models.domain import NetworkState
 from app.models.episode import Implementation, LiveRecord, LiveSample
+
+log = logging.getLogger(__name__)
 
 SAMPLE_S = 5.0  # simulated seconds between samples (the live trend's interval)
 RING_S = 1800.0  # simulated seconds of history kept
@@ -75,6 +78,23 @@ class LiveMonitor:
         window.record.complete = False
         window.record.abort_reason = reason
         return window.record
+
+    async def shutdown(self) -> None:
+        """Cancel queued completion callbacks and wait for them.
+
+        ``on_done`` runs the review and the durable memory write. A discarded monitor (a map switch) must not
+        finish one against a city that no longer exists, so these are awaited, not just cancelled.
+        """
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 - cleanup must not raise into a map switch
+                log.exception("a monitor completion task failed while shutting down")
 
     async def observe(self, state: NetworkState) -> None:
         if self._ring and state.sim_time < self._ring[-1].t:  # the simulation was reset

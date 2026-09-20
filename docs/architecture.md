@@ -37,8 +37,10 @@ SUMO ──TraCI──► SumoSimulation.step()          (runner thread, paced t
   race-free control.
 - The WebSocket hub gives each client a small drop-oldest buffer, so a slow browser can
   never stall the simulation or other clients.
-- New clients get a `hello` with the current state, the recent ops log and the metric
-  trend, so a reload mid-incident still shows the pre-incident baseline.
+- New clients get a `hello` with network geometry, current state, the recent ops log and the
+  metric trend, so a reload mid-incident still shows the pre-incident baseline. Selecting a
+  different bundled map replaces the service graph and sends every connected client a fresh
+  `hello`, clearing the previous map's local state without disconnecting the WebSocket.
 
 ## Analyze Response pipeline
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client'
-import type { Camera, NetworkGeometry } from './api/types'
+import type { Camera } from './api/types'
 import { EpisodePanel } from './components/EpisodePanel'
 import { IncidentPanel } from './components/IncidentPanel'
 import { CityMap, type Selection } from './components/map/CityMap'
@@ -26,34 +26,22 @@ const ACTIONS: Record<Action, () => Promise<unknown>> = {
 }
 
 export default function App() {
-  const { state, status, events, history, connected, scenario, episode, phaseLabels, acceptScenario } = useCityStream()
-  const [network, setNetwork] = useState<NetworkGeometry | null>(null)
+  const { state, network, status, events, history, connected, scenario, episode, phaseLabels, acceptScenario } =
+    useCityStream()
   const [cameras, setCameras] = useState<Camera[]>([])
   const [selection, setSelection] = useState<Selection | null>(null)
   const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [pendingMapId, setPendingMapId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const cancelReplay = useRef<(() => void) | null>(null)
 
   useEffect(() => {
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const load = () =>
-      api
-        .network()
-        .then((n) => !cancelled && setNetwork(n))
-        .catch(() => {
-          if (!cancelled) timer = setTimeout(load, 1500)
-        })
-    load()
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
+    setCameras([])
+    if (!network) {
+      return
     }
-  }, [])
-
-  useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
     // Cameras exist only on the VSS path and appear once its first poll succeeds, so an empty
@@ -84,7 +72,15 @@ export default function App() {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [])
+  }, [network])
+
+  useEffect(() => {
+    setSelection(null)
+    setHoveredPlanId(null)
+    setSelectedPlanId(null)
+    cancelReplay.current?.()
+    cancelReplay.current = null
+  }, [network?.id])
 
   useEffect(() => {
     if (!toast) return
@@ -163,10 +159,32 @@ export default function App() {
     }
   }
 
+  const switchMap = async (mapId: string) => {
+    if (mapId === network?.id) return
+    setBusy('map')
+    // Keep the controlled select on the operator's choice while the replacement warms up.
+    // Otherwise React can restore the old network id and some browsers emit a reverse change.
+    setPendingMapId(mapId)
+    setSelection(null)
+    setHoveredPlanId(null)
+    setSelectedPlanId(null)
+    cancelReplay.current?.()
+    cancelReplay.current = null
+    try {
+      await api.selectMap(mapId)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPendingMapId(null)
+      setBusy(null)
+    }
+  }
+
   return (
     <div className="app">
       <TopBar
         networkName={network?.name ?? null}
+        mapId={pendingMapId ?? network?.id ?? null}
         simTime={state?.sim_time ?? null}
         status={status}
         connected={connected}
@@ -174,14 +192,15 @@ export default function App() {
         busy={busy}
         analyze={analyze}
         fixture={!!FIXTURE_MODE}
-onAction={(action) => {
-  if (action === 'reset') {
-    cancelReplay.current?.()
-    cancelReplay.current = null
-  }
-  void run(action, ACTIONS[action])
-}}
+        onAction={(action) => {
+          if (action === 'reset') {
+            cancelReplay.current?.()
+            cancelReplay.current = null
+          }
+          void run(action, ACTIONS[action])
+        }}
         onSpeed={(speed) => run('speed', () => api.speed(speed))}
+        onMap={(mapId) => void switchMap(mapId)}
         onAnalyze={startAnalysis}
       />
 
@@ -211,7 +230,11 @@ onAction={(action) => {
         <MapLegend hasCameras={cameras.some((camera) => camera.location != null)} />
         {network?.attribution && <div className="map-attribution">{network.attribution}</div>}
         {activeCandidate && overlay && <MapPlanCard candidate={activeCandidate} overlay={overlay} />}
-        {status?.status === 'starting' && <div className="map-banner">Warming up simulation…</div>}
+        {busy === 'map' ? (
+          <div className="map-banner">Switching traffic map…</div>
+        ) : status?.status === 'starting' ? (
+          <div className="map-banner">Warming up simulation…</div>
+        ) : null}
         {status?.status === 'error' && <div className="map-banner error">Simulation error: {status.error}</div>}
       </main>
 

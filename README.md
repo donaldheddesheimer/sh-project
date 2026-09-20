@@ -10,9 +10,9 @@ the result (see [the autonomous episode](#the-autonomous-self-learning-episode))
 This repository has completed **milestone 2**, built **milestone 3** (the autonomous
 episode; only its cold mock run has been run, once, by a smoke test), and built two of
 milestone 4's three parts without running them (see [Next: milestone 4](#next-milestone-4)). It
-has a live SUMO digital twin of a 3×3 downtown grid and a FastAPI backend that streams city
-state over WebSocket. There is a React/MapLibre operations console: inject a collision,
-watch the queue spill back, then click **Analyze Response** to test up to 9 candidate plans
+has live SUMO digital twins of a 3×3 downtown grid and Oakland, Pittsburgh, with a FastAPI
+backend that streams city state over WebSocket. There is a React/MapLibre operations console:
+inject a collision, watch the queue spill back, then click **Analyze Response** to test up to 9 candidate plans
 in parallel SUMO branches. Those plans include signal timing, an EMS green corridor and a
 diversion advisory. The console compares each plan against the baseline and recommends one.
 The **autonomous episode** runs that loop after a scripted or operator-injected crash: an
@@ -124,6 +124,12 @@ plan, and a lesson file was written. It ran at 8× with a 300 s analysis horizon
 monitor window, not the walkthrough's 4× and 600 s. It asserts no plan, delay or verdict beyond
 "a valid verdict", so it says the loop works and nothing about how well it responds.
 
+No automated tests were run for the map-selector branch. On 2026-09-20 it was qualified
+manually with the real local UI, REST API, WebSocket and SUMO processes: the selector changed
+from Oakland (33 signals) to the 3×3 grid (9 signals) and back, each replacement reached
+`running`, and the final Oakland view streamed live vehicles and metrics. The same session ran
+the Mock episode and failure evidence recorded in the [demo-readiness gate](#demo-readiness-gate).
+
 Not covered: a warm second episode (recall), the two-crash rule, Oakland, the MCP tools,
 Claude, Nemotron and pre-emption. Tests are written only when the user asks for them.
 
@@ -214,7 +220,7 @@ gcloud run deploy traffic-ops-demo \
   --timeout=3600 \
   --session-affinity \
   --no-cpu-throttling \
-  --set-env-vars=SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland,SMART_CITY_PROVIDER=mock,AGENT_PROVIDER=mock,EPISODE_ANALYST=mock,SIM_SPEED=16,SCENARIO_WORKERS=2,MEMORY_DIR=/tmp/traffic-memory
+  --set-env-vars=SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland,SMART_CITY_PROVIDER=mock,AGENT_PROVIDER=mock,EPISODE_ANALYST=mock,SIM_SPEED=16,ANALYSIS_LIVE_SPEED=1,SCENARIO_WORKERS=2,MEMORY_DIR=/tmp/traffic-memory
 ```
 
 After the mock deployment works, attach both keys without rebuilding. Add
@@ -284,9 +290,12 @@ its phase, queues and speed.
 
 ### Console layout
 
-The command bar groups live state, simulation speed and incident actions. The map stays
-central, with incident details and KPIs on the right and trends or scenario comparisons in
-the lower dock. **Analyze Response** brings the Response plans panel into view. The
+The command bar switches between the **3×3 Grid** and **Pittsburgh** and groups live state,
+simulation speed and incident actions. Switching maps starts a fresh live simulation, so
+map-local incidents, analysis runs, episodes, trends and selections are cleared; durable
+agent memory remains available. The map stays central, with incident details and KPIs on the
+right and trends or scenario comparisons in the lower dock. **Analyze Response** brings the
+Response plans panel into view. The
 Autonomous agent panel starts collapsed and opens when an episode appears. On narrow screens,
 the speed control becomes a compact selector so all incident actions stay visible.
 
@@ -298,7 +307,9 @@ the base stylesheet.
 
 A second scenario, `pittsburgh_oakland`, runs the same console and pipeline on a real street
 layout: central Oakland around Fifth and Forbes Avenues, with 332 road links and 33 signals.
-The downtown grid stays the default, and the tests always use it.
+The downtown grid stays the default, and the tests always use it. Use the **Map** selector in
+the running console to switch cities without restarting either server. `SCENARIO_DIR` and the
+commands below only choose which map is active at startup.
 
 ```bash
 make backend-oakland   # or SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland in .env
@@ -360,7 +371,9 @@ analysis rounds of 10–16 s each plus the 600 s window, about 150 s), so use 8�
 ### Running the stage demo on Oakland with Claude or Nemotron
 
 The safe [demo environment template](#model-api-keys) already selects Oakland, 16× speed
-and a credit-free Mock startup. Once either or both provider credentials are present, use
+and a credit-free Mock startup. It slows the live city to 1× while branches run, then restores
+16× for monitoring, so the live city stays inside the branches' prediction horizon. Once
+either or both provider credentials are present, use
 the **Analyst** selector to switch the analyst and reviewer together between Mock, Claude
 and Nemotron without editing `.env` or restarting. The exact model id beside the selector
 is the model that will receive the next episode. For Cloud Run, add the credentials through
@@ -380,23 +393,21 @@ their own collision and need no manual injection.
 
 ## The autonomous, self-learning episode
 
-This is milestone 3 and the single place that describes it. It is **built
-but has been run end to end only once**: a smoke test ran a cold `crash-ahead` with the mock
-analyst to a completed episode (see [Tests](#tests) for what that does and does not show).
-Nothing else about it has run: the UI, warm recall, `varied-crash`, `crash-already`,
-`double-crash`, Nemotron. Beyond that test, only build checks were run (see
-[Review notes](#review-notes-the-episode-pass)).
+This is milestone 3 and the single place that describes it. The operator-controlled path,
+warm recall, `varied-crash`, Reset and Clear scene were manually qualified with the Mock team
+on Oakland on 2026-09-20; see the [demo-readiness gate](#demo-readiness-gate) for the evidence.
+Claude, Nemotron, `crash-already` and `double-crash` still have not been run end to end.
 
 **Status at a glance**
 
 | Piece | State | Where |
 |---|---|---|
 | Live twin, incidents, Analyze Response, MCP tools | Working | milestones 1–2 |
-| Scripted and operator-controlled crash scenarios | Built, not run | `simulation/scenarios/*/demos/`, `simulation/runner.py` |
-| One analysis over several incidents; branches that replay standing responses; abandoning an analysis | Written, not run | `services/scenarios.py`, `simulation/branching.py` |
-| Episode service, implementor, monitor, scorecard, reviewer, memory, recall, the mock acting on lessons | Built, not run | `backend/app/learning/`, `agent/mock.py` |
+| Scripted and operator-controlled crash scenarios | Operator collision and `varied-crash` qualified locally; the other scripts remain unrun | `simulation/scenarios/*/demos/`, `simulation/runner.py` |
+| One analysis over several incidents; branches that replay standing responses; abandoning an analysis | Single-incident branches and Reset/Clear aborts qualified; multi-incident analysis remains unrun | `services/scenarios.py`, `simulation/branching.py` |
+| Episode service, implementor, monitor, scorecard, reviewer, memory, recall, the mock acting on lessons | Qualified locally with Mock | `backend/app/learning/`, `agent/mock.py` |
 | Runtime-selectable mock, Claude and Nemotron analyst/reviewer teams | Built, not run: model teams need their API key and model id | `learning/analysts.py`, `agent/claude.py`, `agent/nemotron.py` |
-| Autonomous agent panel, runtime selector, **Apply to live signals** | Written, not run | `frontend/src/components/EpisodePanel.tsx`, `plans/ResponsePlans.tsx` |
+| Autonomous agent panel, runtime selector, **Apply to live signals** | Mock episode state and runtime selector visible locally; manual Apply remains unrun | `frontend/src/components/EpisodePanel.tsx`, `plans/ResponsePlans.tsx` |
 
 ### The idea
 
@@ -902,6 +913,7 @@ backend/app/
   models/episode.py     episode records: Episode, Implementation, Scorecard, Lesson, Experience
   models/api.py         CityState, requests/responses, ops events
   services/city.py      CityService: frames → CityState, commands, ops log
+  services/maps.py      runtime map switch: replace the active service graph, keep WebSocket clients
   services/scenarios.py ScenarioService: the Analyze Response pipeline (REST and MCP drivers)
   simulation/interface.py  TrafficSimulation contract
   simulation/sumo.py    SUMO/TraCI implementation (collisions, EMS, snapshots, metrics)
@@ -969,6 +981,7 @@ docs/
 | POST | `/api/incidents/{id}/clear` | clear the scene and reopen lanes |
 | POST | `/api/simulation/start` \| `pause` \| `reset` | run control |
 | POST | `/api/simulation/speed` | `{"multiplier": 8}` |
+| POST | `/api/simulation/map` | `{"map_id":"downtown_grid"}` or `{"map_id":"pittsburgh_oakland"}` replaces the live twin and returns its `NetworkGeometry` |
 | POST | `/api/emergency/dispatch` | send EMS to the latest incident |
 | GET | `/api/signals/{intersection}` | active signal program |
 | GET | `/api/cameras`, `/api/events` | camera registry, ops log |
@@ -984,8 +997,13 @@ docs/
 | GET | `/api/episodes`, `/api/episodes/{id}` | recent episodes (newest first, last 20), one episode |
 | GET, DELETE | `/api/memory` | remembered episodes and the playbook; DELETE forgets them (a cold run) |
 | GET | `/api/learning/report` | durable episodes plus same-script warm-versus-control comparisons and the configured transfer status |
+<<<<<<< HEAD
 | WS | `/ws/state` | `hello` (state, events, trend, latest run, latest episode) then `state` / `status` / `event` / `scenario` / `episode` messages |
 | MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md); [calling it with curl](docs/mcp-curl.md)) |
+=======
+| WS | `/ws/state` | `hello` (network geometry, state, events, trend, latest run, latest episode) then `state` / `status` / `event` / `scenario` / `episode` messages; a new `hello` announces a runtime map switch |
+| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md)) |
+>>>>>>> origin/main
 
 ## Current limitations
 
@@ -1002,7 +1020,7 @@ docs/
   - `divert-advisory`: 242 s, because shortening the queue is what helps.
 
   The mock's EMS tolerance keeps a slower corridor from being recommended. Two levers are
-  now built and **not yet measured**: the mock asks for a 350 m detection distance instead
+  now built and measured in the local Mock qualification: the mock asks for a 350 m detection distance instead
   of the 150 m default (blocks are 250 m, so pre-emption used to start once the responder
   was already in the queue), and a ninth plan, `corridor-plus-divert`, combines the corridor
   with the diversion so there is less queue to clear. A third lever, SUMO's own blue-light
@@ -1013,11 +1031,12 @@ docs/
   segment, how many vehicles were ahead of it, and which signals were pre-empted for it —
   so the number can be explained rather than only observed. A responder gets the stall line
   only if it was held up for at least 3 s (standing still while en route, not counting the
-  step in which it stops at its scene). Read from the code, not run.
-- **Branches are slow-ish.** Each takes 10–16 s of wall time when 4 run in parallel, so a
-  full run takes about 25 s. The per-step rubbernecking, responder and diagnostics
-  bookkeeping no longer makes a TraCI round trip per vehicle (lane and lane position ride
-  on the existing subscription), and starting a branch no longer pays SUMO's fixed ~1 s
+  step in which it stops at its scene). The local qualification did not force that stall case.
+- **Branches are slow-ish.** The 2026-09-20 local qualification recorded 37.4 s of analysis
+  wall time for the cold 8-candidate run and 22.1 s for a warm 4-candidate run. That is an
+  end-to-end observation, not an isolated before/after performance benchmark. The per-step
+  rubbernecking, responder and diagnostics bookkeeping no longer makes a TraCI round trip
+  per vehicle (lane and lane position ride on the existing subscription), and starting a branch no longer pays SUMO's fixed ~1 s
   connect wait. **Neither speed-up has been timed**: the wall-clock figures above are the
   ones measured before the change. The opt-in `ANALYSIS_LIVE_SPEED` setting (see
   [Settings](#settings)) is a further, equally unmeasured lever.
@@ -1055,8 +1074,9 @@ docs/
 
 ## Next: milestone 4
 
-**Parts 1 and 3 are built and merged; neither has been run or measured. Agent-memory transfer
-(part 2) is built but not run. The immediate milestone is a qualified, visible demo.**
+**Parts 1 and 3 are built and merged. The local Mock path and agent-memory transfer have now
+been qualified; external VSS remains unrun. The immediate milestone is the real-model and
+Cloud Run qualification of the visible demo.**
 
 ### Demo-readiness gate
 
@@ -1067,10 +1087,10 @@ calling or prove billing. Use this order to protect the Nemotron credit balance:
 
 | Order | Gate | Status | Evidence / exit condition |
 |---|---|---|---|
-| 1 | Operator-controlled flow, runtime Mock / Claude / Nemotron selector, exact model label and single-container Cloud Run packaging | Built | Code and documentation are in this branch; these new paths have not been run. |
-| 2 | Local mock episode | **Next** | Start Oakland, select **Mock**, arm `operator-collision`, inject one collision and reach `completed`; confirm an applied response, scorecard and readable lesson. This proves the whole path without paid calls. |
-| 3 | Local Claude qualification | Pending | Set `EPISODE_FALLBACK_TO_MOCK=false`, select **Claude** without restarting, repeat one operator-controlled episode and confirm the episode identifies Claude as analyst and reviewer. |
-| 4 | Recall and failure drills | Pending | Repeat the mock incident warm, then run `varied-crash`; confirm recall is visible. During separate mock runs, verify **Reset** and **Clear scene** abort monitoring cleanly. |
+| 1 | Operator-controlled flow, runtime Mock / Claude / Nemotron selector, exact model label and single-container Cloud Run packaging | Local UI passed | The UI changed Oakland → 3×3 grid → Oakland and the selector exposed all three configured teams. Container deployment is still covered by gate 6. |
+| 2 | Local mock episode | **Passed 2026-09-20** | Cold `EP-0001` completed with 8 candidates, applied `corridor-plus-divert`, compared 562.5 s, recorded 7.22 m/s mean speed, received an `effective` verdict and wrote a readable lesson. Fallback was disabled. |
+| 3 | Local Claude qualification | Awaiting explicit data-sharing approval | Run with `EPISODE_FALLBACK_TO_MOCK=false`; the local qualification is prepared, but no incident briefing has been sent to Anthropic yet. |
+| 4 | Recall and failure drills | **Passed 2026-09-20** | Warm `EP-0002` recalled `EP-0001` and pruned 8 candidates to 4. `varied-crash` `EP-0003` recalled both lessons at 0.35 similarity and evaluated 9 candidates. Reset aborted `EP-0005` after 71.5 s of monitoring; Clear scene aborted `EP-0006` after 66 s. |
 | 5 | Local Nemotron qualification | Pending | Only after gates 2–4 pass, keep fallback off, select **Nemotron** and run one operator-controlled episode. Stop after the first successful analysis/review cycle to conserve credits. |
 | 6 | Cloud Run and stage rehearsal | Pending | Deploy Mock first, open the public URL and prove the UI, REST API and reconnecting WebSocket. Then attach Secret Manager values, qualify the stage model once, rehearse the visible click path, and set `--min=0` after the event. |
 
@@ -1088,8 +1108,8 @@ kept.
 
 | Part | Branch and plan | What it delivers | Status |
 |---|---|---|---|
-| 1. Twin engine | `feature/twin-engine`, [plan](docs/milestone-4/feature-twin-engine.md) | The branch speed-up in `sumo.py`; the EMS corridor explained and its levers tried (a longer detection distance, a combined corridor and diversion plan); per-responder EMS response from the twin; a `revert_response()` primitive; a pre-emption failure on the live twin that degrades instead of stopping it; an opt-in slower live speed during analysis | Built, none of it measured or run |
-| 2. Agent and memory | `feature/agent-memory`, [plan](docs/milestone-4/feature-agent-memory.md) | Built, not run: response checks/trust, `use`/`ignore` controls, optional embedding recall, learning report/protocol and REST `NemotronAgentProvider`. Revert-on-clear and per-responder EMS in the scorecard remain planned. | Built, not run |
+| 1. Twin engine | `feature/twin-engine`, [plan](docs/milestone-4/feature-twin-engine.md) | The branch speed-up in `sumo.py`; the EMS corridor explained and its levers tried (a longer detection distance, a combined corridor and diversion plan); per-responder EMS response from the twin; a `revert_response()` primitive; a pre-emption failure on the live twin that degrades instead of stopping it; an opt-in slower live speed during analysis | Exercised by the local Mock qualification; no isolated performance benchmark |
+| 2. Agent and memory | `feature/agent-memory`, [plan](docs/milestone-4/feature-agent-memory.md) | Response checks/trust, `use`/`ignore` controls, optional embedding recall, learning report/protocol and REST `NemotronAgentProvider`. Revert-on-clear and per-responder EMS in the scorecard remain planned. | Mock recall and response checks qualified; embeddings and Nemotron remain unrun |
 | 3. VSS input | `feature/vss-input`, [plan](docs/milestone-4/feature-vss-input.md) | `NvidiaSmartCityProvider` on the VSS Video Analytics MCP tools, with a replay client for development; a map matcher (lat/lon and place names → segment and lane); mirroring a reported incident into the twin so it can be analyzed; cameras and match details in the UI; Oakland demo scripts | Built, not run |
 
 **Prepared but not faked** still holds for part 3. The full Blueprint is not installed or run;
@@ -1142,8 +1162,9 @@ the previous pass, plus five fixes found while reading the code. The single-cras
   returned HTTP 200 for the Claude and Nemotron credentials in the local `.env`, and each
   configured model id appeared in its provider's catalog. No secret value was printed or
   added to Git. These checks made no inference call.
-- **Not run in this branch:** the operator-controlled flow, runtime provider selection,
-  Claude/Nemotron inference, the single-container deployment and the updated panel. The cold
+- **Not run in this branch:** runtime switching between the grid and Pittsburgh, the
+  operator-controlled flow, runtime provider selection, Claude/Nemotron inference, the
+  single-container deployment and the updated panel. The cold
   mock smoke run documented under [Tests](#tests) predates this work. CLAUDE.md hard rule 1
   prohibits agents from running tests, scratch scripts or the app without a user request, so
   the existing suite was not re-run.

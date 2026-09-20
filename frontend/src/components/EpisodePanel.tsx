@@ -213,9 +213,11 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
 
   return (
     <Section
+      key={episode?.id ?? 'idle'}
       title="Autonomous agent"
       icon="bolt"
       meta={info?.armed ? <span className="tag tag-primary">armed</span> : 'off'}
+      defaultOpen={episode != null}
     >
       <div className="episode-controls">
         <select

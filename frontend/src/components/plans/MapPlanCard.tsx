@@ -3,7 +3,15 @@ import type { SimulationCandidate } from '../../api/types'
 import type { PlanOverlay } from '../../lib/plans'
 import { Icon } from '../Icon'
 
-export function MapPlanCard({ candidate, overlay }: { candidate: SimulationCandidate; overlay: PlanOverlay }) {
+interface Props {
+  candidate: SimulationCandidate
+  overlay: PlanOverlay
+  /** Intersection id -> street names; a junction with no entry is shown by its id. */
+  names: Record<string, string>
+}
+
+export function MapPlanCard({ candidate, overlay, names }: Props) {
+  const nameOf = (id: string) => names[id] ?? id
   const hasMarks = overlay.retimed.length > 0 || overlay.avoid.length > 0 || !!overlay.corridor
   if (!hasMarks) return null
   return (
@@ -19,7 +27,7 @@ export function MapPlanCard({ candidate, overlay }: { candidate: SimulationCandi
         {overlay.retimed.length > 0 && (
           <div className="plan-key">
             <span className="key-ring" />
-            <span>Retimes <span className="mono">{overlay.retimed.join(', ')}</span></span>
+            <span>Retimes <span className="mono">{overlay.retimed.map(nameOf).join(', ')}</span></span>
           </div>
         )}
         {overlay.avoid.length > 0 && (
@@ -32,7 +40,8 @@ export function MapPlanCard({ candidate, overlay }: { candidate: SimulationCandi
           <div className="plan-key">
             <span className="key-bolt"><Icon name="bolt" size={11} /></span>
             <span>
-              Green corridor {overlay.corridor.ids.length ? `at ${overlay.corridor.ids.join(', ')}` : 'route unavailable'}
+              Green corridor{' '}
+              {overlay.corridor.ids.length ? `at ${overlay.corridor.ids.map(nameOf).join(', ')}` : 'route unavailable'}
               {overlay.corridor.assumed && <span className="plan-assumed"> · estimated station-to-incident path</span>}
             </span>
           </div>

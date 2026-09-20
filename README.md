@@ -284,6 +284,9 @@ How the regions drive each other:
 - **Dispatch EMS** targets the newest active incident. With several incidents open, the
   drawer gets a **Selected incident** picker, and dispatch is disabled while an older one is
   selected.
+- **Reset** and **Clear scene** ask for confirmation only when the click would throw work away: an active
+  incident, an open analysis or a working episode. After a scene is cleared the last analysis stays on screen,
+  read-only, and can no longer be applied.
 - Live analysis cannot start before a collision: the **Analyze** button exists only while an
   episode is `awaiting`, and the paused city stays paused until it is pressed.
 - Switching maps starts a fresh live simulation. Map-local incidents, analysis runs,
@@ -825,6 +828,7 @@ The defaults a demo run depends on, all in `backend/app/config.py`:
 |---|---|---|
 | `scenario_dir` | `downtown_grid` | The city at startup; the **Map** selector switches it |
 | `sim_speed` | 4 | Time scale at startup. An armed script sets its own; `operator-collision` asks for 16× |
+| `twin_refresh_s` | 7200 | A live city this many simulated seconds old is reset to a clean network when nothing depends on it: no active incident, open analysis, working episode or scheduled demo script. The Oakland network saturates about 2.5 simulated hours after a reset ([bug hunt](docs/bug-hunt-2026-09-20.md), D2). 0 turns it off. Built, not run |
 | `agent_provider` | `nemotron` | Who proposes plans for REST **Analyze Response**. Needs `NVIDIA_API_KEY`; without one the run fails visibly when called (no silent Mock fallback). Set `mock` in code for offline use. Not verified: Nemotron remains unrun |
 | `episode_analyst` | `nemotron` | The team every episode uses. Without `NVIDIA_API_KEY` Nemotron calls fail visibly; there is no fallback to `mock`. Not verified: never run against a live key |
 | `episode_agent_timeout_s` | 420 | Wall-clock limit for one Claude or Nemotron analysis, plus a cap of 16 model turns |
@@ -837,6 +841,7 @@ The defaults a demo run depends on, all in `backend/app/config.py`:
 | `embedding_model` | unset | Optional semantic recall through an OpenAI-compatible embedding NIM; unset keeps recall structured-only |
 | `claude_model`, `nemotron_model` | `claude-haiku-4-5-20251001`, `nvidia/nemotron-3-super-120b-a12b` | The model each team calls |
 | `mcp_url` | unset | Where a model analyst reaches the MCP tools; unset = this app's server, in-process |
+| `mcp_dns_rebinding_protection` | false | Whether `/mcp` rejects any Host header that is not local. The SDK turns this on for its loopback default, which made every request to the public Cloud Run URL a 421. Not verified on Cloud Run |
 | `smart_city_provider`, `nvidia_va_mcp_url`, `vss_*` | mock, unset, defaults | The NVIDIA VSS input path, off unless the code selects it |
 
 An analysis automatically holds the live city at 1× so its snapshot stays inside the branch
@@ -1097,14 +1102,14 @@ docs/
 | GET | `/api/network` | static geometry for the map |
 | GET | `/api/incidents` | active incidents (`?include_cleared=true` for history) |
 | GET | `/api/incidents/{id}` | one incident |
-| POST | `/api/incidents/inject` | stage a collision (defaults from `scenario.json`) |
-| POST | `/api/incidents/{id}/clear` | clear the scene and reopen lanes |
+| POST | `/api/incidents/inject` | stage a collision (defaults from `scenario.json`); 409 when a collision already blocks those lanes |
+| POST | `/api/incidents/{id}/clear` | clear that incident's crash and reopen its lanes; another crash on the same road stays |
 | POST | `/api/simulation/start` \| `pause` \| `reset` | run control |
 | POST | `/api/simulation/speed` | `{"multiplier": 8}` |
 | POST | `/api/simulation/map` | `{"map_id":"downtown_grid"}` or `{"map_id":"pittsburgh_oakland"}` replaces the live twin and returns its `NetworkGeometry` |
-| POST | `/api/emergency/dispatch` | send EMS to the latest incident |
+| POST | `/api/emergency/dispatch` | send EMS to the latest incident; 409 when a responder is already en route to it, or 4 are en route |
 | GET | `/api/signals/{intersection}` | active signal program |
-| GET | `/api/cameras`, `/api/events` | camera registry, ops log |
+| GET | `/api/cameras`, `/api/events` | camera registry, ops log (`/api/events?limit=` takes 1 to 200) |
 | GET | `/api/smart-city/status` | provider health, last success/error, and how many documents the **latest** poll filtered as unconfirmed or could not read |
 | POST | `/api/scenarios/run` | start Analyze Response: `{"incident_id"?, "incident_ids"?, "horizon_s": 600, "ems_probe": true, "memory_mode": "use"}` → `ScenarioRun` (202; 409 if no active incident or a run is open). `memory_mode: "ignore"` makes a no-recall control; `incident_ids` analyzes several crashes together |
 | GET | `/api/scenarios` | recent runs (newest first, last 10) |
@@ -1173,6 +1178,14 @@ docs/
   subscription, so such a vehicle is absent from the live metrics, the map and the vehicle
   count until it is re-inserted. Reading them as observations was a bug: one record dragged
   the console's mean speed to millions of negative mph. Read from the code, not run.
+- The mock's recommendation treats mean delays within 0.5 s as equal and then prefers the plan that changes least
+  (so a corridor that pre-empted nothing does not beat a plain diversion), and it recommends the baseline when
+  the best plan beats it by less than the scorecard's thresholds (5% delay, 5 vehicles of queue, 30 s of EMS
+  response). Built, not run.
+- The Oakland network saturates about 2.5 simulated hours after a reset: in an unattended run mean delay went from
+  34-71 s to 142 s at 3.3 h and 505 s at 4.4 h ([bug hunt](docs/bug-hunt-2026-09-20.md), D2). Demand against
+  capacity is the likely cause and is not fixed; `twin_refresh_s` resets an idle twin first. Demand flows used to
+  end at 24 simulated hours (90 minutes at 16×) and left the city empty; they now run for 7 days.
 - The mock agent is rule-based: it proposes a fixed set of 9 plans (fewer when a close
   lesson prunes them) and recommends with a fixed rule (see
   [architecture.md](docs/architecture.md#analyze-response-pipeline)).

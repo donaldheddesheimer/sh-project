@@ -4,7 +4,7 @@ import { GeoJSONSource, Map as MapLibreMap, Marker, NavigationControl, setWorker
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useRef } from 'react'
 import type { Camera, CityState, Incident, NetworkGeometry } from '../../api/types'
-import { duration } from '../../lib/format'
+import { duration, shortName } from '../../lib/format'
 import { BASELINE_COLOR, type PlanOverlay } from '../../lib/plans'
 import { pointAlong, type ThinkingRoute } from '../../lib/thinkingRoutes'
 import { baseStyle, contextLayers, layers, THINKING_COLORS, THINKING_SLOTS } from './style'
@@ -85,10 +85,19 @@ function streetLabels(network: NetworkGeometry): { name: string; lngLat: [number
   return labels
 }
 
+/** A marker body built from static markup only. Anything that came from the network or OSM goes in as text. */
 function markerElement(className: string, html: string): HTMLDivElement {
   const el = document.createElement('div')
   el.className = className
   el.innerHTML = html
+  return el
+}
+
+/** A marker whose label is text (a street or station name from the OSM extract), never parsed as markup. */
+function labelElement(className: string, text: string): HTMLDivElement {
+  const el = document.createElement('div')
+  el.className = className
+  el.textContent = text
   return el
 }
 
@@ -159,7 +168,7 @@ export function CityMap({ network, state, cameras, selection, planOverlay, think
 
       for (const label of streetLabels(network)) {
         new Marker({
-          element: markerElement(`street-label${label.vertical ? ' vertical' : ''}`, label.name),
+          element: labelElement(`street-label${label.vertical ? ' vertical' : ''}`, label.name),
           rotation: label.vertical ? -90 : 0,
           rotationAlignment: 'map',
           offset: label.vertical ? [-16, 0] : [0, -16],
@@ -168,9 +177,9 @@ export function CityMap({ network, state, cameras, selection, planOverlay, think
           .addTo(map)
       }
       for (const station of network.stations) {
-        new Marker({ element: markerElement('station-marker', `<span class="station-icon">✚</span>${station.name}`), anchor: 'right' })
-          .setLngLat([station.lon, station.lat])
-          .addTo(map)
+        const el = markerElement('station-marker', '<span class="station-icon">✚</span>')
+        el.append(station.name) // appended as a text node: the name is data, not markup
+        new Marker({ element: el, anchor: 'right' }).setLngLat([station.lon, station.lat]).addTo(map)
       }
       ready.current = true
     })
@@ -252,12 +261,15 @@ export function CityMap({ network, state, cameras, selection, planOverlay, think
         ev.status === 'on_scene' ? `${ev.id} · ON SCENE` : `${ev.id} · ETA ${duration(ev.eta_s)}`
       let marker = emsMarkers.current.get(ev.id)
       if (!marker) {
-        marker = new Marker({ element: markerElement('ems-marker', ''), anchor: 'bottom', offset: [0, -10] })
+        const el = markerElement('ems-marker', '<span class="siren"></span>')
+        el.append('') // the label: a text node that the ETA rewrites, so nothing is re-parsed on every frame
+        marker = new Marker({ element: el, anchor: 'bottom', offset: [0, -10] })
         marker.setLngLat([ev.location.lon, ev.location.lat]).addTo(map)
         emsMarkers.current.set(ev.id, marker)
       }
       marker.setLngLat([ev.location.lon, ev.location.lat])
-      marker.getElement().innerHTML = `<span class="siren"></span>${text}`
+      const label = marker.getElement().lastChild
+      if (label && label.textContent !== text) label.textContent = text
     }
     for (const [id, marker] of emsMarkers.current) {
       if (!active.has(id)) {
@@ -309,7 +321,7 @@ export function CityMap({ network, state, cameras, selection, planOverlay, think
         if (!intersection) continue
         const el = markerElement(`corridor-badge${planOverlay.corridor.assumed ? ' assumed' : ''}`, '')
         el.style.setProperty('--plan-color', planOverlay.color)
-        el.textContent = `⚡ ${id}`
+        el.textContent = `⚡ ${shortName(intersection.name)}`
         corridors.set(id, new Marker({ element: el, anchor: 'bottom', offset: [0, -12] }).setLngLat([intersection.lon, intersection.lat]).addTo(map))
       }
     }

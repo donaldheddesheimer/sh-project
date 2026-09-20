@@ -414,9 +414,9 @@ class SumoSimulation(TrafficSimulation):
         self._veh = {vid: r for vid, r in results.items() if r[tc.VAR_SPEED] > tc.INVALID_DOUBLE_VALUE}
         self._teleporting = results.keys() - self._veh.keys()
 
-    def _in_simulation(self) -> list[str]:
-        """Every vehicle SUMO still knows about, on the network or mid-teleport (sorted for determinism)."""
-        return [*self._veh, *sorted(self._teleporting)]
+def _in_simulation(self) -> list[str]:
+    """Every vehicle SUMO still knows about, on the network or mid-teleport (sorted for determinism)."""
+    return sorted([*self._veh, *self._teleporting])
 
     def _read_state(self) -> dict:
         c = self.conn

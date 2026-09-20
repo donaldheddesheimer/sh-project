@@ -47,7 +47,7 @@ COPY backend ./backend
 COPY simulation ./simulation
 COPY --from=frontend-build /build/frontend/dist/ ./frontend/dist/
 # Lessons are written here at runtime. On Cloud Run the filesystem is ephemeral, so the
-# memory store resets when the instance restarts (see README, "Google Cloud Run demo").
+# memory store resets when the instance restarts (see docs/deployment.md).
 RUN mkdir -p ./memory
 
 WORKDIR /srv/backend

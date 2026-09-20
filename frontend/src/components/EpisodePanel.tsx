@@ -317,7 +317,12 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
         </span>
         {info?.analyst_model && (
           <span className="episode-model mono" title={info.analyst_model}>
-            {info.analyst_model}
+            analyst: {info.analyst_model}
+          </span>
+        )}
+        {info?.reviewer_model && (
+          <span className="episode-model mono" title={info.reviewer_model}>
+            reviewer: {info.reviewer_model}
           </span>
         )}
         <span className="sep">·</span>

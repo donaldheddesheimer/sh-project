@@ -39,7 +39,9 @@ class Settings(BaseSettings):
 
     # --- provider selection -------------------------------------------------
     smart_city_provider: Literal["mock", "nvidia"] = "mock"
-    agent_provider: Literal["mock", "nemotron"] = "nemotron"
+    # REST Analyze Response and the Mock episode share this provider. Auto keeps no-key
+    # development local while a keyed deployment remains Nemotron-first.
+    agent_provider: Literal["auto", "mock", "nemotron"] = "auto"
 
     # --- traffic simulation -------------------------------------------------
     # downtown_grid (the tests and startup use it) or pittsburgh_oakland; runtime UI/API switching is primary
@@ -99,7 +101,13 @@ class Settings(BaseSettings):
     vss_require_vlm_confirmation: bool = True
     vss_default_severity: Literal["minor", "major", "critical"] = "major"
     nemotron_base_url: str = "https://integrate.api.nvidia.com/v1"  # NIM, OpenAI-compatible
-    nemotron_model: str | None = "nvidia/nemotron-3-super-120b-a12b"
+    # Ultra owns the high-judgment plan/recommend steps; the small reviewer only explains a verdict code computed.
+    nemotron_model: str | None = "nvidia/nemotron-3-ultra-550b-a55b"
+    nemotron_reviewer_model: str | None = "nvidia/nemotron-3.5-lightning-30b-a3b"
+    # Wall-clock limit for ONE NIM completion. The client's own 120 s default is not enough for the Ultra
+    # analyst: its plan step alone ran past it and failed the episode with a ReadTimeout. This must stay
+    # comfortably under `episode_agent_timeout_s`, which covers the whole analysis (propose, branches, recommend).
+    nemotron_timeout_s: float = 300.0
 
     # --- Anthropic integration (unused unless Claude is configured) --------
     anthropic_api_key: SecretStr | None = None

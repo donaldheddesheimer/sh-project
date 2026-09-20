@@ -257,7 +257,7 @@ disagree.
 | D5 | The mock gets a ninth plan (`corridor-plus-divert`). | Raise the `SCENARIO_MAX_CANDIDATES` default from 8 to 9 and fix every "8" (CLAUDE.md lists them). |
 | D6 | Should real (VSS) incidents start an episode with no demo script? | **No.** An operator runs Analyze Response on a mirrored incident. `POST /api/demo/start` is refused with the VSS provider. |
 | D7 | Slow the live simulation while an analysis runs, to cut staleness? | **Automatic**: hold at 1× during analysis; the operator's runtime speed change wins. |
-| D8 | Which NIM model ids? | The stage default is `nvidia/nemotron-3-super-120b-a12b`; embedding recall remains off and structured recall stays primary. |
+| D8 | Which NIM model ids? | The analyst uses `nvidia/nemotron-3-ultra-550b-a55b`; the scorecard reviewer uses `nvidia/nemotron-3.5-lightning-30b-a3b`. Embedding recall remains off and structured recall stays primary. |
 
 ## Integration (after all three branches land)
 

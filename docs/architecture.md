@@ -206,8 +206,11 @@ Response through one NIM proposal call and one recommendation call. It validates
 them and accepts only a completed candidate. A provider failure fails the run visibly rather
 than silently changing providers. A proposal
 that returns nothing valid is retried once with the validation errors appended to the conversation,
-because re-sending the identical prompt only resamples it. Nemotron also drives the
-[MCP tools](#mcp-tools-for-agents) in episodes (`learning/analysts.py`).
+because re-sending the identical prompt only resamples it. Built-in Nemotron episodes use
+the same provider through `PipelineAnalyst`: the model proposes and recommends with compact
+JSON, while application code owns validation and simulation. This avoids the hosted endpoint's
+unstable growing tool transcript; the [MCP tools](#mcp-tools-for-agents) remain available to
+external agents.
 
 `agent/briefing.py` holds what both analysts share: the candidate rows they read results from, the MCP
 server's `instructions` workflow prompt, and `PLAN_DESIGN`, the same plan-design and result-reading
@@ -251,19 +254,18 @@ recommendation, re-validated on the live programs.
 
 An episode is one agent answering one set of active incidents, from detection to a stored
 lesson. `EpisodeService` is the only thing that starts an agent, and only while a demo
-script is armed. The README's
-[autonomous episode section](../README.md#the-autonomous-self-learning-episode) has the
-rules (two-crash rule, decisions, thresholds). Nemotron is the team every episode uses; there is
-no runtime selection, and no fallback to mock when `NVIDIA_API_KEY` is absent (its calls fail). `operator-collision` is armed at
-startup, so a collision pauses the city and the episode waits (`awaiting`) for
-`POST /api/demo/analyze`. This table is the code path.
+script is armed. The [demo guide](demo-guide.md#autonomous-path-respond-monitor-learn) covers
+the operator flow and two-crash behavior; this document owns the implementation stages and
+thresholds. The mock, Claude and Nemotron teams are built from the credentials present and the
+startup team comes from `episode_analyst` in `config.py`; there is no runtime selector.
+This table is the code path.
 
 | # | Stage | Code | Output |
 |---|---|---|---|
 | 1 | Script | `EpisodeService.start_demo` → `CityService.set_scripted_events` → `LiveSimulationRunner` | scheduled crashes fire on the runner thread; an empty script waits for operator injection; episode `armed` |
-| 2 | Detect | `MockSmartCityProvider` → `CityService.incident_listeners` → `EpisodeService._on_incident` | episode `detected` over every active incident, or the working one superseded. An operator script instead goes `awaiting`: the city is paused and `EpisodeService.analyze` (`POST /api/demo/analyze`) starts stage 3 |
-| 3 | Analyze | `MockAnalyst` (`ScenarioService.run_pipeline`) or `ModelAnalyst` (MCP client driven by Claude or Nemotron, optional fallback to the mock) | a completed `ScenarioRun`; episode `analyzing` |
-| 4 | Implement | `Implementor.implement(run_id, by)` in one `run_on_live` command | re-validation on live programs, EMS probes, `apply_plan`; `Implementation` on the run and the episode; the plan joins the standing responses; episode `monitoring`; the city resumes (`_on_implemented`) |
+| 2 | Detect | `MockSmartCityProvider` → `CityService.incident_listeners` → `EpisodeService._on_incident` | episode `detected` over every active incident, or the working one superseded |
+| 3 | Analyze | `MockAnalyst` or Nemotron `PipelineAnalyst` (`ScenarioService.run_pipeline`), or Claude `ModelAnalyst` (MCP client, optional fallback to the mock). Nemotron makes bounded structured proposal and recommendation calls; application code validates and simulates. External MCP clients retain the full tool set. | a completed `ScenarioRun`; episode `analyzing` |
+| 4 | Implement | `Implementor.implement(run_id, by)` in one `run_on_live` command | re-validation on live programs, EMS probes, `apply_plan`; `Implementation` on the run and the episode; the plan joins the standing responses; episode `monitoring` |
 | 5 | Monitor | `LiveMonitor` (a frame observer) | `LiveSample` every 5 simulated seconds; a `LiveRecord` after the window |
 | 6 | Score | live `response_notes()` → `build_scorecard` | `Scorecard` (code only): predicted vs realised on absolute simulation time, typed corridor/diversion checks, provisional state, outcome |
 | 7 | Review | `MockReviewer` / selected Claude or Nemotron `ModelReviewer` | `Lesson` (verdict = the scorecard's outcome); model errors fail the episode rather than changing providers; episode `reviewing` |

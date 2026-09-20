@@ -204,7 +204,7 @@ except the two rows marked *(code)*, whose wording is read from `services/scenar
   blocks the next analysis for up to 300 s.
 - **`implement_recommendation` changes the live city** (signal timing, EMS dispatch,
   diversion) and it stays until a reset. `AGENT_MAY_IMPLEMENT=false` makes the tool refuse.
-  Nothing on `/mcp` authenticates callers ([README](../README.md) "Current limitations").
+  Nothing on `/mcp` authenticates callers ([project status](project-status.md#current-limitations)).
 - **A reset invalidates open and old runs.** The reboot fails an open analysis and marks
   earlier runs as belonging to a city that is gone, so they cannot be implemented (read from
   `CLAUDE.md` and `learning/implementor.py`; not tried here).
@@ -214,8 +214,9 @@ except the two rows marked *(code)*, whose wording is read from `services/scenar
 An agent framework does this same call for you: the model emits a tool name and arguments,
 and the client posts them to `/mcp`. The Python SDK snippet in
 [specs/scenario-engine-mcp.md](specs/scenario-engine-mcp.md) ("How to connect") is the
-programmatic equivalent, and the Nemotron analyst uses it (in-process by default, over HTTP
-when `MCP_URL` is set). Registering the endpoint with Claude Code as an HTTP MCP server was
+programmatic equivalent, and the Claude analyst uses it (in-process by default, over HTTP
+when `MCP_URL` is set). Built-in Nemotron episodes use the bounded structured pipeline instead;
+external Nemotron agents can still use this endpoint. Registering it with Claude Code was
 not tried.
 
 ## What was checked

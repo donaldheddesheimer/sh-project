@@ -315,7 +315,8 @@ class Episode(BaseModel):
 class DemoInfo(BaseModel):
     scripts: list[dict] = Field(description="Every demos/*.json script: id, name, description, crash times, monitor_s")
     armed: str | None = Field(None, description="Script currently armed (autonomous response is on while one is)")
-    analyst: str = Field("", description="Analyst new episodes use: nemotron by default (mock only when set in code)")
-    analyst_model: str | None = Field(None, description="Exact model id, or null for the deterministic mock")
+    analyst: str = Field("", description="Analyst new episodes use: mock (the deterministic local team), claude or nemotron")
+    analyst_model: str | None = Field(None, description="Exact model id, or null for the deterministic local team")
+    reviewer_model: str | None = Field(None, description="Exact reviewer model id, or null for the deterministic local team")
     current: Episode | None = None
     memory: dict

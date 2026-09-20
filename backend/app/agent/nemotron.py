@@ -1,24 +1,20 @@
-"""NVIDIA Nemotron via NIM: chat-backed REST proposals plus the episode's MCP analyst.
+"""NVIDIA Nemotron via NIM: structured proposals and recommendations for the guarded pipeline.
 
-Nemotron drives an episode's analysis as an MCP client of this backend's scenario tools
-(``app/learning/analysts.py``). NIM does not speak MCP, so the analyst lists the tools, hands them to the
-OpenAI-compatible NIM endpoint as ``tools`` and runs each tool call the model makes:
+The built-in Nemotron episode uses ``NemotronAgentProvider`` through ``PipelineAnalyst``. The model makes
+the two judgment calls—propose candidate plans, then recommend from completed results—as compact JSON.
+Application code owns the stateful workflow:
 
-    start_analysis         -> incident(s), segments (worst first), every signal's phases, experience
-    -> design plans (SignalPolicy timing changes, EmergencyCorridor, RerouteAction)
-    -> validate_plan       -> safety findings, before spending a simulation
-    -> simulate_plans      -> parallel SUMO branches from one snapshot, baseline included
-    -> get_analysis        -> results with deltas against the baseline; refine and repeat
-    -> submit_recommendation (a completed candidate and a rationale that quotes numbers)
-    -> implement_recommendation (the gated implementor applies it to the live city)
+    incident context -> propose plans -> validate -> parallel SUMO branches
+    -> completed results -> recommend -> checked implementor
 
-The optional one-shot REST pipeline uses the same NIM client through
-``NemotronAgentProvider``. It returns plans as data only; ScenarioService keeps validation,
-branch simulation, completed-candidate checks and its explicit mock fallback.
+The public MCP scenario tools remain available for external agents, while the bounded built-in path avoids
+the hosted endpoint's fragile, growing assistant/tool transcript. The REST Analyze Response path uses the
+same provider and safety pipeline.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx2
@@ -29,6 +25,10 @@ from app.agent.briefing import PLAN_DESIGN, candidate_row, metrics_row
 from app.models.domain import SimulationCandidate
 
 
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}  # busy or briefly broken; the request itself is fine
+RETRY_PAUSES_S = (2.0, 6.0, 12.0)  # pause before the next attempt; the last entry is never waited out
+
+
 class NimError(RuntimeError):
     pass
 
@@ -36,15 +36,24 @@ class NimError(RuntimeError):
 class NimClient:
     """Minimal OpenAI-compatible chat-completions client for NIM (hosted at integrate.api.nvidia.com, or self-hosted)."""
 
-    def __init__(self, base_url: str, model: str, api_key: str | None, timeout_s: float = 120.0):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str | None,
+        timeout_s: float = 120.0,
+        *,
+        json_mode: bool = False,
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self._api_key = api_key
         self._timeout_s = timeout_s
+        self._json_mode = json_mode
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 4096) -> dict:
         """One completion; returns the assistant message (``content``, and ``tool_calls`` when it calls tools)."""
-        # Nemotron 3 model cards recommend temperature 1.0 / top_p 0.95 for every task, tool calling included.
+        # Nemotron 3 defaults; JSON mode below follows NVIDIA's deterministic structured-output example.
         body: dict = {
             "model": self.model,
             # ``is_error`` is an internal hint used by the Claude adapter; OpenAI-compatible tool messages
@@ -54,12 +63,28 @@ class NimClient:
             "top_p": 0.95,
             "max_tokens": max_tokens,
         }
+        if "nemotron-3" in self.model.lower():
+            # Structured output does not benefit from a visible reasoning trace. Keeping it off
+            # also prevents reasoning text from competing with the schema-constrained payload.
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        if tools and "nemotron-3-super" in self.model.lower():
+            body["chat_template_kwargs"]["force_nonempty_content"] = True
+        if self._json_mode and not tools:
+            body["response_format"] = {"type": "json_object"}
+            body["temperature"] = 0.0
+            body.pop("top_p", None)
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         async with httpx2.AsyncClient(timeout=self._timeout_s) as http:
-            response = await http.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
+            # The hosted endpoint answers 503 "Service temporarily overloaded" under load, and the large analyst
+            # model is the one that gets it. Half a second is not long enough for that queue to drain, so back off.
+            for attempt, pause in enumerate(RETRY_PAUSES_S):
+                response = await http.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
+                if response.status_code not in RETRYABLE_STATUS or attempt == len(RETRY_PAUSES_S) - 1:
+                    break
+                await asyncio.sleep(pause)
         if response.status_code >= 400:
             raise NimError(f"NIM returned {response.status_code}: {response.text[:300]}")
         try:
@@ -71,8 +96,10 @@ class NimClient:
 class NemotronAgentProvider(AgentProvider):
     name = "nemotron"
 
-    def __init__(self, base_url: str, model: str, api_key: str | None, candidate_limit: int):
-        self._nim = NimClient(base_url, model, api_key)
+    def __init__(
+        self, base_url: str, model: str, api_key: str | None, candidate_limit: int, timeout_s: float = 120.0
+    ):
+        self._nim = NimClient(base_url, model, api_key, timeout_s, json_mode=True)
         self._candidate_limit = candidate_limit
         self._diagnostics: list[str] = []
 
@@ -82,14 +109,18 @@ class NemotronAgentProvider(AgentProvider):
         prompt = {
             "candidate_budget": budget,
             "context": _proposal_context(context),
-            "response_schema": {"type": "array", "items": CandidatePlan.model_json_schema()},
+            "response_schema": {
+                "type": "object",
+                "properties": {"plans": {"type": "array", "items": CandidatePlan.model_json_schema()}},
+                "required": ["plans"],
+            },
         }
         messages = [
             {
                 "role": "system",
                 "content": (
                     PLAN_DESIGN
-                    + "\nReturn only a JSON array of CandidatePlan objects. "
+                    + '\nReturn only one JSON object shaped as {"plans":[CandidatePlan,...]}. '
                     "Plans are data, never commands: choose safe timing, corridor or reroute ideas for later validation "
                     "and branch simulation. Respect candidate_budget, do not include the baseline, and use lessons only "
                     "as advice."
@@ -114,7 +145,7 @@ class NemotronAgentProvider(AgentProvider):
                         "role": "user",
                         "content": (
                             f"That reply was rejected: {'; '.join(faults[:4])}. "
-                            "Return only a JSON array of valid CandidatePlan objects."
+                            'Return only one JSON object shaped as {"plans":[CandidatePlan,...]}.'
                         ),
                     },
                 ]
@@ -148,8 +179,10 @@ class NemotronAgentProvider(AgentProvider):
 
     def _validated_plans(self, raw: object, budget: int) -> list[CandidatePlan]:
         parsed = _json_value(raw)
+        if isinstance(parsed, dict):
+            parsed = parsed.get("plans")
         if not isinstance(parsed, list):
-            self._diagnostics.append("Nemotron proposal was not a JSON array")
+            self._diagnostics.append("Nemotron proposal did not contain a plans array")
             return []
         plans: list[CandidatePlan] = []
         ids: set[str] = set()

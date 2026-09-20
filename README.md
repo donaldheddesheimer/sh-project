@@ -207,8 +207,20 @@ applied. **Apply to live signals**, under the recommendation, is the operator's 
 it. It uses the same gated implementor as an autonomous agent (see
 [How the pieces work](#how-the-pieces-work)).
 
-Use the speed buttons (1×–16×) to fast-forward. Click an intersection or road to inspect
+Use the speed control (1×–16×) to fast-forward. Click an intersection or road to inspect
 its phase, queues and speed.
+
+### Console layout
+
+The command bar groups live state, simulation speed and incident actions. The map stays
+central, with incident details and KPIs on the right and trends or scenario comparisons in
+the lower dock. **Analyze Response** brings the Response plans panel into view. The
+Autonomous agent panel starts collapsed and opens when an episode appears. On narrow screens,
+the speed control becomes a compact selector so all incident actions stay visible.
+
+`frontend/src/styles.css` holds the base component styles; `frontend/src/console.css` adds
+the dark operations presentation and responsive layout. Map and incident styles remain in
+the base stylesheet.
 
 ## Second city: Oakland, Pittsburgh
 

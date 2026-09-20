@@ -171,7 +171,7 @@ venv directly (this is what works in PowerShell or Git Bash):
   analysis ("the simulation was reset"): its snapshot describes a city that is gone.
 - Applied plans stay on the live signals until a reset; nothing reverts them.
   `SumoSimulation.revert_response()` exists and is idempotent, but has no caller yet (the
-  service that will use it is milestone 4 part 3).
+  service that will use it is milestone 4 part 2).
 - An unsafe pre-emption stops a branch but not the live twin: `fail_safe_preemption=True`
   is set only in `providers.py`'s `live_simulation()`, where the corridor is dropped and a
   note recorded instead of the runner going to `error`.

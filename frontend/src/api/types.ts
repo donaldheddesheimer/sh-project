@@ -86,8 +86,11 @@ export interface TrafficMetrics {
   max_queue_segment: string | null
   throughput: number
   mean_speed: number
-  emergency_vehicle_eta: number | null // the aggregate: the last responder to arrive
-  emergency_responses: EmergencyResponse[] // per-responder breakdown; empty on live metrics
+  // measured window: the last responder's realised response time (null until every responder has arrived);
+  // live metrics: the soonest estimated time to scene over en-route responders (null when none)
+  emergency_vehicle_eta: number | null
+  // measured window: each responder of that same window (same set as the ETA); always empty on live metrics
+  emergency_responses: EmergencyResponse[]
   vehicles_in_network: number
   vehicles_waiting_to_enter: number
 }

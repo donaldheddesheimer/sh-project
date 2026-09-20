@@ -67,8 +67,11 @@ loudly instead of simulating unsafe signals.
 
 The live twin is the one exception, and it is explicit: `SumoSimulation` takes a
 `fail_safe_preemption` flag, set only for the live simulation in `backend/app/providers.py`.
-With it, a refused command drops the corridor, logs at `ERROR` and records a note, and the
-city keeps running rather than sitting in `error` until a Reset. Nothing is applied in that
+With it, a refused command drops the corridor, logs at `ERROR` and records a note whose text
+starts with `pre-emption disabled:` (an exact prefix, because the planned
+agent-memory response check will look for it), and the city keeps running rather than sitting in `error` until a Reset. The dropped
+controller is kept, never stepped again, only so the notes can still report what it did in
+total and per responder. Nothing is applied in that
 case — the controller validates every command before returning any — and branches are
 unchanged: a candidate that needs an unsafe signal change must never be measured as if it
 were safe, let alone recommended.

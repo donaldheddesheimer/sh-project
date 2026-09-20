@@ -111,6 +111,9 @@ RESPONDER_SPEED_TAU_S = 15.0  # smoothing of a responder's own speed (detects it
 # Below walking pace a responder is held up rather than slowing for a turn: the threshold that makes
 # "stopped" in the diagnostics mean what an operator watching the map would call stopped.
 RESPONDER_STALL_SPEED_MS = 1.0
+# A responder braking for its scene, or standing a few seconds at a red, is not "held up": shorter stalls are
+# still recorded but get no note line, so a line means something.
+RESPONDER_NOTE_MIN_STALL_S = 3.0
 EXPECTED_SIGNAL_WAIT_S = 10.0  # mean wait at a fixed-time signal: P(red) ~0.5 x half of a ~40 s red
 
 # traci.start's own connect loop hard-codes a 1 s wait between attempts (traci/main.py: start -> init ->
@@ -120,6 +123,55 @@ CONNECT_POLL_S = 0.02
 CONNECT_TIMEOUT_S = 60.0  # generous: a large net (Oakland) is loaded before the remote port opens
 
 _start_lock = threading.Lock()  # traci registers a labelled connection in module-level state
+# Ports handed to a SUMO that has not bound them yet. getFreeSocketPort() only says a port is free *now*, and
+# SUMO binds it after loading its network, so two branches starting together could be given the same one.
+# (traci.start used to be called with the lock held until SUMO was listening, which hid this.)
+_claimed_ports: set[int] = set()
+REAP_TIMEOUT_S = 5.0  # how long a killed SUMO gets to be collected; a kill is prompt, so this only bounds a stuck OS
+
+
+def _kill_and_reap(process: subprocess.Popen) -> None:
+    """Kill a SUMO that start() gave up on and collect it; never raises.
+
+    kill() alone leaves the child unreaped (a zombie on POSIX, an open handle on Windows) until the Popen is
+    garbage collected. Waiting also covers a process that already exited, where it returns at once. Cleanup must
+    not mask the failure that got us here, so a stuck wait is logged and dropped.
+    """
+    try:
+        process.kill()
+    except OSError:
+        pass  # already gone
+    try:
+        process.wait(timeout=REAP_TIMEOUT_S)
+    except (subprocess.TimeoutExpired, OSError):
+        log.warning("SUMO process %s was not reaped within %.0fs of being killed", process.pid, REAP_TIMEOUT_S)
+
+
+def _discard_connection(connection: traci.connection.Connection | None) -> None:
+    """Unregister and close a TraCI connection whose handshake failed; best effort, never raises.
+
+    traci.connect() writes a labelled connection into traci's pool as soon as the socket connects, before
+    getVersion() proves SUMO answers. If that then fails, nothing owns the connection: the label stays taken
+    (every retry would fail with "Connection ... already active") and the socket stays open. Connection.close()
+    is no use, it sends CMD_CLOSE over the very socket that failed and raises before it unregisters anything.
+    traci has no public unregister, so this is the one place that touches its private ``_socket`` and
+    ``_connections``. Only ``connection`` itself is removed, never another live connection that has this label.
+    """
+    if connection is None:
+        return
+    try:
+        sock = connection._socket
+        connection._socket = None  # a later stray command then fails as "Connection already closed"
+        if sock is not None:
+            sock.close()
+    except Exception:  # noqa: BLE001 - cleanup must not mask the original failure
+        pass
+    try:
+        label = connection.getLabel()
+        if label is not None and traci.connection.has(label) and traci.connection.get(label) is connection:
+            del traci.connection._connections[label]
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def resolve_sumo_binary(explicit: str | None = None, gui: bool = False) -> str:
@@ -202,7 +254,9 @@ class SumoSimulation(TrafficSimulation):
         self._rubbernecking: set[str] = set()
         self._pending_offsets: dict[str, float] = {}
         self._preemption: PreemptionController | None = None
-        self._preemption_notes: list[str] = []  # what a corridor did before it was dropped (response_notes)
+        # a corridor that was dropped (reverted, or refused as unsafe), kept only so response_notes() can still say
+        # what it did in total and per responder; it is never stepped again
+        self._dropped_preemption: PreemptionController | None = None
         self._preemption_failures: list[str] = []
         # The live twin degrades instead of stopping: an unsafe pre-emption drops the corridor and the city
         # keeps running. A branch must still fail loudly, because a candidate that needs an unsafe signal
@@ -227,18 +281,36 @@ class SumoSimulation(TrafficSimulation):
         cmd = [self._binary, "-c", str(self.scenario.sumocfg), "--save-state.rng", "true", "--save-state.precision", "8"]
         if self._gui:
             cmd += ["--start", "--quit-on-end", "--delay", "0"]
-        port = sumolib.miscutils.getFreeSocketPort()
-        # Same steps traci.start() takes (Popen with --remote-port, then connect), minus its fixed 1 s wait
-        # between connection attempts. stderr is inherited, as traci.start leaves it.
-        process = subprocess.Popen(cmd + ["--remote-port", str(port)], stdout=subprocess.DEVNULL)
+        with _start_lock:
+            port = sumolib.miscutils.getFreeSocketPort()
+            while port in _claimed_ports:  # another start was given this port and SUMO has not bound it yet
+                port = sumolib.miscutils.getFreeSocketPort()
+            _claimed_ports.add(port)
         try:
-            self._conn = self._connect(port, process)
+            # Same steps traci.start() takes (Popen with --remote-port, then connect), minus its fixed 1 s wait
+            # between connection attempts. stderr is inherited, as traci.start leaves it.
+            process = subprocess.Popen(cmd + ["--remote-port", str(port)], stdout=subprocess.DEVNULL)
+            try:
+                self._conn = self._connect(port, process)
+            except BaseException:
+                # Without a connection nothing would ever close this SUMO. This also covers a SUMO that already
+                # exited (_connect raised because of it): killing it is harmless and wait() returns at once.
+                _kill_and_reap(process)
+                raise
+        finally:
+            _claimed_ports.discard(port)  # connected, SUMO holds the port; or failed, and nobody will use it
+        try:
+            self._step_length = self.conn.simulation.getDeltaT()
+            self._subscribe_all()
+            self._read_state()
         except BaseException:
-            process.kill()  # without a connection nothing would ever close this SUMO
+            # A caller that sees start() fail cannot rely on close(): the live runner keeps the half-started
+            # simulation until the next Reset, and close() itself gives up before unregistering when the link
+            # is what broke. So a failed start releases its own SUMO, the connection and the label.
+            connection, self._conn = self._conn, None
+            _discard_connection(connection)
+            _kill_and_reap(process)
             raise
-        self._step_length = self.conn.simulation.getDeltaT()
-        self._subscribe_all()
-        self._read_state()
 
     def _connect(self, port: int, process: subprocess.Popen) -> traci.connection.Connection:
         """Poll ``port`` until SUMO is listening, then return the labelled connection.
@@ -250,11 +322,17 @@ class SumoSimulation(TrafficSimulation):
         deadline = time.monotonic() + CONNECT_TIMEOUT_S
         while True:
             with _start_lock:  # a labelled connection is written into traci's module-level pool
+                connection: traci.connection.Connection | None = None  # stays None if the socket was refused
                 try:
                     connection = traci.connect(port, numRetries=0, proc=process, label=self.label)
                     connection.getVersion()  # the handshake traci.start does through init()
                     return connection
-                except (traci.FatalTraCIError, traci.TraCIException) as exc:
+                except BaseException as exc:
+                    # traci registered the label when the socket connected, so a failed handshake must give it
+                    # back before the next attempt, or every retry fails as "already active" until the timeout.
+                    _discard_connection(connection)
+                    if not isinstance(exc, (traci.FatalTraCIError, traci.TraCIException)):
+                        raise
                     last = exc
             if process.poll() is not None:
                 raise RuntimeError(f"SUMO exited with code {process.returncode} before accepting TraCI: {last}")
@@ -430,18 +508,19 @@ class SumoSimulation(TrafficSimulation):
             if (r := self._veh.get(d.id)) is not None:
                 prev = self._responder_speed.get(d.id, r[tc.VAR_SPEED])
                 self._responder_speed[d.id] = prev + alpha * (r[tc.VAR_SPEED] - prev)
-                # before the status flips below, so only time actually spent en route is counted
-                if d.status is EmergencyStatus.EN_ROUTE and r[tc.VAR_SPEED] < RESPONDER_STALL_SPEED_MS:
-                    if lanes is None:
-                        lanes = self._lane_positions()
-                    self._record_stall(d.id, r, lanes)
             if d.id in arrived:
                 d.status = EmergencyStatus.COMPLETED
                 if d.arrived_at is None:
                     d.arrived_at = self._time
-            elif d.status is EmergencyStatus.EN_ROUTE and d.id in self._veh and self.conn.vehicle.isStopped(d.id):
-                d.status = EmergencyStatus.ON_SCENE
-                d.arrived_at = self._time
+            elif d.status is EmergencyStatus.EN_ROUTE and r is not None:
+                if self.conn.vehicle.isStopped(d.id):
+                    d.status = EmergencyStatus.ON_SCENE
+                    d.arrived_at = self._time
+                elif r[tc.VAR_SPEED] < RESPONDER_STALL_SPEED_MS:
+                    # only a unit still on its way is held up: the step it stops at its scene is arrival, not a wait
+                    if lanes is None:
+                        lanes = self._lane_positions()
+                    self._record_stall(d.id, r, lanes)
 
     def _lane_positions(self) -> dict[str, list[float]]:
         """Lane id -> the lane position of every vehicle on it, from the subscription (no TraCI round trip)."""
@@ -481,7 +560,10 @@ class SumoSimulation(TrafficSimulation):
                 raise  # a branch fails loudly: an unsafe candidate must not be measured as if it were safe
             log.error("pre-emption refused an unsafe transition; EMS corridor disabled", exc_info=exc)
             self._drop_preemption()
-            self._preemption_failures.append(f"EMS corridor disabled: an unsafe pre-emption was refused ({exc})")
+            # this exact prefix is what the episode's corridor response check looks for (docs/milestone-4). The
+            # corridor's own note, kept by _drop_preemption, can still count an activation whose command was
+            # refused, which is why the failure is stated on its own line rather than left to be inferred.
+            self._preemption_failures.append(f"pre-emption disabled: an unsafe transition was refused ({exc})")
             return
         for command in commands:
             tls_id = self._tls_id(command.intersection_id)
@@ -874,7 +956,7 @@ class SumoSimulation(TrafficSimulation):
         for intersection_id in corridor.intersection_ids:
             self._tls_id(intersection_id)  # raises for an unknown or unsignalized intersection
         self._preemption = PreemptionController(corridor, self._step_length)
-        self._preemption_notes = []  # the replaced corridor's record goes with it
+        self._dropped_preemption = None  # the replaced corridor's record goes with it
         self._preemption_failures = []
 
     def reroute_vehicles(self, action: RerouteAction) -> int:
@@ -886,7 +968,8 @@ class SumoSimulation(TrafficSimulation):
         return self._diversion.activate(action, list(self._veh))
 
     def response_notes(self) -> list[str]:
-        notes = self._preemption.notes() if self._preemption is not None else list(self._preemption_notes)
+        corridor = self._preemption or self._dropped_preemption
+        notes = corridor.notes() if corridor is not None else []
         notes += self._preemption_failures
         if self._diversion is not None:
             notes += self._diversion.notes()
@@ -901,9 +984,12 @@ class SumoSimulation(TrafficSimulation):
         to the existing notes, never in place of them.
         """
         notes: list[str] = []
+        corridor = self._preemption or self._dropped_preemption  # a dropped corridor still says what it did
         for d in self._dispatches.values():
-            served, hold = self._preemption.responder_record(d.id) if self._preemption is not None else ([], 0.0)
+            served, hold = corridor.responder_record(d.id) if corridor is not None else ([], 0.0)
             wait = self._responder_waits.get(d.id)
+            if wait is not None and wait.stalled_s < RESPONDER_NOTE_MIN_STALL_S:
+                wait = None  # braking for its scene or a red light, not held up
             if wait is None and not served:
                 continue  # it was never held up and no signal was pre-empted for it: nothing to explain
             parts = []
@@ -916,7 +1002,7 @@ class SumoSimulation(TrafficSimulation):
                     f"stopped for {wait.stalled_s:.0f}s{where}, "
                     f"up to {n} vehicle{'' if n == 1 else 's'} ahead"
                 )
-            if self._preemption is not None:
+            if corridor is not None:
                 k = len(served)
                 parts.append(
                     f"{k} signal{'' if k == 1 else 's'} pre-empted on its route ({', '.join(served)}), "
@@ -950,7 +1036,7 @@ class SumoSimulation(TrafficSimulation):
         return notes
 
     def _drop_preemption(self) -> None:
-        """Abandon the corridor, keeping its record for ``response_notes``.
+        """Abandon the corridor, keeping the controller (never stepped again) for ``response_notes``.
 
         A service in progress is simply forgotten, which is safe: the last command the controller can have
         sent is either an extension of a running green (it changes no light and the green now ends into the
@@ -959,7 +1045,7 @@ class SumoSimulation(TrafficSimulation):
         """
         if self._preemption is None:
             return
-        self._preemption_notes = self._preemption.notes()
+        self._dropped_preemption = self._preemption
         self._preemption = None
 
     def _revert_signals(self) -> list[str]:
@@ -1050,7 +1136,7 @@ class SumoSimulation(TrafficSimulation):
         self._rubbernecking = set()
         self._pending_offsets = {}
         self._preemption = None
-        self._preemption_notes = []
+        self._dropped_preemption = None
         self._preemption_failures = []
         self._diversion = None
         self._base_program_ids = {}  # the snapshot restores each signal to the program it was running

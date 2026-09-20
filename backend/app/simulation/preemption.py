@@ -136,6 +136,7 @@ class _Service:
     target: int  # phase index of the green being served
     program_id: str
     responders: set[str] = field(default_factory=set)
+    served: set[str] = field(default_factory=set)  # every responder this service was run for, even once it crossed
     hold_started: float | None = None
     extended: bool = False  # the green was topped up beyond its natural end
 
@@ -231,6 +232,7 @@ class PreemptionController:
             elif a.segment_id not in obs.program.phases[service.target].served_segments:
                 continue
             service.responders.add(a.responder_id)
+            service.served.add(a.responder_id)
             self._activate(a.responder_id, iid)
         if service is None:
             return
@@ -261,9 +263,7 @@ class PreemptionController:
             return
         if service.hold_started is None:
             service.hold_started = self._now
-        held = self._now - service.hold_started
-        for rid in service.responders:  # credited while it runs, so an unfinished hold still shows up
-            self._hold_by_responder[rid] = max(self._hold_by_responder.get(rid, 0.0), held)
+        self._credit_hold(service)  # while it runs, so an unfinished hold still shows up
         grant = min(HOLD_EXTENSION_S, service.hold_started + self.corridor.max_hold_s - self._now)
         if grant <= obs.remaining_s + EPS:  # the cap leaves nothing to add: let the program proceed
             del self._services[iid]
@@ -273,6 +273,12 @@ class PreemptionController:
             return
         self._set_remaining(iid, obs, grant, out)  # an extension: changes no light
         service.extended = True
+
+    def _credit_hold(self, service: _Service) -> None:
+        """Credit the hold so far to every responder the service ran for, including ones that already crossed."""
+        held = self._now - service.hold_started
+        for rid in service.served:
+            self._hold_by_responder[rid] = max(self._hold_by_responder.get(rid, 0.0), held)
 
     def _jump_from_all_red(self, iid: str, service: _Service, obs: TlsObservation, out: list[Command]) -> None:
         """Only for programs whose all-red is followed by a non-target green.
@@ -293,6 +299,7 @@ class PreemptionController:
         del self._services[iid]
         if service.hold_started is not None:
             self._longest_hold_s = max(self._longest_hold_s, self._now - service.hold_started)
+            self._credit_hold(service)  # the last stretch, after the final top-up, belongs to the responders too
         if service.extended and obs.phase_index == service.target:
             # the green owes only its natural end or the minimum served green, whichever is later
             natural = obs.program.phases[service.target].duration - elapsed

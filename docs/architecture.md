@@ -59,9 +59,9 @@ live twin ─► detect ─► trigger ─► capture ─► propose ─► vali
 |---|---|---|---|---|
 | 0 | Live twin | `simulation/sumo.py`, `simulation/runner.py` | network, demand, operator commands (inject, dispatch, speed) | `NetworkState` frames (≤ 8 Hz) → `CityState` on `/ws/state` |
 | 1 | Detect | `smart_city/mock.py` | the disruptions in each frame (ground truth) | `Incident` (`INC-0001`: segment, lanes, position, severity, cameras) after a 4 s detection delay |
-| 2 | Trigger | `POST /api/scenarios/run` → `ScenarioService.open`, or MCP `start_analysis` | `ScenarioRunRequest {incident_id?, horizon_s=600, ems_probe=true}` | `ScenarioRun` `SCN-0001`, status `queued` (HTTP 202). 409 without an active, map-matched incident or while a run is open; 404 for an unknown incident; 503 before the simulation is ready |
+| 2 | Trigger | `POST /api/scenarios/run` → `ScenarioService.open`, or MCP `start_analysis` | `ScenarioRunRequest {incident_id?, horizon_s=600, ems_probe=true}` | `ScenarioRun` `SCN-0001`, status `queued` (HTTP 202). 409 without an active, map-matched incident or while a run is open; 404 for an unknown incident; 503 before the simulation is ready. With `ANALYSIS_LIVE_SPEED` set, the live speed is held at that multiplier while the run is open and restored when it ends (finish, fail or abandon); a speed change by the operator wins and ends the hold |
 | 3 | Capture | `ScenarioService.capture`, on the live thread | the live simulation at one instant | `SimulationSnapshot` (SUMO state + RNG, disruptions, dispatches), every `SignalProgram`, the agent's `IncidentContext`, and an EMS `ProbeSpec` (Fire Station 3 → 20 m behind the crash) unless a live responder is already en route. Status `proposing` |
-| 4 | Propose | `AgentProvider.propose_candidates` (`agent/mock.py`) | `IncidentContext {incident, segments, intersections, signal_programs, emergency_vehicles, ems_origin_segment}` | `CandidatePlan[]`, each any mix of `SignalPolicy` timing changes, one `EmergencyCorridor` and `RerouteAction`s. Baseline forced first; at most 8 |
+| 4 | Propose | `AgentProvider.propose_candidates` (`agent/mock.py`) | `IncidentContext {incident, segments, intersections, signal_programs, emergency_vehicles, ems_origin_segment}` | `CandidatePlan[]`, each any mix of `SignalPolicy` timing changes, one `EmergencyCorridor` and `RerouteAction`s. Baseline forced first; at most 9 (`SCENARIO_MAX_CANDIDATES`, baseline included) |
 | 5 | Validate | `validation_findings` → `RuleBasedSafetyValidator` | each plan and the captured programs | `violations[]`; a plan with any is `rejected` and never simulated |
 | 6 | Simulate | `branching.run_branch` on a 4-worker pool | snapshot, plan, probe, horizon | `SimulationCandidate`: `completed` with horizon `TrafficMetrics`, a 30 s `timeline`, `notes` and `wall_time_s`, or `failed` with the error in `notes`. Status `simulating` |
 | 7 | Recommend | `AgentProvider.recommend` | the context and every candidate | `Recommendation {candidate_id, summary, rationale[]}` naming a completed candidate (else the baseline). Status `completed`, a summary in the ops log, the snapshot file deleted |
@@ -79,7 +79,9 @@ realised dispatch-to-arrival time, or `null` if it did not arrive within the hor
 
 **Safety runs twice.** Before simulation, the validator rejects plans (stage 5). Inside a
 branch, the pre-emption controller passes every signal command through
-`check_transition` (`simulation/preemption.py`), and a violation fails the branch.
+`check_transition` (`simulation/preemption.py`), and a violation fails the branch. On the live
+twin a refused pre-emption drops the corridor and records a note starting `pre-emption disabled:`
+instead of failing. `revert_response()` takes a whole response back off the live twin (no caller yet).
 
 **Mock recommendation rule.** Drop candidates whose EMS response is more than 10% slower
 than the baseline's, then take the lowest mean delay. A candidate that improves EMS
@@ -134,7 +136,10 @@ percentile is 0.39 and crash links reach 0.95+. Thresholds: free < 0.30 ≤ mode
   mean speed.
 - *Horizon* values (from `run_for`) cover a window: time loss accrued in the window per
   vehicle served, **including time spent waiting to enter the network**, so a policy
-  can't look good by blocking entries. They also include the realized EMS response time.
+  can't look good by blocking entries. They also include the realized EMS response time
+  (`emergency_vehicle_eta`: the last responder to arrive) and `emergency_responses`, one entry
+  per responder. On live metrics `emergency_vehicle_eta` is instead the soonest estimated ETA
+  among en-route responders, and `emergency_responses` is always empty.
 
 **EMS.** `spawn_emergency_vehicle()` routes an `ems` vehicle to a stop 20 m behind the
 crash in the blocked lane. The live ETA uses smoothed segment speeds, the responder's own

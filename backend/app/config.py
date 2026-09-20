@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -42,8 +42,9 @@ class Settings(BaseSettings):
     # --- twin engine --------------------------------------------------------
     # Branches are CPU-hungry (scenario_workers SUMO processes at once) and the live simulation shares the
     # machine with them. Slowing the live city while a run is open trades wall-clock realism for branches
-    # that finish sooner. None leaves the speed alone; the operator's own speed change always wins.
-    analysis_live_speed: float | None = None
+    # that finish sooner. None leaves the speed alone; the operator's own speed change always wins. Bounded like
+    # POST /api/simulation/speed (SpeedRequest): 0 would divide by zero in the runner and put the live city in error.
+    analysis_live_speed: float | None = Field(None, gt=0, le=64)
 
     # --- autonomous demo episode (app/learning/) ----------------------------
     demo_script: str | None = None  # arm this demos/*.json script at startup

@@ -152,9 +152,16 @@ class TrafficMetrics(BaseModel):
     max_queue_segment: str | None = None
     throughput: float = Field(description="Completed trips per hour")
     mean_speed: float = Field(description="m/s")
-    emergency_vehicle_eta: float | None = Field(None, description="Seconds until the responder reaches the scene")
-    # per-responder breakdown of the same window and the same responder set as emergency_vehicle_eta, which stays
-    # the aggregate (the last to arrive, None while any has not). Empty on live metrics.
+    emergency_vehicle_eta: float | None = Field(
+        None,
+        description=(
+            "Seconds. Measured window: the realised response time of the last responder to reach its scene "
+            "(None if no responder mattered to the window or any has not arrived). "
+            "Live metrics: the soonest estimated time to scene over en-route responders (None if there are none)."
+        ),
+    )
+    # measured window: each responder of that same window, the same set the ETA above is taken over. Live metrics
+    # never fill it, so it is always empty there.
     emergency_responses: list[EmergencyResponse] = Field(default_factory=list)
     vehicles_in_network: int = 0
     vehicles_waiting_to_enter: int = 0

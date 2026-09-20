@@ -259,6 +259,13 @@ export interface SimulationCandidate {
   wall_time_s: number | null
 }
 
+/** Segments one plan acts on (backend PlanRoutes); presentation only, SUMO decides each vehicle's route. */
+export interface PlanRoutes {
+  ems_segments: string[] // responder path; only plans with a corridor
+  diversion_segments: string[] // free-flow detour round the avoided segments
+  blocked_segments: string[]
+}
+
 export interface Recommendation {
   candidate_id: string
   summary: string
@@ -288,6 +295,7 @@ export interface ScenarioRun {
   horizon_s: number
   ems_probe: boolean
   candidates: SimulationCandidate[]
+  routes: Record<string, PlanRoutes> // candidate id -> paths it acts on
   recommendation: Recommendation | null
   error: string | null
   rounds: number // simulation rounds (an MCP agent may run several)
@@ -318,6 +326,7 @@ export interface Implementation {
 
 export type EpisodeStatus =
   | 'armed'
+  | 'awaiting'
   | 'detected'
   | 'analyzing'
   | 'monitoring'
@@ -457,7 +466,6 @@ export interface DemoInfo {
   armed: string | null // autonomous response is on while a script is armed
   analyst: string
   analyst_model: string | null
-  analysts: { id: string; model: string | null }[]
   current: Episode | null
   memory: MemoryStats
 }

@@ -1,20 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client'
-import type { Camera } from './api/types'
+import type { Camera, MemoryMode } from './api/types'
+import { AnalyzeOverlay } from './components/AnalyzeOverlay'
+import { DecisionCard } from './components/DecisionCard'
 import { EpisodePanel } from './components/EpisodePanel'
 import { Icon } from './components/Icon'
 import { IncidentPanel } from './components/IncidentPanel'
 import { CityMap, type Selection } from './components/map/CityMap'
 import { MapLegend } from './components/MapLegend'
-import { MetricsPanel } from './components/MetricsPanel'
 import { AnalysisDock } from './components/plans/AnalysisDock'
 import { MapPlanCard } from './components/plans/MapPlanCard'
 import { ResponsePlans } from './components/plans/ResponsePlans'
+import { RoutePanel } from './components/RoutePanel'
 import { SelectionPanel } from './components/SelectionPanel'
+import { Splitter } from './components/Splitter'
 import { TopBar } from './components/TopBar'
 import { WorkspaceRail, type WorkspaceView } from './components/WorkspaceRail'
 import { FIXTURE_MODE } from './dev/fixture'
 import { useCityStream } from './hooks/useCityStream'
+import { usePanelSizes } from './hooks/usePanelSizes'
 import { analyzeState, candidateColors, planOverlay } from './lib/plans'
 
 type Action = 'start' | 'pause' | 'reset' | 'inject' | 'dispatch'
@@ -41,6 +45,12 @@ export default function App() {
   const [pendingMapId, setPendingMapId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const cancelReplay = useRef<(() => void) | null>(null)
+  const appRef = useRef<HTMLDivElement>(null)
+  const sideRef = useRef<HTMLElement>(null)
+  const panels = usePanelSizes()
+  // the element a splitter resizes, measured when a drag starts
+  const measure = (selector: string, dimension: 'width' | 'height', fallback: number) => () =>
+    appRef.current?.querySelector(selector)?.getBoundingClientRect()[dimension] ?? fallback
 
   useEffect(() => {
     setCameras([])
@@ -130,6 +140,10 @@ export default function App() {
   const colors = useMemo(() => (scopedScenario ? candidateColors(scopedScenario) : {}), [scopedScenario])
   const activePlanId = hoveredPlanId ?? selectedPlanId
   const activeCandidate = scopedScenario?.candidates.find((candidate) => candidate.id === activePlanId) ?? null
+  const recommendedCandidate =
+    scopedScenario?.candidates.find((candidate) => candidate.id === scopedScenario.recommendation?.candidate_id) ?? null
+  // the mini map follows the plan the operator points at, else the agent's decision
+  const routeCandidate = activeCandidate ?? recommendedCandidate
   const incidentSegmentId = focusedIncident?.location.segment_id ?? null
   const overlay = useMemo(
     () =>
@@ -234,7 +248,7 @@ export default function App() {
   }[view]
 
   return (
-    <div className="app" data-drawer-open={drawerOpen}>
+    <div className="app" data-drawer-open={drawerOpen} ref={appRef} style={panels.style}>
       <TopBar
         networkName={network?.name ?? null}
         mapId={pendingMapId ?? network?.id ?? null}
@@ -263,13 +277,15 @@ export default function App() {
           showView('analysis')
           void startAnalysis()
         }}
+        layoutCustom={panels.custom}
+        onResetLayout={panels.reset}
       />
 
       <WorkspaceRail
         view={view}
         activeIncidents={activeIncidents.length}
         candidateCount={scopedScenario?.candidates.length ?? 0}
-        episodeActive={episode != null && ['armed', 'detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status)}
+        episodeActive={episode != null && ['armed', 'awaiting', 'detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status)}
         onChange={showView}
       />
 
@@ -306,6 +322,11 @@ export default function App() {
         <MapLegend hasCameras={cameras.some((camera) => camera.location != null)} />
         {network?.attribution && <div className="map-attribution">{network.attribution}</div>}
         {activeCandidate && overlay && <MapPlanCard candidate={activeCandidate} overlay={overlay} />}
+        <AnalyzeOverlay
+          episode={episode}
+          busy={busy}
+          onAnalyze={(mode: MemoryMode) => void run('analyze', () => api.demoAnalyze(mode))}
+        />
         {busy === 'map' ? (
           <div className="map-banner">Switching traffic map…</div>
         ) : status?.status === 'starting' ? (
@@ -314,7 +335,7 @@ export default function App() {
         {status?.status === 'error' && <div className="map-banner error">Simulation error: {status.error}</div>}
       </main>
 
-      <aside className="side">
+      <aside className="side" ref={sideRef}>
         <div className="workspace-head">
           <div>
             <span className="workspace-eyebrow">OPERATIONS WORKSPACE</span>
@@ -330,15 +351,21 @@ export default function App() {
             <Icon name="cross" size={16} />
           </button>
         </div>
+        <DecisionCard run={scopedScenario} episode={episode} colors={colors} />
+        {network && (
+          <RoutePanel
+            network={network}
+            run={scopedScenario}
+            candidate={routeCandidate}
+            recommended={routeCandidate != null && routeCandidate === recommendedCandidate}
+            incidentSegmentId={incidentSegmentId}
+            onHeight={(px) => panels.set('miniH', px)}
+            onResetHeight={() => panels.clear('miniH')}
+          />
+        )}
         {view === 'live' && (
           <>
             {incidentPanel}
-            <MetricsPanel
-              metrics={state?.metrics ?? null}
-              history={history}
-              reference={reference}
-              segments={state?.segments ?? []}
-            />
             <SelectionPanel selection={selection} state={state} />
           </>
         )}
@@ -363,7 +390,8 @@ export default function App() {
         events={events}
         markers={markers}
         metrics={state?.metrics ?? null}
-        activeIncidents={activeIncidents.length}
+        reference={reference}
+        segments={state?.segments ?? []}
         networkStatus={connected ? status?.status ?? 'connecting' : 'offline'}
         run={scopedScenario}
         colors={colors}
@@ -371,6 +399,31 @@ export default function App() {
         selectedId={selectedPlanId}
         onHover={setHoveredPlanId}
         onSelect={selectPlan}
+        onActivityResize={(px) => panels.set('activityW', px)}
+        onActivityReset={() => panels.clear('activityW')}
+      />
+
+      <Splitter
+        axis="x"
+        className="splitter-side"
+        label="Resize the sidebar"
+        current={() => sideRef.current?.getBoundingClientRect().width ?? 370}
+        onResize={(px) => panels.set('sideW', px)}
+        onReset={() => panels.clear('sideW')}
+        min={300}
+        max={() => Math.min(680, window.innerWidth - 76 - 320)}
+        invert
+      />
+      <Splitter
+        axis="y"
+        className="splitter-dock"
+        label="Resize the trends dock"
+        current={measure('.dock', 'height', 280)}
+        onResize={(px) => panels.set('dockH', px)}
+        onReset={() => panels.clear('dockH')}
+        min={150}
+        max={() => window.innerHeight * 0.6}
+        invert
       />
 
       {toast && (

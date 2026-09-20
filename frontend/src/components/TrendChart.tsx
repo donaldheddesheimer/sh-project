@@ -8,6 +8,10 @@ interface Props {
   points: { t: number; v: number }[]
   markers: { t: number; label: string }[]
   format?: (v: number) => string
+  /** Change against the pre-incident reference, shown beside the current value. */
+  delta?: { text: string; tone: 'better' | 'worse' | 'same' } | null
+  /** One short line under the title, e.g. the worst queue's street. */
+  note?: string
 }
 
 const M = { top: 8, right: 10, bottom: 18, left: 34 }
@@ -20,7 +24,15 @@ function niceMax(v: number): number {
 }
 
 /** Single-series line with a crosshair tooltip; incident times are annotated. */
-export function TrendChart({ title, unit, points, markers, format = (v) => Math.round(v).toLocaleString('en-US') }: Props) {
+export function TrendChart({
+  title,
+  unit,
+  points,
+  markers,
+  format = (v) => Math.round(v).toLocaleString('en-US'),
+  delta,
+  note,
+}: Props) {
   const [plot, { width, height }] = useSize<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
 
@@ -50,9 +62,13 @@ export function TrendChart({ title, unit, points, markers, format = (v) => Math.
   return (
     <div className="trend">
       <div className="trend-head">
-        <span className="trend-title">{title}</span>
+        <span className="trend-title">
+          {title}
+          {note && <span className="trend-note muted"> · {note}</span>}
+        </span>
         <span className="trend-value">
           {latest ? format(latest.v) : '—'} <span className="muted">{unit}</span>
+          {delta && <span className={`delta ${delta.tone === 'same' ? 'flat' : delta.tone}`}> {delta.text}</span>}
         </span>
       </div>
       <div className="trend-plot" ref={plot}>

@@ -61,7 +61,7 @@ export interface AnalyzeState {
 }
 
 // Episode statuses in which the autonomous agent owns the response (mirrors WORKING_STATUSES in models/episode.py).
-const WORKING: ReadonlySet<EpisodeStatus> = new Set(['detected', 'analyzing', 'monitoring'])
+const WORKING: ReadonlySet<EpisodeStatus> = new Set(['awaiting', 'detected', 'analyzing', 'monitoring'])
 
 export const episodeWorking = (episode: Episode | null): episode is Episode =>
   episode != null && WORKING.has(episode.status)

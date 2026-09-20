@@ -21,6 +21,7 @@ function finalRun(mode: FixtureMode): ScenarioRun {
     memory_mode: 'use',
     recalled: [],
     recall_provenance: [],
+    routes: {},
     implementation: null,
     ...structuredClone(recorded),
   } as ScenarioRun

@@ -26,7 +26,7 @@ interface Props {
 
 type Features = FeatureCollection<Geometry, Record<string, unknown>>
 
-function staticSources(network: NetworkGeometry): Record<string, Features> {
+export function staticSources(network: NetworkGeometry): Record<string, Features> {
   return {
     roads: {
       type: 'FeatureCollection',

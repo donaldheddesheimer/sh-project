@@ -148,11 +148,21 @@ class PreemptionController:
         self._clocks: dict[str, _PhaseClock] = {}
         self._services: dict[str, _Service] = {}
         self._activated: set[tuple[str, str]] = set()  # (responder, intersection): at most one activation each
+        self._by_responder: dict[str, list[str]] = {}  # responder -> intersections pre-empted for it, in order
+        self._hold_by_responder: dict[str, float] = {}
         self._now = 0.0
         self._activations = 0
         self._preempted: list[str] = []
         self._longest_hold_s = 0.0
         self._capped: list[str] = []
+
+    def responder_record(self, responder_id: str) -> tuple[list[str], float]:
+        """Intersections pre-empted for one responder, in activation order, and its longest hold.
+
+        Per responder, where ``notes()`` is per corridor: it answers "was this unit actually helped?",
+        which an aggregate count cannot. Holds still running are included, so the answer is current.
+        """
+        return list(self._by_responder.get(responder_id, ())), self._hold_by_responder.get(responder_id, 0.0)
 
     def notes(self) -> list[str]:
         if not self._activations:
@@ -242,6 +252,7 @@ class PreemptionController:
     def _activate(self, responder_id: str, iid: str) -> None:
         self._activated.add((responder_id, iid))
         self._activations += 1
+        self._by_responder.setdefault(responder_id, []).append(iid)
         if iid not in self._preempted:
             self._preempted.append(iid)
 
@@ -250,6 +261,9 @@ class PreemptionController:
             return
         if service.hold_started is None:
             service.hold_started = self._now
+        held = self._now - service.hold_started
+        for rid in service.responders:  # credited while it runs, so an unfinished hold still shows up
+            self._hold_by_responder[rid] = max(self._hold_by_responder.get(rid, 0.0), held)
         grant = min(HOLD_EXTENSION_S, service.hold_started + self.corridor.max_hold_s - self._now)
         if grant <= obs.remaining_s + EPS:  # the cap leaves nothing to add: let the program proceed
             del self._services[iid]

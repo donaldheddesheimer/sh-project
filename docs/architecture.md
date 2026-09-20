@@ -159,8 +159,10 @@ behavior:
 **So every candidate must run in a fresh process**, which also makes parallel candidate
 evaluation natural. A 600 s horizon of the healthy network takes under 1 s headless, but
 the post-crash network takes 6–8 s alone and 10–16 s with 4 branches in parallel. About
-half of that is `_apply_rubbernecking`, which makes a TraCI position lookup per vehicle per
-step on the crash link's open lanes.
+half of that was `_apply_rubbernecking`, which made a TraCI position lookup per vehicle per
+step on the crash link's open lanes; lane id and lane position now ride on the existing
+vehicle subscription, so that per-step bookkeeping makes no extra round trip. The figures
+above are the ones measured before the change; **the speed-up has not been timed**.
 
 ## Provider boundaries
 
@@ -182,7 +184,8 @@ and `list_cameras`.
 **Agent.** `AgentProvider` is `propose_candidates(IncidentContext)` and
 `recommend(context, results)`. For a blocked link the mock proposes:
 - timing: downstream flush, upstream metering and cross-street relief;
-- `ems-corridor` and `corridor-plus-meter` (pre-emption), when an EMS origin or responder exists;
+- `ems-corridor`, `corridor-plus-divert` and `corridor-plus-meter` (pre-emption, at a 350 m
+  detection distance), when an EMS origin or responder exists;
 - `divert-advisory`, a 30% compliance diversion around the blocked segment;
 - `aggressive-flush`, which is deliberately unsafe (an 8 s green), so the demo always shows
   the validator rejecting a plan.

@@ -19,6 +19,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -107,6 +108,9 @@ CONGESTION_WINDOW_S = 90.0
 CRITICAL_DENSITY = 0.04  # veh per lane-metre at which a slow segment counts as fully congested
 SPEED_TAU_S = 20.0  # smoothing of observed segment speeds used for responder ETAs
 RESPONDER_SPEED_TAU_S = 15.0  # smoothing of a responder's own speed (detects it being stuck in a queue)
+# Below walking pace a responder is held up rather than slowing for a turn: the threshold that makes
+# "stopped" in the diagnostics mean what an operator watching the map would call stopped.
+RESPONDER_STALL_SPEED_MS = 1.0
 EXPECTED_SIGNAL_WAIT_S = 10.0  # mean wait at a fixed-time signal: P(red) ~0.5 x half of a ~40 s red
 
 # traci.start's own connect loop hard-codes a 1 s wait between attempts (traci/main.py: start -> init ->
@@ -153,6 +157,15 @@ def vehicle_kind(type_id: str) -> VehicleKind:
     return VehicleKind.CAR
 
 
+@dataclass
+class _ResponderWait:
+    """Why one responder was slow: how long it sat still, where, and what was in front of it."""
+
+    stalled_s: float = 0.0
+    by_segment: dict[str, float] = field(default_factory=dict)
+    max_ahead: int = 0
+
+
 class SumoSimulation(TrafficSimulation):
     def __init__(
         self,
@@ -185,6 +198,7 @@ class SumoSimulation(TrafficSimulation):
         self._disruptions: dict[str, Disruption] = {}
         self._dispatches: dict[str, EmergencyDispatch] = {}
         self._responder_speed: dict[str, float] = {}
+        self._responder_waits: dict[str, _ResponderWait] = {}
         self._rubbernecking: set[str] = set()
         self._pending_offsets: dict[str, float] = {}
         self._preemption: PreemptionController | None = None
@@ -409,12 +423,18 @@ class SumoSimulation(TrafficSimulation):
 
     def _update_dispatches(self, arrived: tuple[str, ...]) -> None:
         alpha = 1.0 - math.exp(-self._step_length / RESPONDER_SPEED_TAU_S)
+        lanes: dict[str, list[float]] | None = None  # built once per step, and only if someone is stalled
         for d in self._dispatches.values():
             if d.status is EmergencyStatus.COMPLETED:
                 continue
             if (r := self._veh.get(d.id)) is not None:
                 prev = self._responder_speed.get(d.id, r[tc.VAR_SPEED])
                 self._responder_speed[d.id] = prev + alpha * (r[tc.VAR_SPEED] - prev)
+                # before the status flips below, so only time actually spent en route is counted
+                if d.status is EmergencyStatus.EN_ROUTE and r[tc.VAR_SPEED] < RESPONDER_STALL_SPEED_MS:
+                    if lanes is None:
+                        lanes = self._lane_positions()
+                    self._record_stall(d.id, r, lanes)
             if d.id in arrived:
                 d.status = EmergencyStatus.COMPLETED
                 if d.arrived_at is None:
@@ -422,6 +442,24 @@ class SumoSimulation(TrafficSimulation):
             elif d.status is EmergencyStatus.EN_ROUTE and d.id in self._veh and self.conn.vehicle.isStopped(d.id):
                 d.status = EmergencyStatus.ON_SCENE
                 d.arrived_at = self._time
+
+    def _lane_positions(self) -> dict[str, list[float]]:
+        """Lane id -> the lane position of every vehicle on it, from the subscription (no TraCI round trip)."""
+        lanes: dict[str, list[float]] = {}
+        for r in self._veh.values():
+            lanes.setdefault(r[tc.VAR_LANE_ID], []).append(r[tc.VAR_LANEPOSITION])
+        return lanes
+
+    def _record_stall(self, responder_id: str, r: dict, lanes: dict[str, list[float]]) -> None:
+        """Charge this step to a stalled responder: total, the segment it happened on, and the queue ahead."""
+        wait = self._responder_waits.setdefault(responder_id, _ResponderWait())
+        wait.stalled_s += self._step_length
+        lane_id = r[tc.VAR_LANE_ID]
+        segment = lane_id.rsplit("_", 1)[0]  # SUMO lane ids are "<edge>_<index>"
+        if segment in self.network.segments:  # an internal lane means it is inside a junction, not held on a road
+            wait.by_segment[segment] = wait.by_segment.get(segment, 0.0) + self._step_length
+        pos = r[tc.VAR_LANEPOSITION]
+        wait.max_ahead = max(wait.max_ahead, sum(1 for p in lanes.get(lane_id, ()) if p > pos))
 
     def _apply_pending_offsets(self) -> None:
         """Offsets are applied by stretching a green phase, never by cutting clearance intervals."""
@@ -852,6 +890,41 @@ class SumoSimulation(TrafficSimulation):
         notes += self._preemption_failures
         if self._diversion is not None:
             notes += self._diversion.notes()
+        notes += self._responder_notes()
+        return notes
+
+    def _responder_notes(self) -> list[str]:
+        """One line per responder that was held up, or that a corridor was in force for, in dispatch order.
+
+        The corridor and diversion notes above say what the response did overall; these say what happened
+        to each unit, which is what turns a disappointing EMS number into an explanation. They are added
+        to the existing notes, never in place of them.
+        """
+        notes: list[str] = []
+        for d in self._dispatches.values():
+            served, hold = self._preemption.responder_record(d.id) if self._preemption is not None else ([], 0.0)
+            wait = self._responder_waits.get(d.id)
+            if wait is None and not served:
+                continue  # it was never held up and no signal was pre-empted for it: nothing to explain
+            parts = []
+            if wait is not None:
+                # the segment it lost the most time on; ties go to the first in id order (determinism)
+                worst = max(sorted(wait.by_segment.items()), key=lambda kv: kv[1], default=None)
+                where = f" on {worst[0]}" if worst is not None else ""
+                n = wait.max_ahead
+                parts.append(
+                    f"stopped for {wait.stalled_s:.0f}s{where}, "
+                    f"up to {n} vehicle{'' if n == 1 else 's'} ahead"
+                )
+            if self._preemption is not None:
+                k = len(served)
+                parts.append(
+                    f"{k} signal{'' if k == 1 else 's'} pre-empted on its route ({', '.join(served)}), "
+                    f"longest hold {hold:.0f}s"
+                    if served
+                    else "no signals pre-empted on its route"
+                )
+            notes.append(f"{d.id}: {'; '.join(parts)}")
         return notes
 
     # ------------------------------------------------------------------ reverting
@@ -973,6 +1046,7 @@ class SumoSimulation(TrafficSimulation):
         self._disruptions = {d.id: d.model_copy(deep=True) for d in snapshot.disruptions}
         self._dispatches = {d.id: d.model_copy(deep=True) for d in snapshot.dispatches}
         self._responder_speed = {}
+        self._responder_waits = {}  # a branch measures the delay it causes, not the live city's history
         self._rubbernecking = set()
         self._pending_offsets = {}
         self._preemption = None

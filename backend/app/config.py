@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     scenario_horizon_s: float = 600.0  # simulated seconds per branch when the request omits it
     scenario_workers: int = 4  # SUMO branches simulated in parallel
     scenario_sample_s: float = 30.0  # simulated seconds between a candidate's timeline samples
-    scenario_max_candidates: int = 8  # including the baseline
+    scenario_max_candidates: int = 9  # including the baseline; the mock proposes exactly this many
     scenario_history: int = 10  # runs kept in memory for GET /api/scenarios
     scenario_idle_timeout_s: float = 300.0  # an MCP agent's open run fails after this long without a tool call
 

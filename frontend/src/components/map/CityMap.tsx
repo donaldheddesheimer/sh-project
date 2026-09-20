@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react'
 import type { Camera, CityState, Incident, NetworkGeometry } from '../../api/types'
 import { duration } from '../../lib/format'
 import type { PlanOverlay } from '../../lib/plans'
-import { baseStyle, layers } from './style'
+import { baseStyle, contextLayers, layers } from './style'
 import { VEHICLE_ICON_PIXEL_RATIO, vehicleIconImages } from './vehicleIcons'
 
 setWorkerUrl(workerUrl)
@@ -21,6 +21,7 @@ interface Props {
   selection: Selection | null
   planOverlay: PlanOverlay | null
   onSelect: (selection: Selection | null) => void
+  onSelectIncident: (id: string) => void
 }
 
 type Features = FeatureCollection<Geometry, Record<string, unknown>>
@@ -80,7 +81,7 @@ function markerElement(className: string, html: string): HTMLDivElement {
   return el
 }
 
-export function CityMap({ network, state, cameras, selection, planOverlay, onSelect }: Props) {
+export function CityMap({ network, state, cameras, selection, planOverlay, onSelect, onSelectIncident }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const ready = useRef(false)
@@ -89,9 +90,13 @@ export function CityMap({ network, state, cameras, selection, planOverlay, onSel
   const corridorMarkers = useRef(new Map<string, Marker>())
   const cameraMarkers = useRef(new Map<string, Marker>())
   const onSelectRef = useRef(onSelect)
+  const onSelectIncidentRef = useRef(onSelectIncident)
   useEffect(() => {
     onSelectRef.current = onSelect
   }, [onSelect])
+  useEffect(() => {
+    onSelectIncidentRef.current = onSelectIncident
+  }, [onSelectIncident])
 
   // ---- create the map once per network --------------------------------------------------
   useEffect(() => {
@@ -125,6 +130,10 @@ export function CityMap({ network, state, cameras, selection, planOverlay, onSel
 
     map.on('load', () => {
       fit()
+      if (network.id === 'pittsburgh_oakland') {
+        map.addSource('city-context', { type: 'geojson', data: '/oakland-context.geojson' })
+        for (const layer of contextLayers) map.addLayer(layer)
+      }
       for (const [id, data] of Object.entries(staticSources(network))) {
         map.addSource(id, { type: 'geojson', data, promoteId: 'id' })
       }
@@ -219,7 +228,7 @@ export function CityMap({ network, state, cameras, selection, planOverlay, onSel
       })),
     })
 
-    syncIncidentMarkers(map, incidentMarkers.current, state.incidents)
+    syncIncidentMarkers(map, incidentMarkers.current, state.incidents, (id) => onSelectIncidentRef.current(id))
 
     const active = new Set<string>()
     for (const ev of state.emergency_vehicles) {
@@ -317,9 +326,15 @@ function syncCameraMarkers(map: MapLibreMap, markers: Map<string, Marker>, camer
   }
 }
 
-function syncIncidentMarkers(map: MapLibreMap, markers: Map<string, Marker>, incidents: Incident[]) {
-  const active = new Set(incidents.map((i) => i.id))
-  for (const incident of incidents) {
+function syncIncidentMarkers(
+  map: MapLibreMap,
+  markers: Map<string, Marker>,
+  incidents: Incident[],
+  onSelectIncident: (id: string) => void,
+) {
+  const current = incidents.filter((incident) => incident.status === 'active')
+  const active = new Set(current.map((incident) => incident.id))
+  for (const incident of current) {
     if (!incident.location.point) continue
     if (markers.has(incident.id)) continue
     const el = markerElement(
@@ -327,6 +342,19 @@ function syncIncidentMarkers(map: MapLibreMap, markers: Map<string, Marker>, inc
       '<span class="pulse"></span><span class="glyph">!</span><span class="tag"></span>',
     )
     el.querySelector<HTMLElement>('.tag')!.textContent = incident.id
+    el.tabIndex = 0
+    el.setAttribute('role', 'button')
+    el.setAttribute('aria-label', `Show incident ${incident.id}`)
+    el.addEventListener('click', (event) => {
+      event.stopPropagation()
+      onSelectIncident(incident.id)
+    })
+    el.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        onSelectIncident(incident.id)
+      }
+    })
     markers.set(
       incident.id,
       new Marker({ element: el }).setLngLat([incident.location.point.lon, incident.location.point.lat]).addTo(map),

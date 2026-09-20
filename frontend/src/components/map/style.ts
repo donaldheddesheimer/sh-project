@@ -31,7 +31,7 @@ const levelColor: ExpressionSpecification = [
   CONGESTION_COLOR.free,
 ]
 
-export const BACKGROUND = '#0a0e13'
+export const BACKGROUND = '#101a24'
 
 export const baseStyle: StyleSpecification = {
   version: 8,
@@ -39,20 +39,50 @@ export const baseStyle: StyleSpecification = {
   layers: [{ id: 'background', type: 'background', paint: { 'background-color': BACKGROUND } }],
 }
 
+// A bundled OSM extract adds texture to Oakland without a network tile dependency.
+// The synthetic downtown grid deliberately keeps its schematic map.
+export const contextLayers: LayerSpecification[] = [
+  {
+    id: 'context-water',
+    type: 'fill',
+    source: 'city-context',
+    filter: ['==', ['get', 'kind'], 'water'],
+    paint: { 'fill-color': '#122a3b', 'fill-opacity': 0.9 },
+  },
+  {
+    id: 'context-parks',
+    type: 'fill',
+    source: 'city-context',
+    filter: ['==', ['get', 'kind'], 'park'],
+    paint: { 'fill-color': '#1b342e', 'fill-opacity': 0.85, 'fill-outline-color': '#365047' },
+  },
+  {
+    id: 'context-buildings',
+    type: 'fill',
+    source: 'city-context',
+    filter: ['==', ['get', 'kind'], 'building'],
+    paint: {
+      'fill-color': '#2a3946',
+      'fill-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.55, 16, 0.85],
+      'fill-outline-color': '#41515f',
+    },
+  },
+]
+
 export const layers: LayerSpecification[] = [
   {
     id: 'road-casing',
     type: 'line',
     source: 'roads',
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#05070a', 'line-width': byZoom((px) => ['+', ['*', lanes, px * 2], 3]) },
+    paint: { 'line-color': '#0a1118', 'line-width': byZoom((px) => ['+', ['*', lanes, px * 2], 3]) },
   },
   {
     id: 'road-surface',
     type: 'line',
     source: 'roads',
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#1a2129', 'line-width': byZoom((px) => ['*', lanes, px * 2]) },
+    paint: { 'line-color': '#27333f', 'line-width': byZoom((px) => ['*', lanes, px * 2]) },
   },
   {
     id: 'road-divider',

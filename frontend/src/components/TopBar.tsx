@@ -18,6 +18,7 @@ interface Props {
   status: StatusInfo | null
   connected: boolean
   hasIncident: boolean
+  canDispatch: boolean
   busy: string | null
   analyze: AnalyzeState
   fixture: boolean
@@ -29,30 +30,17 @@ interface Props {
 
 export function TopBar(props: Props) {
   const {
-    networkName,
-    mapId,
-    simTime,
-    status,
-    connected,
-    hasIncident,
-    busy,
-    analyze,
-    fixture,
-    onAction,
-    onSpeed,
-    onMap,
-    onAnalyze,
+    networkName, mapId, simTime, status, connected, hasIncident, canDispatch,
+    busy, analyze, fixture, onAction, onSpeed, onMap, onAnalyze,
   } = props
   const run = status?.status ?? 'starting'
   const live = connected && run !== 'starting' && run !== 'error'
   const running = run === 'running'
-  const showAnalysis = () => {
-    onAnalyze()
-    document.getElementById('response-plans')?.scrollIntoView({
-      block: 'start',
-      behavior: 'auto',
-    })
-  }
+  const dispatchTitle = !hasIncident
+    ? 'No active incident'
+    : canDispatch
+      ? 'Send a responder from the configured station to the newest active incident'
+      : 'Select the newest active incident to dispatch EMS'
   return (
     <header className="topbar">
       <div className="brand">
@@ -157,8 +145,9 @@ export function TopBar(props: Props) {
             </button>
             <button
               className="btn"
-              disabled={!live || !hasIncident || !!busy}
-              title={hasIncident ? 'Send a responder to the active incident' : 'No active incident'}
+              disabled={!live || !canDispatch || !!busy}
+              title={dispatchTitle}
+              aria-label="Dispatch EMS"
               onClick={() => onAction('dispatch')}
             >
               <Icon name="medical" /> Dispatch EMS
@@ -167,7 +156,7 @@ export function TopBar(props: Props) {
               className={`btn btn-primary btn-analyze${analyze.progress != null ? ' btn-busy' : ''}`}
               disabled={!analyze.enabled}
               title={analyze.reason}
-              onClick={showAnalysis}
+              onClick={onAnalyze}
             >
               <Icon name={analyze.progress != null ? 'spinner' : 'branch'} className={analyze.progress != null ? 'spin' : undefined} />
               {analyze.label}

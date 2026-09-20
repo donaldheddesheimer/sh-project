@@ -290,18 +290,27 @@ its phase, queues and speed.
 
 ### Console layout
 
-The command bar switches between the **3×3 Grid** and **Pittsburgh** and groups live state,
-simulation speed and incident actions. Switching maps starts a fresh live simulation, so
-map-local incidents, analysis runs, episodes, trends and selections are cleared; durable
-agent memory remains available. The map stays central, with incident details and KPIs on the
-right and trends or scenario comparisons in the lower dock. **Analyze Response** brings the
-Response plans panel into view. The
-Autonomous agent panel starts collapsed and opens when an episode appears. On narrow screens,
-the speed control becomes a compact selector so all incident actions stay visible.
+The map-first command workspace has three working rail views: **Live** (active incident,
+network KPIs and the road/signal inspector), **Analysis** (candidate plans, the safety
+rejection and advisory/apply state), and **Agent** (demo script controls, episode progress,
+lesson and scorecard, with the plans alongside). The command bar switches between the
+**3×3 Grid** and **Pittsburgh** and keeps simulation state, clock, speed, Inject Collision,
+Dispatch EMS and Analyze Response available in every view. Switching maps starts a fresh
+live simulation: map-local incidents, analysis runs, episodes, trends and selections are
+cleared, while durable agent memory remains available.
+Analyze Response opens Analysis before starting a run. Clicking an incident marker opens it
+in Live; with multiple active incidents the drawer has an explicit incident selector. The
+dispatch shortcut still targets the newest active incident, so dispatch is disabled while
+an older one is selected. Clicking a road or signal opens its inspector in Live.
 
-`frontend/src/styles.css` holds the base component styles; `frontend/src/console.css` adds
-the dark operations presentation and responsive layout. Map and incident styles remain in
-the base stylesheet.
+The lower dock offers live trends, scenario comparison and a separate Activity view of the
+event log and city overview. The right drawer stays visible on a wide desktop; below 1050 px
+it overlays the map and can be opened from the rail and closed from its header. The top bar
+scrolls horizontally at that size to keep every command reachable. The palette uses slate
+surfaces, a restrained blue interaction accent and state-only alert colors; it does not use
+proprietary design assets. `frontend/src/styles.css` holds base component styles and
+`frontend/src/console.css` holds the workspace presentation and responsive layout. This
+redesign has not been run, built or visually verified in this change.
 
 ## Second city: Oakland, Pittsburgh
 
@@ -316,8 +325,13 @@ make backend-oakland   # or SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland
 make frontend
 ```
 
-- **What is real.** Only the map: streets, lane counts, speed limits and signal locations come
-  from OpenStreetMap (© OpenStreetMap contributors, ODbL; the credit is shown on the map).
+- **What is real.** Streets, lane counts, speed limits and signal locations come from
+  OpenStreetMap. The Oakland UI also bundles 1,358 OSM building, park and water footprints
+  in `frontend/public/oakland-context.geojson` for visual context. Their source is the same
+  Oakland bounding box; the OSM credit is shown on the map (© OpenStreetMap contributors,
+  ODbL). These shapes are static and load locally, without a tile service. Refresh the
+  context asset with `python3 frontend/scripts/build_oakland_context.py` when source data
+  needs updating; it downloads the footprints from Overpass.
 - **What is synthetic.** The demand is fringe-to-fringe flows weighted by road class, about
   2,500 veh/h in total. The signal timing is Webster timing sized to that demand, with 12 s
   minimum greens and coordinated offsets on a 54 s cycle. The build is described in
@@ -339,12 +353,14 @@ make frontend
   junction at Fifth Ave and Neville St keeps all its approaches even though two of them read
   SB (the inspector adds the street name there). The rotation stays inside those labels — a
   heading on a VSS report is a true bearing and is compared with the segment's own true
-  bearing (`smart_city/matching.py`). There is no basemap under the road network.
+  bearing (`smart_city/matching.py`). There is no external tile basemap: the bundled building,
+  park and water footprints sit beneath the simulated road network. Traffic demand, signal
+  timing and response routes are not inferred from those static shapes.
 
 ## Demo walkthrough: autonomous episode
 
 Only a smoke test at different settings has run it (see [Tests](#tests)), so the timings below are still estimates. Use the
-**Autonomous agent** panel at the top of the side column, or the API.
+**Agent** rail view (the Autonomous agent panel), or the API.
 
 1. For a cold run, clear the memory: the panel's **clear**, or `DELETE /api/memory`.
 2. Pick **Operator collision** and click **Arm**
@@ -940,15 +956,18 @@ backend/app/
   learning/embeddings.py optional OpenAI-compatible embedding NIM client
 backend/tests/          network, simulation, runner, safety/agent, mock provider, API, demo setup and smoke tests
 frontend/src/
-  App.tsx               layout + actions
+  App.tsx               map-first workspace layout, view and incident selection, actions
   hooks/useCityStream.ts   WebSocket client (reconnect, trend backfill, scenario runs, episodes)
   components/map/       MapLibre map, layer styles, vehicle glyphs, plan overlays
   components/plans/     response plans: candidate cards, KPI comparison, horizon chart, dock,
                         Apply to live signals
   components/EpisodePanel.tsx  autonomous agent: scripts, step strip, lesson, memory
-  components/           top bar, incident card, KPI tiles, inspector, trends, ops log
+  components/           working view rail, top bar, incident card, KPI tiles, inspector,
+                        trends, ops log
   lib/plans.ts          analysis state, deltas, plan overlays
   dev/                  ?fixture=scenario replay of a recorded run
+frontend/public/        static Oakland OSM building, park and water context GeoJSON
+frontend/scripts/       reproducible Overpass download for the Oakland context asset
 simulation/
   networks/grid3x3/     build_network.py → grid3x3.net.xml (named streets, 9 signals)
   networks/pittsburgh_oakland/  OSM extract (ODbL) + build_network.py → oakland.net.xml (33 signals)

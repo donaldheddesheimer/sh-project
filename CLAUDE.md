@@ -50,7 +50,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Backend on :8000 | `make backend` | `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` |
 | Frontend on :5173 | `make frontend` | `npm --prefix frontend run dev` |
 | Frontend check | `make build` | `npm --prefix frontend run lint` and `npm --prefix frontend run build` (both clean today; a >500 kB chunk warning is expected) |
-| Start on Oakland, Pittsburgh instead of the grid | `make backend-oakland` (still :8000) | set `SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland` in `.env`, then run the backend as usual; the console selector switches at runtime |
+| Switch to Oakland, Pittsburgh | use the console **Map** selector after startup | same runtime control on every platform |
 | Rebuild Oakland net/demand/timing | `make network-oakland` | run `simulation/networks/pittsburgh_oakland/build_network.py` with the venv python |
 | Regenerate network/demand | `make network` | run `simulation/networks/grid3x3/build_network.py` then `simulation/scenarios/downtown_grid/build_demand.py` with the venv python |
 
@@ -65,8 +65,8 @@ venv directly (this is what works in PowerShell or Git Bash):
   `DELETE /api/memory` first for a cold run. `crash-ahead` remains the unattended version.
 - To test the UI against a non-default backend: `BACKEND_URL=http://127.0.0.1:8001` for Vite.
   `?fixture=scenario` replays a recorded run but still needs a running backend and an active incident.
-- Config is env vars or `.env` (repo root or `backend/`); every setting is in
-  [backend/app/config.py](backend/app/config.py) and documented in `.env.example`.
+- Operational defaults live in [backend/app/config.py](backend/app/config.py) and runtime
+  choices live in the console/API. `.env` accepts only the Anthropic and NVIDIA API keys.
 
 ## Where to change what
 
@@ -104,10 +104,9 @@ venv directly (this is what works in PowerShell or Git Bash):
   over MCP (or a development replay file), map-matches reports and has `CityService` mirror
   matched collisions into the twin. `NemotronAgentProvider` powers REST Analyze Response with
   schema-validated plan data; the safety validator and completed-candidate gate still decide
-  what can run. Its first failure switches that run to the mock when
-  `AGENT_FALLBACK_TO_MOCK=true`, or fails it when false. Nemotron also runs as an episode
-  analyst. Claude and Nemotron are runtime-selectable episode analyst/reviewer teams;
-  `EPISODE_ANALYST` is only their startup default.
+  what can run. Model failures remain visible rather than silently changing providers.
+  Nemotron also runs as an episode analyst. Claude and Nemotron are runtime-selectable
+  episode analyst/reviewer teams; startup stays on Mock.
 - **One thread owns the live TraCI connection.** TraCI is blocking and not thread-safe.
   Touch the live simulation only through `CityService.run_on_live(fn)`; scripted crashes are
   fired by the runner thread itself (`set_scripted_events`).
@@ -145,7 +144,8 @@ venv directly (this is what works in PowerShell or Git Bash):
   `WORKING` in `lib/plans.ts`.
 - `TREND_SAMPLE_S` in `services/city.py` ↔ `SAMPLE_EVERY_S` in `useCityStream.ts` ↔
   `SAMPLE_S` in `learning/monitor.py`.
-- A new setting goes in `config.py` **and** `.env.example`.
+- Do not add operational environment variables. Put reviewed defaults in `config.py` and
+  expose operator-facing choices through the console/API; `.env.example` is API keys only.
 - The mock proposes exactly 9 plans, which equals the default `SCENARIO_MAX_CANDIDATES`. A
   tenth plan silently pushes `divert-advisory` off the end (it is appended last). (A warm run
   with a close lesson proposes 4 on purpose.)

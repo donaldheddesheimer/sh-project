@@ -1,4 +1,4 @@
-"""Provider selection (SMART_CITY_PROVIDER / AGENT_PROVIDER / EPISODE_ANALYST) and service assembly."""
+"""Provider selection and service assembly; model teams are selected at runtime in the console."""
 
 from __future__ import annotations
 
@@ -54,9 +54,9 @@ def build_smart_city_provider(settings: Settings, network: RoadNetwork) -> tuple
         provider = MockSmartCityProvider(network, detection_delay_s=settings.incident_detection_delay_s)
         return provider, [provider.observe]
     if settings.demo_script:
-        raise RuntimeError("DEMO_SCRIPT cannot be used with SMART_CITY_PROVIDER=nvidia; use the mock provider")
+        raise RuntimeError("demo scripts require the mock Smart City provider")
     if not settings.vss_replay_file and not settings.nvidia_va_mcp_url:
-        raise RuntimeError("SMART_CITY_PROVIDER=nvidia requires NVIDIA_VA_MCP_URL or VSS_REPLAY_FILE")
+        raise RuntimeError("the NVIDIA Smart City provider requires a live MCP client or replay source")
     api_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
     client = (
         ReplayVssClient(settings.vss_replay_file)
@@ -77,7 +77,7 @@ def build_agent_provider(settings: Settings) -> AgentProvider:
     if settings.agent_provider == "mock":
         return MockAgentProvider()
     if not settings.nemotron_model:
-        raise RuntimeError("AGENT_PROVIDER=nemotron requires NEMOTRON_MODEL (a NIM model id)")
+        raise RuntimeError("the Nemotron REST provider requires a model id")
     api_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
     return NemotronAgentProvider(
         settings.nemotron_base_url, settings.nemotron_model, api_key, settings.scenario_max_candidates
@@ -89,8 +89,7 @@ def build_episode_teams(
 ) -> tuple[dict[str, AgentTeam], str]:
     """Configured analyst/reviewer teams and the startup selection.
 
-    ``EPISODE_ANALYST`` is only the startup default; the operator may switch teams between episodes.
-    ``auto`` prefers Claude, then Nemotron, then the mock so configured NVIDIA credits are not spent by surprise.
+    The startup default is Mock; the operator may switch teams between episodes.
     """
     mock = MockAnalyst(scenarios, implementor, settings.agent_may_implement)
     mock_reviewer = MockReviewer()
@@ -141,12 +140,8 @@ def build_episode_teams(
     else:
         selected = wanted
     if selected not in teams:
-        needed = (
-            "ANTHROPIC_API_KEY and CLAUDE_MODEL"
-            if selected == "claude"
-            else "NVIDIA_API_KEY and NEMOTRON_MODEL"
-        )
-        raise RuntimeError(f"EPISODE_ANALYST={selected} requires {needed}")
+        needed = "an Anthropic API key" if selected == "claude" else "an NVIDIA API key"
+        raise RuntimeError(f"analyst {selected} requires {needed}")
     return teams, selected
 
 

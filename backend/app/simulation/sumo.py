@@ -9,6 +9,7 @@ a single thread.
 from __future__ import annotations
 
 import itertools
+import logging
 import math
 import os
 import re
@@ -57,10 +58,13 @@ from app.simulation.preemption import (
     ResponderApproach,
     SetPhase,
     TlsObservation,
+    UnsafeTransition,
     check_transition,
 )
 from app.simulation.reroute import DiversionAdvisory
 from app.simulation.scenario import Scenario
+
+log = logging.getLogger(__name__)
 
 # VAR_LANE_ID and VAR_LANEPOSITION ride along so the per-step bookkeeping below (rubbernecking, the
 # responder walk, the wait diagnostics) needs no per-vehicle TraCI round trip. A subscription result is
@@ -159,6 +163,7 @@ class SumoSimulation(TrafficSimulation):
         snapshot_dir: Path,
         sumo_binary: str | None = None,
         gui: bool = False,
+        fail_safe_preemption: bool = False,
     ):
         self.scenario = scenario
         self.network = network
@@ -184,6 +189,11 @@ class SumoSimulation(TrafficSimulation):
         self._pending_offsets: dict[str, float] = {}
         self._preemption: PreemptionController | None = None
         self._preemption_notes: list[str] = []  # what a corridor did before it was dropped (response_notes)
+        self._preemption_failures: list[str] = []
+        # The live twin degrades instead of stopping: an unsafe pre-emption drops the corridor and the city
+        # keeps running. A branch must still fail loudly, because a candidate that needs an unsafe signal
+        # change must never be measured as if it were safe, let alone recommended.
+        self._fail_safe_preemption = fail_safe_preemption
         self._diversion: DiversionAdvisory | None = None
         self._base_program_ids: dict[str, str] = {}  # intersection -> program running before the first policy
         self._programs: dict[tuple[str, str], SignalProgram] = {}  # active program per (tls, program id)
@@ -425,8 +435,17 @@ class SumoSimulation(TrafficSimulation):
                 del self._pending_offsets[tls_id]
 
     def _preempt_signals(self) -> None:
-        commands = self._preemption.step(self._time, self._responder_approaches(), self._observe_tls)
-        for command in commands:  # UnsafeTransition from the controller propagates on purpose
+        try:
+            # the controller checks every command before returning any, so nothing was issued if this raises
+            commands = self._preemption.step(self._time, self._responder_approaches(), self._observe_tls)
+        except UnsafeTransition as exc:
+            if not self._fail_safe_preemption:
+                raise  # a branch fails loudly: an unsafe candidate must not be measured as if it were safe
+            log.error("pre-emption refused an unsafe transition; EMS corridor disabled", exc_info=exc)
+            self._drop_preemption()
+            self._preemption_failures.append(f"EMS corridor disabled: an unsafe pre-emption was refused ({exc})")
+            return
+        for command in commands:
             tls_id = self._tls_id(command.intersection_id)
             if isinstance(command, SetPhase):
                 self.conn.trafficlight.setPhase(tls_id, command.phase_index)
@@ -818,6 +837,7 @@ class SumoSimulation(TrafficSimulation):
             self._tls_id(intersection_id)  # raises for an unknown or unsignalized intersection
         self._preemption = PreemptionController(corridor, self._step_length)
         self._preemption_notes = []  # the replaced corridor's record goes with it
+        self._preemption_failures = []
 
     def reroute_vehicles(self, action: RerouteAction) -> int:
         for segment_id in action.avoid_segment_ids:
@@ -829,6 +849,7 @@ class SumoSimulation(TrafficSimulation):
 
     def response_notes(self) -> list[str]:
         notes = self._preemption.notes() if self._preemption is not None else list(self._preemption_notes)
+        notes += self._preemption_failures
         if self._diversion is not None:
             notes += self._diversion.notes()
         return notes
@@ -956,6 +977,7 @@ class SumoSimulation(TrafficSimulation):
         self._pending_offsets = {}
         self._preemption = None
         self._preemption_notes = []
+        self._preemption_failures = []
         self._diversion = None
         self._base_program_ids = {}  # the snapshot restores each signal to the program it was running
         self._programs = {}

@@ -39,16 +39,7 @@ between every analyst and the live simulation.
 
 ## From incident to evidence
 
-```mermaid
-flowchart LR
-    A[Incident detected] --> B[Snapshot live city]
-    B --> C[Propose responses]
-    C --> D[Validate safety]
-    D --> E[Parallel SUMO branches]
-    E --> F[Compare outcomes]
-    F --> G[Apply recommendation]
-    G --> H[Monitor and learn]
-```
+![Incident response workflow: detect, evaluate, decide, and learn](docs/assets/incident-response-flow.svg)
 
 The console makes the separation visible: the map always shows the live city, while scenario
 cards and comparison charts show isolated branch results. Candidate plans include signal

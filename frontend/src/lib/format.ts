@@ -26,10 +26,10 @@ export function compact(value: number): string {
 
 // Status palette (fixed; see dataviz reference): good / warning / serious / critical.
 export const STATUS = {
-  good: '#0ca30c',
-  warning: '#fab219',
-  serious: '#ec835a',
-  critical: '#d03b3b',
+  good: '#2aa876',
+  warning: '#e8b04b',
+  serious: '#e8835c',
+  critical: '#d84f59',
 } as const
 
 export const CONGESTION_COLOR: Record<CongestionLevel, string> = {
@@ -47,9 +47,9 @@ export const CONGESTION_LABEL: Record<CongestionLevel, string> = {
 }
 
 export const SIGNAL_COLOR: Record<SignalColor, string> = {
-  green: '#2fd05b',
-  yellow: '#fab219',
-  red: '#e5484d',
+  green: '#38b887',
+  yellow: '#e8b04b',
+  red: '#df5b61',
 }
 
 export const DIRECTION_LABEL: Record<string, string> = {

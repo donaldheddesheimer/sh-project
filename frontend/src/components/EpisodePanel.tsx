@@ -269,7 +269,7 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
       title="Autonomous agent"
       icon="bolt"
       meta={info?.armed ? <span className="tag tag-primary">armed</span> : 'off'}
-      defaultOpen={episode != null}
+      defaultOpen
     >
       <div className="episode-controls">
         <select

@@ -5,10 +5,13 @@ import { Section } from './Section'
 
 interface Props {
   incidents: Incident[]
+  selectedId: string | null
+  onSelectIncident: (id: string) => void
   segments: RoadSegmentState[]
   responders: EmergencyVehicleState[]
   cameraCount: number
   busy: string | null
+  canDispatch: boolean
   onDispatch: () => void
   onClear: (id: string) => void
 }
@@ -27,8 +30,21 @@ function LaneDiagram({ total, blocked }: { total: number; blocked: number[] }) {
   )
 }
 
-export function IncidentPanel({ incidents, segments, responders, cameraCount, busy, onDispatch, onClear }: Props) {
-  const incident = incidents.length ? incidents.reduce((a, b) => (a.timestamp > b.timestamp ? a : b)) : null
+export function IncidentPanel({
+  incidents,
+  selectedId,
+  onSelectIncident,
+  segments,
+  responders,
+  cameraCount,
+  busy,
+  canDispatch,
+  onDispatch,
+  onClear,
+}: Props) {
+  const active = incidents.filter((item) => item.status === 'active')
+  const latest = active.length ? active.reduce((a, b) => (a.timestamp > b.timestamp ? a : b)) : null
+  const incident = active.find((item) => item.id === selectedId) ?? latest
 
   if (!incident) {
     return (
@@ -40,7 +56,7 @@ export function IncidentPanel({ incidents, segments, responders, cameraCount, bu
           <div>
             <div className="object-title">No active incidents</div>
             <div className="muted small">
-              Network operating normally. Camera analytics monitoring {cameraCount} {cameraCount === 1 ? 'camera' : 'cameras'}.
+              Network operating normally. {cameraCount} {cameraCount === 1 ? 'camera location' : 'camera locations'} available.
             </div>
           </div>
         </div>
@@ -54,8 +70,18 @@ export function IncidentPanel({ incidents, segments, responders, cameraCount, bu
     <Section
       title="Active incident"
       icon="warning"
-      meta={<span className="tag tag-danger">{incidents.length} active</span>}
+      meta={<span className="tag tag-danger">{active.length} active</span>}
     >
+      {active.length > 1 && (
+        <label className="incident-picker">
+          <span className="subhead">Selected incident</span>
+          <select value={incident.id} onChange={(event) => onSelectIncident(event.target.value)}>
+            {active.map((item) => (
+              <option key={item.id} value={item.id}>{item.id} · {item.location.description}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className={`object-card severity-${incident.severity}`}>
         <div className="object-head">
           <span className="object-icon danger">
@@ -120,13 +146,19 @@ export function IncidentPanel({ incidents, segments, responders, cameraCount, bu
         </dl>
 
         <div className="object-actions">
-          <button className="btn btn-sm" disabled={!!busy || !!responder} onClick={onDispatch}>
+          <button
+            className="btn btn-sm"
+            disabled={!!busy || !!responder || !canDispatch}
+            title={canDispatch ? 'Dispatch a responder to the newest active incident' : 'Dispatch targets the newest active incident'}
+            onClick={onDispatch}
+          >
             <Icon name="medical" size={12} /> Dispatch EMS
           </button>
           <button className="btn btn-sm" disabled={!!busy} onClick={() => onClear(incident.id)}>
             <Icon name="check" size={12} /> Clear scene
           </button>
         </div>
+        {!canDispatch && <p className="incident-action-note">Dispatch EMS currently targets the newest active incident.</p>}
       </div>
     </Section>
   )

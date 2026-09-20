@@ -2,24 +2,25 @@
    feature branches can add domain-specific UI without rebasing a shared stylesheet. */
 
 :root {
-  --gutter: #080d13;
-  --page: #0b121a;
-  --panel: #141d26;
-  --panel-2: #1b2630;
-  --panel-3: #26333f;
-  --panel-4: #334250;
-  --line: #2b3945;
-  --line-strong: #455767;
-  --text: #edf3f7;
-  --text-2: #bac9d5;
-  --muted: #9aabba;
-  --faint: #718596;
-  --accent: #287fbd;
-  --accent-hover: #3295da;
-  --accent-text: #99d5ff;
-  --accent-bg: rgba(40, 127, 189, 0.2);
-  --spark: #658ba7;
+  --gutter: #0a1016;
+  --page: #101820;
+  --panel: #151e27;
+  --panel-2: #1c2732;
+  --panel-3: #273542;
+  --panel-4: #344554;
+  --line: #2c3a47;
+  --line-strong: #4a5c6b;
+  --text: #eef3f6;
+  --text-2: #c2cdd6;
+  --muted: #9eafbc;
+  --faint: #7f92a1;
+  --accent: #2d72d2;
+  --accent-hover: #3984e5;
+  --accent-text: #9acbff;
+  --accent-bg: rgba(45, 114, 210, 0.2);
+  --spark: #7395ad;
   --radius: 3px;
+  --sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   --shadow: 0 0 0 1px rgba(8, 13, 19, 0.65), 0 10px 24px rgba(3, 8, 13, 0.45);
 }
 
@@ -28,8 +29,101 @@ body {
 }
 
 .app {
-  grid-template-columns: minmax(0, 1fr) 410px;
-  grid-template-rows: 70px minmax(0, 1fr) 272px;
+  grid-template-columns: 76px minmax(0, 1fr) 370px;
+  grid-template-rows: 70px minmax(0, 1fr) 254px;
+  grid-template-areas:
+    'top top top'
+    'rail map side'
+    'rail dock side';
+  min-width: 0;
+}
+
+.workspace-rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: 0;
+  padding: 12px 6px 8px;
+  border-right: 1px solid var(--line);
+  background: #111c26;
+}
+
+.rail-label,
+.workspace-eyebrow {
+  color: var(--faint);
+  font: 700 9px/1.2 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.rail-label {
+  margin: 0 0 10px;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+.rail-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  min-height: 68px;
+  padding: 10px 3px;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font: 600 11px/1.15 var(--sans);
+  cursor: pointer;
+}
+
+.rail-item:hover {
+  background: var(--panel-3);
+  color: var(--text);
+}
+
+.rail-item.active {
+  border-left-color: var(--accent-text);
+  background: #213446;
+  color: var(--text);
+}
+
+.rail-item.active .icon {
+  color: var(--accent-text);
+}
+
+.rail-count {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 1px 4px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font: 700 10px/14px var(--mono);
+  text-align: center;
+}
+
+.rail-item:not(:first-of-type) .rail-count {
+  background: var(--accent);
+}
+
+.rail-spacer {
+  flex: 1;
+}
+
+.rail-foot {
+  padding: 9px 0 3px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font: 700 10px var(--mono);
+  text-align: center;
+  letter-spacing: 0.18em;
 }
 
 /* Global command bar: a clear city identity, live state and the demo actions. */
@@ -259,6 +353,15 @@ body {
   color: var(--muted);
 }
 
+.incident-marker {
+  cursor: pointer;
+}
+
+.incident-marker:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 4px;
+}
+
 .overlay-card {
   border: 1px solid rgba(89, 111, 128, 0.6);
   background: rgba(19, 31, 42, 0.95);
@@ -295,6 +398,75 @@ body {
   border-left: 1px solid var(--gutter);
   background: #111922;
   scrollbar-color: var(--line-strong) transparent;
+}
+
+.workspace-head {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 91px;
+  padding: 16px 15px 12px;
+  border-bottom: 1px solid var(--line-strong);
+  background: #1a2631;
+}
+
+.workspace-head h1 {
+  margin: 5px 0 2px;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.workspace-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.drawer-close {
+  display: none;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.drawer-close:hover {
+  background: var(--panel-3);
+}
+
+.incident-picker {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.incident-picker select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--text);
+  font: 11px var(--sans);
+}
+
+.incident-action-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .panel {
@@ -453,6 +625,68 @@ body {
   border-bottom-color: var(--accent-text);
 }
 
+.dock-activity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+}
+
+.dock-body.activity-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.dock-activity .event-log {
+  flex: 1;
+}
+
+.dock-overview {
+  padding: 10px 12px 11px;
+  border-bottom: 1px solid var(--line);
+  background: #1a2631;
+}
+
+.dock-overview .subhead {
+  margin-bottom: 9px;
+  color: var(--text-2);
+}
+
+.dock-overview-values {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dock-overview-values > div {
+  min-width: 0;
+  padding: 0 8px;
+  border-left: 1px solid var(--line-strong);
+}
+
+.dock-overview-values > div:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.dock-overview-values strong,
+.dock-overview-values span {
+  display: block;
+  white-space: nowrap;
+}
+
+.dock-overview-values strong {
+  color: var(--text);
+  font: 650 16px/1.2 var(--mono);
+}
+
+.dock-overview-values span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .trend,
 .compare-pane {
   padding-top: 11px;
@@ -483,8 +717,8 @@ body {
 
 @media (max-width: 1280px) {
   .app {
-    grid-template-columns: minmax(0, 1fr) 375px;
-    grid-template-rows: 64px minmax(0, 1fr) 280px;
+    grid-template-columns: 66px minmax(0, 1fr) 340px;
+    grid-template-rows: 64px minmax(0, 1fr) 272px;
   }
 
   .brand {
@@ -514,6 +748,10 @@ body {
 
   .btn-analyze {
     min-width: 0;
+  }
+
+  .rail-label {
+    font-size: 8px;
   }
 }
 
@@ -555,10 +793,118 @@ body {
   }
 }
 
+@media (max-width: 1050px) {
+  .app {
+    grid-template-columns: 60px minmax(0, 1fr);
+    grid-template-rows: 64px minmax(280px, 1fr) 246px;
+    grid-template-areas:
+      'top top'
+      'rail map'
+      'rail dock';
+  }
+
+  .topbar {
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .topbar > * {
+    flex-shrink: 0;
+  }
+
+  .controls {
+    margin-left: 0;
+  }
+
+  .side {
+    position: fixed;
+    z-index: 20;
+    top: 64px;
+    right: 0;
+    bottom: 0;
+    width: min(370px, calc(100vw - 60px));
+    border-left: 1px solid var(--line-strong);
+    box-shadow: -15px 0 34px rgba(0, 0, 0, 0.55);
+    transform: translateX(101%);
+    transition: transform 0.2s ease, visibility 0.2s;
+    visibility: hidden;
+  }
+
+  .app[data-drawer-open='true'] .side {
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  .drawer-close {
+    display: grid;
+  }
+
+  .rail-item {
+    min-height: 62px;
+    font-size: 10px;
+  }
+
+  .dock-body {
+    grid-template-columns: minmax(0, 1fr) 240px;
+  }
+}
+
+@media (max-width: 700px) {
+  .app {
+    grid-template-rows: 64px minmax(240px, 1fr) 205px;
+  }
+
+  .map-caption {
+    max-width: calc(100% - 28px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .dock-tabs {
+    overflow-x: auto;
+    padding-right: 0;
+    scrollbar-width: thin;
+  }
+
+  .dock-tab {
+    flex: none;
+    padding: 0 9px;
+  }
+
+  .dock-meta {
+    display: none;
+  }
+
+  .dock-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dock-body.compare-body {
+    grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
+    overflow-x: auto;
+  }
+
+  .dock-activity {
+    display: none;
+  }
+
+  .activity-body .dock-activity {
+    display: flex;
+  }
+
+  .trends {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .run-running .dot,
   .live-dot[data-live='true'],
   .incident-marker .pulse {
     animation: none;
+  }
+
+  .side {
+    transition: none;
   }
 }

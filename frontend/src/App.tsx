@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client'
 import type { Camera } from './api/types'
 import { EpisodePanel } from './components/EpisodePanel'
+import { Icon } from './components/Icon'
 import { IncidentPanel } from './components/IncidentPanel'
 import { CityMap, type Selection } from './components/map/CityMap'
 import { MapLegend } from './components/MapLegend'
@@ -11,6 +12,7 @@ import { MapPlanCard } from './components/plans/MapPlanCard'
 import { ResponsePlans } from './components/plans/ResponsePlans'
 import { SelectionPanel } from './components/SelectionPanel'
 import { TopBar } from './components/TopBar'
+import { WorkspaceRail, type WorkspaceView } from './components/WorkspaceRail'
 import { FIXTURE_MODE } from './dev/fixture'
 import { useCityStream } from './hooks/useCityStream'
 import { analyzeState, candidateColors, planOverlay } from './lib/plans'
@@ -30,6 +32,9 @@ export default function App() {
     useCityStream()
   const [cameras, setCameras] = useState<Camera[]>([])
   const [selection, setSelection] = useState<Selection | null>(null)
+  const [view, setView] = useState<WorkspaceView>('live')
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null)
   const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -76,8 +81,11 @@ export default function App() {
 
   useEffect(() => {
     setSelection(null)
+    setSelectedIncidentId(null)
     setHoveredPlanId(null)
     setSelectedPlanId(null)
+    setView('live')
+    setDrawerOpen(false)
     cancelReplay.current?.()
     cancelReplay.current = null
   }, [network?.id])
@@ -106,12 +114,13 @@ export default function App() {
   const latestIncident = activeIncidents.length
     ? activeIncidents.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
     : null
+  const focusedIncident = activeIncidents.find((incident) => incident.id === selectedIncidentId) ?? latestIncident
   // an analysis over several incidents belongs to each of them (its incident_id is only the primary one)
   const scopedScenario =
-    scenario && latestIncident && (scenario.incident_ids ?? [scenario.incident_id]).includes(latestIncident.id)
+    scenario && focusedIncident && (scenario.incident_ids ?? [scenario.incident_id]).includes(focusedIncident.id)
       ? scenario
       : null
-  const incidentTime = latestIncident?.sim_time ?? null
+  const incidentTime = focusedIncident?.sim_time ?? null
   // pre-incident reference for KPI deltas: the last trend sample before detection
   const reference = useMemo(
     () => (incidentTime == null ? null : (history.filter((s) => s.t <= incidentTime - 5).at(-1) ?? null)),
@@ -121,7 +130,7 @@ export default function App() {
   const colors = useMemo(() => (scopedScenario ? candidateColors(scopedScenario) : {}), [scopedScenario])
   const activePlanId = hoveredPlanId ?? selectedPlanId
   const activeCandidate = scopedScenario?.candidates.find((candidate) => candidate.id === activePlanId) ?? null
-  const incidentSegmentId = latestIncident?.location.segment_id ?? null
+  const incidentSegmentId = focusedIncident?.location.segment_id ?? null
   const overlay = useMemo(
     () =>
       activeCandidate && network
@@ -132,9 +141,9 @@ export default function App() {
   const analyze = analyzeState({
     connected,
     runStatus: status?.status ?? null,
-    hasIncident: !!latestIncident,
+    hasIncident: !!focusedIncident,
     busy: !!busy,
-    scenario: scopedScenario,
+    scenario,
     episode,
     fixture: !!FIXTURE_MODE,
   })
@@ -149,7 +158,7 @@ export default function App() {
         cancelReplay.current?.()
         cancelReplay.current = replayFixture(FIXTURE_MODE, acceptScenario)
       } else {
-        const run = await api.runScenario({ incident_id: latestIncident?.id ?? null, horizon_s: 600, ems_probe: true })
+        const run = await api.runScenario({ incident_id: focusedIncident?.id ?? null, horizon_s: 600, ems_probe: true })
         acceptScenario(run)
       }
     } catch (err) {
@@ -166,8 +175,10 @@ export default function App() {
     // Otherwise React can restore the old network id and some browsers emit a reverse change.
     setPendingMapId(mapId)
     setSelection(null)
+    setSelectedIncidentId(null)
     setHoveredPlanId(null)
     setSelectedPlanId(null)
+    setView('live')
     cancelReplay.current?.()
     cancelReplay.current = null
     try {
@@ -180,15 +191,58 @@ export default function App() {
     }
   }
 
+  const showView = (next: WorkspaceView) => {
+    setView(next)
+    setDrawerOpen(true)
+  }
+
+  const incidentPanel = (
+    <IncidentPanel
+      incidents={incidents}
+      selectedId={focusedIncident?.id ?? null}
+      onSelectIncident={setSelectedIncidentId}
+      segments={state?.segments ?? []}
+      responders={state?.emergency_vehicles ?? []}
+      cameraCount={cameras.length}
+      busy={busy}
+      canDispatch={!!focusedIncident && focusedIncident.id === latestIncident?.id}
+      onDispatch={() => run('dispatch', api.dispatchEmergency)}
+      onClear={(id) => run('clear', () => api.clearIncident(id))}
+    />
+  )
+
+  const responsePlans = (
+    <ResponsePlans
+      run={scopedScenario}
+      incidentId={focusedIncident?.id ?? null}
+      fixture={!!FIXTURE_MODE}
+      busy={!!busy}
+      colors={colors}
+      phaseLabels={phaseLabels}
+      activeId={activePlanId}
+      selectedId={selectedPlanId}
+      onHover={setHoveredPlanId}
+      onSelect={selectPlan}
+      onImplement={(runId) => run('implement', () => api.implement(runId))}
+    />
+  )
+
+  const viewInfo = {
+    live: { title: 'Live network', description: 'Incident command and network state' },
+    analysis: { title: 'Response analysis', description: 'Simulated plans, safety and recommendation' },
+    autonomous: { title: 'Autonomous agent', description: 'Scripted response, monitoring and learning' },
+  }[view]
+
   return (
-    <div className="app">
+    <div className="app" data-drawer-open={drawerOpen}>
       <TopBar
         networkName={network?.name ?? null}
         mapId={pendingMapId ?? network?.id ?? null}
         simTime={state?.sim_time ?? null}
         status={status}
         connected={connected}
-        hasIncident={!!latestIncident}
+        hasIncident={!!focusedIncident}
+        canDispatch={!!focusedIncident && focusedIncident.id === latestIncident?.id}
         busy={busy}
         analyze={analyze}
         fixture={!!FIXTURE_MODE}
@@ -196,12 +250,27 @@ export default function App() {
           if (action === 'reset') {
             cancelReplay.current?.()
             cancelReplay.current = null
+            setView('live')
+            setSelectedIncidentId(null)
+            setSelectedPlanId(null)
+            setSelection(null)
           }
           void run(action, ACTIONS[action])
         }}
         onSpeed={(speed) => run('speed', () => api.speed(speed))}
         onMap={(mapId) => void switchMap(mapId)}
-        onAnalyze={startAnalysis}
+        onAnalyze={() => {
+          showView('analysis')
+          void startAnalysis()
+        }}
+      />
+
+      <WorkspaceRail
+        view={view}
+        activeIncidents={activeIncidents.length}
+        candidateCount={scopedScenario?.candidates.length ?? 0}
+        episodeActive={episode != null && ['armed', 'detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status)}
+        onChange={showView}
       />
 
       <main className="map-area">
@@ -212,7 +281,14 @@ export default function App() {
             cameras={cameras}
             selection={selection}
             planOverlay={overlay}
-            onSelect={setSelection}
+            onSelect={(next) => {
+              setSelection(next)
+              if (next) showView('live')
+            }}
+            onSelectIncident={(id) => {
+              setSelectedIncidentId(id)
+              showView('live')
+            }}
           />
         ) : (
           <div className="map-loading">Connecting to traffic simulation…</div>
@@ -239,42 +315,56 @@ export default function App() {
       </main>
 
       <aside className="side">
-        <EpisodePanel episode={episode} busy={busy} onRun={run} />
-        <IncidentPanel
-          incidents={incidents}
-          segments={state?.segments ?? []}
-          responders={state?.emergency_vehicles ?? []}
-          cameraCount={cameras.length}
-          busy={busy}
-          onDispatch={() => run('dispatch', api.dispatchEmergency)}
-          onClear={(id) => run('clear', () => api.clearIncident(id))}
-        />
-        <MetricsPanel
-          metrics={state?.metrics ?? null}
-          history={history}
-          reference={reference}
-          segments={state?.segments ?? []}
-        />
-        <SelectionPanel selection={selection} state={state} />
-        <ResponsePlans
-          run={scopedScenario}
-          incidentId={latestIncident?.id ?? null}
-          fixture={!!FIXTURE_MODE}
-          busy={!!busy}
-          colors={colors}
-          phaseLabels={phaseLabels}
-          activeId={activePlanId}
-          selectedId={selectedPlanId}
-          onHover={setHoveredPlanId}
-          onSelect={selectPlan}
-          onImplement={(runId) => run('implement', () => api.implement(runId))}
-        />
+        <div className="workspace-head">
+          <div>
+            <span className="workspace-eyebrow">OPERATIONS WORKSPACE</span>
+            <h1>{viewInfo.title}</h1>
+            <p>{viewInfo.description}</p>
+          </div>
+          <button
+            className="drawer-close"
+            type="button"
+            aria-label="Close workspace drawer"
+            onClick={() => setDrawerOpen(false)}
+          >
+            <Icon name="cross" size={16} />
+          </button>
+        </div>
+        {view === 'live' && (
+          <>
+            {incidentPanel}
+            <MetricsPanel
+              metrics={state?.metrics ?? null}
+              history={history}
+              reference={reference}
+              segments={state?.segments ?? []}
+            />
+            <SelectionPanel selection={selection} state={state} />
+          </>
+        )}
+        {view === 'analysis' && (
+          <>
+            {responsePlans}
+            {incidentPanel}
+          </>
+        )}
+        {view === 'autonomous' && (
+          <>
+            <EpisodePanel episode={episode} busy={busy} onRun={run} />
+            {responsePlans}
+            {incidentPanel}
+          </>
+        )}
       </aside>
 
       <AnalysisDock
+        preferredTab={view === 'live' ? 'live' : 'comparison'}
         history={history}
         events={events}
         markers={markers}
+        metrics={state?.metrics ?? null}
+        activeIncidents={activeIncidents.length}
+        networkStatus={connected ? status?.status ?? 'connecting' : 'offline'}
         run={scopedScenario}
         colors={colors}
         activeId={activePlanId}

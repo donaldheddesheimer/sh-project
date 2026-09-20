@@ -7,15 +7,21 @@
 FROM python:3.12-slim
 
 # Runtime shared libraries the SUMO binaries link against. SUMO itself ships inside the
-# `eclipse-sumo` wheel (a py3-none-manylinux_2_28_x86_64 wheel carrying the compiled
-# binaries), so there is no apt package for SUMO here. libgl1/libx11-6 are only needed by
-# sumo-gui, which never runs in a container; they are kept so an interactive debug session
-# inside the image works.
+# `eclipse-sumo` wheel (py3-none-manylinux_2_28_x86_64, carrying the compiled binaries), so
+# there is no apt package for SUMO here. The wheel bundles most of its dependencies (FOX,
+# xerces, proj, geos, gdal, freetype, ...); this list is exactly the DT_NEEDED entries it
+# does NOT bundle, minus what python:3.12-slim already has.
+#
+# The X11 libraries are not optional and not only for sumo-gui: the headless `sumo` binary
+# is linked against FOX, so it fails at startup with "error while loading shared libraries:
+# libXrender.so.1" without them. There is no display involved.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libgomp1 \
-      libxml2 \
       libgl1 \
       libx11-6 \
+      libxext6 \
+      libxrender1 \
+      libatomic1 \
+      libexpat1 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \

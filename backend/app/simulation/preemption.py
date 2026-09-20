@@ -136,6 +136,7 @@ class _Service:
     target: int  # phase index of the green being served
     program_id: str
     responders: set[str] = field(default_factory=set)
+    served: set[str] = field(default_factory=set)  # every responder this service was run for, even once it crossed
     hold_started: float | None = None
     extended: bool = False  # the green was topped up beyond its natural end
 
@@ -148,11 +149,21 @@ class PreemptionController:
         self._clocks: dict[str, _PhaseClock] = {}
         self._services: dict[str, _Service] = {}
         self._activated: set[tuple[str, str]] = set()  # (responder, intersection): at most one activation each
+        self._by_responder: dict[str, list[str]] = {}  # responder -> intersections pre-empted for it, in order
+        self._hold_by_responder: dict[str, float] = {}
         self._now = 0.0
         self._activations = 0
         self._preempted: list[str] = []
         self._longest_hold_s = 0.0
         self._capped: list[str] = []
+
+    def responder_record(self, responder_id: str) -> tuple[list[str], float]:
+        """Intersections pre-empted for one responder, in activation order, and its longest hold.
+
+        Per responder, where ``notes()`` is per corridor: it answers "was this unit actually helped?",
+        which an aggregate count cannot. Holds still running are included, so the answer is current.
+        """
+        return list(self._by_responder.get(responder_id, ())), self._hold_by_responder.get(responder_id, 0.0)
 
     def notes(self) -> list[str]:
         if not self._activations:
@@ -221,6 +232,7 @@ class PreemptionController:
             elif a.segment_id not in obs.program.phases[service.target].served_segments:
                 continue
             service.responders.add(a.responder_id)
+            service.served.add(a.responder_id)
             self._activate(a.responder_id, iid)
         if service is None:
             return
@@ -242,6 +254,7 @@ class PreemptionController:
     def _activate(self, responder_id: str, iid: str) -> None:
         self._activated.add((responder_id, iid))
         self._activations += 1
+        self._by_responder.setdefault(responder_id, []).append(iid)
         if iid not in self._preempted:
             self._preempted.append(iid)
 
@@ -250,6 +263,7 @@ class PreemptionController:
             return
         if service.hold_started is None:
             service.hold_started = self._now
+        self._credit_hold(service)  # while it runs, so an unfinished hold still shows up
         grant = min(HOLD_EXTENSION_S, service.hold_started + self.corridor.max_hold_s - self._now)
         if grant <= obs.remaining_s + EPS:  # the cap leaves nothing to add: let the program proceed
             del self._services[iid]
@@ -259,6 +273,12 @@ class PreemptionController:
             return
         self._set_remaining(iid, obs, grant, out)  # an extension: changes no light
         service.extended = True
+
+    def _credit_hold(self, service: _Service) -> None:
+        """Credit the hold so far to every responder the service ran for, including ones that already crossed."""
+        held = self._now - service.hold_started
+        for rid in service.served:
+            self._hold_by_responder[rid] = max(self._hold_by_responder.get(rid, 0.0), held)
 
     def _jump_from_all_red(self, iid: str, service: _Service, obs: TlsObservation, out: list[Command]) -> None:
         """Only for programs whose all-red is followed by a non-target green.
@@ -279,6 +299,7 @@ class PreemptionController:
         del self._services[iid]
         if service.hold_started is not None:
             self._longest_hold_s = max(self._longest_hold_s, self._now - service.hold_started)
+            self._credit_hold(service)  # the last stretch, after the final top-up, belongs to the responders too
         if service.extended and obs.phase_index == service.target:
             # the green owes only its natural end or the minimum served green, whichever is later
             natural = obs.program.phases[service.target].duration - elapsed

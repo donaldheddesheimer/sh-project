@@ -5,9 +5,9 @@ backend and a React/MapLibre console. When an incident hits, candidate responses
 timing, EMS green corridor, diversion) are **simulated in parallel SUMO branches before
 anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged. Milestone 3,
 the autonomous, self-learning episode (agent responds, applies its plan to the live twin,
-measures it, stores a lesson), is built but not yet run end to end. Milestone 4's NVIDIA Smart
-City input is built but not run; its faster-twin and transferable-memory parts remain planned in
-[docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md).
+measures it, stores a lesson), is built but not yet run end to end. Milestone 4's faster twin
+and NVIDIA Smart City input are built and merged, neither run nor measured; its transferable
+memory remains planned in [docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md).
 Read [README.md](README.md) for the demos and the episode (its "The autonomous, self-learning
 episode" section), and [docs/architecture.md](docs/architecture.md) for the design and both
 pipelines stage by stage.
@@ -137,9 +137,9 @@ venv directly (this is what works in PowerShell or Git Bash):
 - `TREND_SAMPLE_S` in `services/city.py` ↔ `SAMPLE_EVERY_S` in `useCityStream.ts` ↔
   `SAMPLE_S` in `learning/monitor.py`.
 - A new setting goes in `config.py` **and** `.env.example`.
-- The mock proposes exactly 8 plans, which equals the default `SCENARIO_MAX_CANDIDATES`. A
-  ninth plan silently pushes `divert-advisory` off the end. (A warm run with a close lesson
-  proposes 4 on purpose.)
+- The mock proposes exactly 9 plans, which equals the default `SCENARIO_MAX_CANDIDATES`. A
+  tenth plan silently pushes `divert-advisory` off the end (it is appended last). (A warm run
+  with a close lesson proposes 4 on purpose.)
 - The recorded run lives in `frontend/src/dev/scenario-run.json`. The copy under
   `docs/milestone-2/fixtures/` is a frozen duplicate; edit the frontend one.
 
@@ -152,9 +152,14 @@ venv directly (this is what works in PowerShell or Git Bash):
 - Drivers use habitual routes (`adaptation-interval = 0`). Without it SUMO reroutes
   everyone with live travel times and incidents dissolve instantly.
 - The EMS corridor often loses to `divert-advisory` once a queue has formed: the responder
-  still waits in the blocked lane. This is a measured result, not a defect.
-- Post-crash branches take 10–16 s each (about half is `_apply_rubbernecking`'s per-vehicle
-  TraCI lookups in `sumo.py`, the known optimisation). `simulate_plans` blocks until every
+  still waits in the blocked lane. This was a measured result, not a defect. Two levers are
+  now built and unmeasured: the mock asks for `EMS_DETECTION_M` (350 m, against the 150 m
+  model default) and proposes `corridor-plus-divert`. SUMO's blue-light device is a third
+  lever, deliberately not built (a modelling decision for the user; MASTER D4).
+- Post-crash branches took 10–16 s each. The per-vehicle TraCI lookups in
+  `_apply_rubbernecking` and the responder walk are gone (lane id and lane position ride on
+  `VEHICLE_VARS`), and `start()` no longer pays traci's fixed 1 s wait between connect
+  attempts — **neither speed-up has been timed**. `simulate_plans` still blocks until every
   branch finishes, so MCP clients need a timeout of 120 s or more.
 - Snapshot files go to `<OS temp>/traffic-ops-snapshots` and are deleted when a run ends.
 - A warm mock run simulates fewer plans than a cold one: `_apply_lessons` in `agent/mock.py`
@@ -165,7 +170,12 @@ venv directly (this is what works in PowerShell or Git Bash):
 - A reset or **Clear scene** during an episode aborts it, and a Reset also fails any open
   analysis ("the simulation was reset"): its snapshot describes a city that is gone.
 - Applied plans stay on the live signals until a reset; nothing reverts them.
-- On Oakland the mock can propose fewer than 8 plans. A timing shift never takes a green below
+  `SumoSimulation.revert_response()` exists and is idempotent, but has no caller yet (the
+  service that will use it is milestone 4 part 2).
+- An unsafe pre-emption stops a branch but not the live twin: `fail_safe_preemption=True`
+  is set only in `providers.py`'s `live_simulation()`, where the corridor is dropped and a
+  note recorded instead of the runner going to `error`.
+- On Oakland the mock can propose fewer than 9 plans. A timing shift never takes a green below
   12 s (`_safe_shift` in `agent/mock.py`); when the donor phase has less than 4 s to spare, that
   plan is skipped rather than proposed and rejected. `aggressive-flush` is still proposed on purpose.
 - The backend assumes a signal's id is its junction id. netconvert names OSM-guessed signals

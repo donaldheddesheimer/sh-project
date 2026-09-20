@@ -112,6 +112,8 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
             snapshot_dir=settings.snapshot_dir,
             sumo_binary=settings.sumo_binary,
             gui=settings.sumo_gui,
+            # the live city degrades rather than freezing until a Reset; branches keep failing loudly
+            fail_safe_preemption=True,
         )
 
     def branch_simulation() -> SumoSimulation:

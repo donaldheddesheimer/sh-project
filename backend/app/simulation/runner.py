@@ -120,6 +120,21 @@ class LiveSimulationRunner:
 
         await self.call(apply)
 
+    async def restore_speed(self, expected: float, multiplier: float) -> bool:
+        """Set the speed to ``multiplier``, but only while ``expected`` is still in force.
+
+        The comparison happens on the simulation thread, so a ``set_speed`` queued in between is seen and
+        never overwritten. Returns whether the speed was restored.
+        """
+
+        def apply(_sim: TrafficSimulation) -> bool:
+            if self._speed != expected:
+                return False
+            self._speed = multiplier
+            return True
+
+        return await self.call(apply)
+
     async def reset(self) -> None:
         """Restart SUMO from a clean network; also the way out of the error state."""
 

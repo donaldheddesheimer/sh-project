@@ -5,8 +5,9 @@ never reroute on their own, so a diversion is an explicit response. For each com
 driver the avoided edges get a huge per-vehicle travel time and the vehicle is rerouted
 on free-flow times, which sends it around those edges wherever an alternative exists.
 
-The advisory stays active for the rest of the run: it is applied to every vehicle in the
-network at activation and to each vehicle that departs afterwards. All state lives here
+The advisory stays active for the rest of the run unless ``deactivate`` takes it back off: it
+is applied to every vehicle in the network at activation and to each vehicle that departs
+afterwards. All state lives here
 in Python (SUMO does not keep per-vehicle overrides in snapshots), so build a fresh
 instance for every simulation process and after every ``restore_snapshot``.
 """
@@ -54,6 +55,13 @@ class DiversionAdvisory:
         self._vehicle_type = vehicle_type
         self._advisories: list[_Advisory] = []
         self._diverted: set[str] = set()
+        self._ever = False  # an advisory was activated at some point (notes() reports even after a revert)
+        self._stopped = False
+
+    @property
+    def active(self) -> bool:
+        """An advisory is in force: vehicles departing from now on are still being diverted."""
+        return bool(self._advisories)
 
     @property
     def total_diverted(self) -> int:
@@ -67,7 +75,36 @@ class DiversionAdvisory:
         """
         advisory = _Advisory(frozenset(action.avoid_segment_ids), round(action.compliance * COMPLIANCE_BUCKETS))
         self._advisories.append(advisory)
+        self._ever = True
+        self._stopped = False
         return sum(self._divert(vid, advisory) for vid in vehicle_ids)
+
+    def deactivate(self, vehicle_ids: Iterable[str]) -> int:
+        """Stop every advisory and clear the per-vehicle travel-time overrides on ``vehicle_ids``.
+
+        ``vehicle.setAdaptedTraveltime(vid, edge)`` called without a time removes a value set earlier for
+        that edge (checked in the installed traci 1.27 and in its docstring), which is what makes a revert
+        complete: nothing is left that would steer a later ``rerouteTraveltime`` away from those edges.
+        Vehicles already diverted keep the route they are on - drivers do not un-divert - so no route is
+        rewritten here. Returns how many vehicles were cleared.
+        """
+        if not self._advisories:
+            return 0
+        edges = sorted({edge for a in self._advisories for edge in a.avoid})
+        handled = {vid for a in self._advisories for vid in a.handled}
+        self._advisories = []
+        self._stopped = True
+        live = set(vehicle_ids)
+        cleared = 0
+        c = self._conn.vehicle
+        for vid in sorted(handled & live):  # sorted: determinism, as everywhere else in this module
+            try:
+                for edge in edges:
+                    c.setAdaptedTraveltime(vid, edge)
+            except traci.TraCIException:
+                continue  # left the network since the subscription was read
+            cleared += 1
+        return cleared
 
     def on_departed(self, vehicle_ids: Iterable[str]) -> None:
         """Apply every active advisory to vehicles that entered the network this step."""
@@ -78,10 +115,13 @@ class DiversionAdvisory:
                 self._divert(vid, advisory)
 
     def notes(self) -> list[str]:
-        if not self._advisories:
+        if not self._ever:
             return []
         n = self.total_diverted
-        return [f"{n} vehicle{'' if n == 1 else 's'} diverted over the horizon"]
+        notes = [f"{n} vehicle{'' if n == 1 else 's'} diverted over the horizon"]
+        if self._stopped:
+            notes.append("diversion advisory reverted: later departures are not diverted")
+        return notes
 
     def _divert(self, vid: str, advisory: _Advisory) -> bool:
         if not advisory.avoid or vid in advisory.handled or _bucket(vid) >= advisory.threshold:

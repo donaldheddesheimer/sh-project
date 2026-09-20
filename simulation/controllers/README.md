@@ -20,6 +20,7 @@ Pre-emption is a per-step controller, not a SUMO asset, so it lives in the backe
 | Route walk: signalized approaches ahead of a vehicle | `RoadNetwork.signalized_approaches_ahead` in `backend/app/simulation/network.py` |
 | TraCI adapter, run from `_after_step` | `SumoSimulation.enable_emergency_corridor` in `backend/app/simulation/sumo.py` |
 | Bounds on the corridor parameters | `RuleBasedSafetyValidator.validate_corridor` in `backend/app/safety/validator.py` |
+| Taking a corridor (and the rest of a response) back off | `SumoSimulation.revert_response` in `backend/app/simulation/sumo.py` |
 
 Once enabled, the corridor stays active for the rest of the run and serves every EMS
 vehicle (`vType ems`) that is en route, including ones spawned later. When a responder
@@ -33,6 +34,10 @@ responder's approach (its incoming segment, matched against `SignalPhase.served_
 - **a conflicting green is running:** it runs until it has served `min_served_green_s`,
   then it is ended early. The program's own yellow and all-red follow unchanged and lead
   into the target green.
+
+`detection_distance_m` defaults to 150 m in the model, but the mock agent asks for 350 m:
+the grid's blocks are 250 m, so pre-emption that only starts inside the block starts after
+the responder is already in the queue it needs cleared. The validator bounds it to 30–400 m.
 
 After the responder crosses, the green runs to its natural end (or the minimum served
 green, whichever is later) and the program carries on. Coordination offsets stay
@@ -60,9 +65,33 @@ green is already clearing. Then the target is that green's next turn, and the ju
 to it from the all-red. A failed check raises `UnsafeTransition`, so a candidate fails
 loudly instead of simulating unsafe signals.
 
+The live twin is the one exception, and it is explicit: `SumoSimulation` takes a
+`fail_safe_preemption` flag, set only for the live simulation in `backend/app/providers.py`.
+With it, a refused command drops the corridor, logs at `ERROR` and records a note whose text
+starts with `pre-emption disabled:` (an exact prefix, because the planned
+agent-memory response check will look for it), and the city keeps running rather than sitting in `error` until a Reset. The dropped
+controller is kept, never stepped again, only so the notes can still report what it did in
+total and per responder. Nothing is applied in that
+case — the controller validates every command before returning any — and branches are
+unchanged: a candidate that needs an unsafe signal change must never be measured as if it
+were safe, let alone recommended.
+
+### Taking a response back off
+
+`revert_response()` undoes a whole response, and is idempotent: each intersection whose
+timing a policy changed goes back to the program it was running before, keeping the running
+phase's index, state and remaining time, so no light on the street changes at that step and
+the clearance that follows is the base program's own. The state is put through
+`check_transition` rather than assumed. An intersection now running a program the simulation
+did not install is left alone. The corridor is dropped (a hold in force simply runs out on
+the program's own clock) and the diversion advisory stops and clears its per-vehicle
+travel-time overrides; vehicles already rerouted keep their route, because drivers do not
+un-divert. No caller uses it yet.
+
 ## Diversion advisory
 
 `SumoSimulation.reroute_vehicles` (logic in `backend/app/simulation/reroute.py`) is not a
 signal controller, but is the other response the scenario engine simulates. A
 deterministic share of background vehicles (`crc32(vehicle id)`) is rerouted around the
-avoided segments at activation and again as each new vehicle departs.
+avoided segments at activation and again as each new vehicle departs, until
+`DiversionAdvisory.deactivate` stops it.

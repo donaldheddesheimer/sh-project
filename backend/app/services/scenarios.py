@@ -285,6 +285,8 @@ class ScenarioService:
         self.city.publish_scenario(run)
         if idle_timeout_s:
             self._spawn(self._watch_idle(analysis))
+        if self.settings.analysis_live_speed is not None:
+            await self.city.hold_speed(self.settings.analysis_live_speed, run.id)
         return analysis
 
     async def capture(self, a: Analysis) -> None:
@@ -538,6 +540,9 @@ class ScenarioService:
         a.closed = True
         if self._open is a:
             self._open = None
+        # a task, not an await: _close is called from the synchronous finish/fail paths, and giving the
+        # speed back must never be able to hold up completing the run
+        self._spawn(self.city.release_speed(a.run.id))
         for task in a.branch_tasks:
             task.cancel()  # queued branches never start; a branch already running finishes and is discarded
         if not a.busy:

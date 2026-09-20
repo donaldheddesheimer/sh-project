@@ -26,6 +26,7 @@
         "throughput": 2712.0,
         "mean_speed": 5.08,
         "emergency_vehicle_eta": 262.5,
+        "emergency_responses": [],
         "vehicles_in_network": 301,
         "vehicles_waiting_to_enter": 4
       },
@@ -222,6 +223,7 @@
         "throughput": 2791.0,
         "mean_speed": 5.41,
         "emergency_vehicle_eta": 250.0,
+        "emergency_responses": [],
         "vehicles_in_network": 301,
         "vehicles_waiting_to_enter": 4
       },
@@ -418,6 +420,7 @@
         "throughput": 2834.0,
         "mean_speed": 5.93,
         "emergency_vehicle_eta": 255.5,
+        "emergency_responses": [],
         "vehicles_in_network": 301,
         "vehicles_waiting_to_enter": 4
       },
@@ -614,6 +617,7 @@
         "throughput": 2806.0,
         "mean_speed": 5.71,
         "emergency_vehicle_eta": 268.0,
+        "emergency_responses": [],
         "vehicles_in_network": 301,
         "vehicles_waiting_to_enter": 4
       },
@@ -834,6 +838,7 @@
         "throughput": 2725.0,
         "mean_speed": 5.16,
         "emergency_vehicle_eta": 141.0,
+        "emergency_responses": [],
         "vehicles_in_network": 301,
         "vehicles_waiting_to_enter": 4
       },
@@ -1038,6 +1043,7 @@
         "throughput": 2821.0,
         "mean_speed": 5.84,
         "emergency_vehicle_eta": 149.5,
+        "emergency_responses": [],
         "vehicles_in_network": 301,
         "vehicles_waiting_to_enter": 4
       },
@@ -1234,6 +1240,7 @@
         "throughput": 2760.0,
         "mean_speed": 5.52,
         "emergency_vehicle_eta": 248.0,
+        "emergency_responses": [],
         "vehicles_in_network": 301,
         "vehicles_waiting_to_enter": 4
       },

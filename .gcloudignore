@@ -1,0 +1,18 @@
+# What `gcloud run deploy --source .` uploads to Cloud Build. Without this file gcloud
+# generates one from .gitignore and writes it into the repo; the Docker build then applies
+# .dockerignore on top of whatever arrives here.
+.git
+.gitignore
+.claude
+.venv
+venv
+node_modules
+**/__pycache__
+**/*.pyc
+.env
+.env.*
+!.env.example
+frontend/dist
+.vercel
+memory/episodes
+memory/playbook.md

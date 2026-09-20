@@ -129,6 +129,20 @@ class TrafficSimulation(ABC):
         """
         raise NotImplementedError("rerouting not implemented by this simulation")
 
+    def revert_response(self) -> list[str]:
+        """Take every response back off this simulation and return human-readable notes.
+
+        - Each intersection whose timing ``apply_signal_policy`` changed returns to its base program. The
+          running phase keeps its state and its remaining time, so no signal state changes and no clearance
+          is skipped.
+        - The EMS corridor is disabled; the signals carry on with their own program clock.
+        - The diversion advisory stops for future departures and its per-vehicle overrides are cleared.
+          Vehicles already rerouted keep their route: drivers do not un-divert.
+        - Idempotent. A simulation with no response returns ``[]``. Disruptions and responders are untouched.
+        - Every signal change passes ``check_transition``.
+        """
+        raise NotImplementedError("reverting responses is not implemented by this simulation")
+
     def response_notes(self) -> list[str]:
         """Human-readable effects of active responses so far, e.g. "3 pre-emptions (A2, B2, C2)"."""
         return []

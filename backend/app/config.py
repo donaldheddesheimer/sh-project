@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -35,9 +36,16 @@ class Settings(BaseSettings):
     scenario_horizon_s: float = 600.0  # simulated seconds per branch when the request omits it
     scenario_workers: int = 4  # SUMO branches simulated in parallel
     scenario_sample_s: float = 30.0  # simulated seconds between a candidate's timeline samples
-    scenario_max_candidates: int = 8  # including the baseline
+    scenario_max_candidates: int = 9  # including the baseline; the mock proposes exactly this many
     scenario_history: int = 10  # runs kept in memory for GET /api/scenarios
     scenario_idle_timeout_s: float = 300.0  # an MCP agent's open run fails after this long without a tool call
+
+    # --- twin engine --------------------------------------------------------
+    # Branches are CPU-hungry (scenario_workers SUMO processes at once) and the live simulation shares the
+    # machine with them. Slowing the live city while a run is open trades wall-clock realism for branches
+    # that finish sooner. None leaves the speed alone; the operator's own speed change always wins. Bounded like
+    # POST /api/simulation/speed (SpeedRequest): 0 would divide by zero in the runner and put the live city in error.
+    analysis_live_speed: float | None = Field(None, gt=0, le=64)
 
     # --- autonomous demo episode (app/learning/) ----------------------------
     demo_script: str | None = None  # arm this demos/*.json script at startup
@@ -65,7 +73,10 @@ class Settings(BaseSettings):
     nemotron_base_url: str = "https://integrate.api.nvidia.com/v1"  # NIM, OpenAI-compatible
     nemotron_model: str | None = None
 
-    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    # NoDecode: pydantic-settings json.loads() a list-typed env var inside the settings source,
+    # before any validator runs, so a comma-separated CORS_ORIGINS would raise there rather than
+    # reach _split_cors_origins. NoDecode hands the raw string to the validator instead.
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     @field_validator("scenario_dir")
     @classmethod
@@ -77,6 +88,19 @@ class Settings(BaseSettings):
     @classmethod
     def _replay_from_repo_root(cls, value: Path | None) -> Path | None:
         return value if value is None or value.is_absolute() else REPO_ROOT / value
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_cors_origins(cls, value: object) -> object:
+        # Because of NoDecode this sees the raw env string, so it accepts both forms: the JSON
+        # list pydantic-settings would otherwise have parsed, and a plain comma-separated list,
+        # which is what a hosting panel or `gcloud run deploy --set-env-vars` can actually carry.
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if text.startswith("["):
+            return json.loads(text)
+        return [origin.strip() for origin in text.split(",") if origin.strip()]
 
 
 @lru_cache

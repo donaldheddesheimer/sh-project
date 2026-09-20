@@ -31,11 +31,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+from app.agent.base import CandidatePlan
 from app.config import Settings
 from app.learning.implementor import Implementor
 from app.learning.monitor import LiveMonitor
 from app.learning.reviewer import condense
-from app.learning.scorecard import build_scorecard
+from app.learning.scorecard import PROVISIONAL_CONFIDENCE_CAP, build_scorecard
 from app.learning.store import ExperienceStore, incident_features
 from app.models.api import EventLevel
 from app.models.domain import Incident
@@ -50,10 +51,10 @@ from app.models.episode import (
     IncidentFeatures,
     Lesson,
     LiveRecord,
+    MemoryMode,
     PlanSummary,
     Scorecard,
 )
-from app.models.scenario import ScenarioStatus
 from app.services.city import CityService
 from app.services.scenarios import ScenarioService
 from app.simulation.scenario import DemoScript
@@ -67,7 +68,7 @@ HISTORY = 20  # episodes kept for GET /api/episodes
 class Analyst(Protocol):
     name: str
 
-    async def run(self, incident_ids: list[str], on_run) -> str: ...
+    async def run(self, incident_ids: list[str], on_run, memory_mode: MemoryMode = "use") -> str: ...
 
 
 class Reviewer(Protocol):
@@ -105,6 +106,7 @@ class EpisodeService:
         self._working: Episode | None = None  # armed, detected, analyzing or monitoring
         self._agent: asyncio.Task | None = None
         self._script: DemoScript | None = None
+        self._memory_mode: MemoryMode = "use"
         self._ids = itertools.count(store.next_number())
         self._tasks: set[asyncio.Task] = set()
         city.incident_listeners.append(self._on_incident)
@@ -151,8 +153,9 @@ class EpisodeService:
             self._load(self._settings.demo_script)
             self._arm()
 
-    async def start_demo(self, script_id: str) -> Episode:
+    async def start_demo(self, script_id: str, memory_mode: MemoryMode = "use") -> Episode:
         """Reset the city and arm ``script_id``: its crashes play again from the start."""
+        self._memory_mode = memory_mode
         script = self._load(script_id)
         await self._city.reset()  # the reset hook aborts the working episode and arms a new one
         if script.speed:
@@ -262,6 +265,7 @@ class EpisodeService:
             run = self._scenarios.get(run_id)
             ep.analysis_wall_s = round(time.monotonic() - started, 1)
             ep.rounds, ep.candidates, ep.recalled = run.rounds, len(run.candidates), list(run.recalled)
+            ep.recall_provenance = list(run.recall_provenance)
             self._city.publish_episode(ep)
             if run.implementation is not None:
                 return  # the agent applied it; _on_implemented moved the episode on
@@ -287,7 +291,7 @@ class EpisodeService:
             self._city.publish_episode(ep)
 
         try:
-            return await self._analyst.run(ep.incident_ids, on_run)
+            return await self._analyst.run(ep.incident_ids, on_run, ep.memory_mode)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -304,7 +308,7 @@ class EpisodeService:
                 f"the {self._fallback.name} analyst takes over",
                 EventLevel.WARNING,
             )
-            return await self._fallback.run(ep.incident_ids, on_run)
+            return await self._fallback.run(ep.incident_ids, on_run, ep.memory_mode)
 
     async def _review(self, ep: Episode, record: LiveRecord) -> None:
         if ep.status is not EpisodeStatus.MONITORING:
@@ -313,13 +317,27 @@ class EpisodeService:
             self._working = None  # a crash from now on starts a new episode while this one finishes
         self._step(ep, EpisodeStatus.REVIEWING, "monitor window closed; scoring the outcome and writing the lesson")
         try:
+            response_notes_available = False
+            try:
+                ep.implementation.notes = await self._city.run_on_live(lambda sim: sim.response_notes())
+                response_notes_available = True
+            except Exception as exc:  # noqa: BLE001 - missing notes make response checks unknown, not the review fail
+                log.warning("%s could not read live response notes: %s", ep.id, exc)
             run = self._scenarios.get(ep.run_id)
-            scorecard = await build_scorecard(run, ep.implementation, record, ep.detected_sim_time or record.started_at)
+            scorecard = await build_scorecard(
+                run,
+                ep.implementation,
+                record,
+                ep.detected_sim_time or record.started_at,
+                response_notes_available=response_notes_available,
+            )
             ep.scorecard = scorecard
             found = [await self._city.smart_city.get_incident(i) for i in ep.incident_ids]
             incidents = [incident_features(i, self._city.network) for i in found if i is not None]
             chosen, tried = condense(run, ep.implementation.candidate_id)
             lesson = await self._reviewer.review(incidents, chosen, tried, scorecard)
+            if scorecard.provisional and lesson.confidence > PROVISIONAL_CONFIDENCE_CAP:
+                lesson = lesson.model_copy(update={"confidence": PROVISIONAL_CONFIDENCE_CAP})
             ep.lesson, ep.reviewer = lesson, lesson.reviewer
             if self._store.enabled:
                 experience = Experience(
@@ -333,10 +351,13 @@ class EpisodeService:
                     scorecard=scorecard,
                     lesson=lesson,
                     rounds=run.rounds,
+                    memory_mode=ep.memory_mode,
+                    eligible_for_recall=ep.memory_mode == "use",
                     recalled=ep.recalled,
+                    recall_provenance=ep.recall_provenance,
                     analysis_wall_s=ep.analysis_wall_s,
                 )
-                ep.memory_path = str(await asyncio.to_thread(self._store.save, experience))
+                ep.memory_path = str(await self._store.save(experience))
         except Exception as exc:  # noqa: BLE001 - reported on the episode and in the ops log
             log.exception("%s review failed", ep.id)
             self._fail(ep, f"review failed: {type(exc).__name__}: {exc}")
@@ -399,6 +420,7 @@ class EpisodeService:
             created_at=datetime.now(UTC),
             incident_ids=incident_ids or [],
             supersedes=supersedes,
+            memory_mode=self._memory_mode,
             monitor_s=self._monitor_s(None),
         )
         self._episodes.append(ep)
@@ -421,11 +443,16 @@ class EpisodeService:
         script_s = self._script.monitor_s if self._script else None
         return self._settings.episode_monitor_s or script_s or horizon_s or self._settings.scenario_horizon_s
 
-    def _lessons(self, incidents: list[Incident]) -> list[dict]:
+    async def _lessons(
+        self, incidents: list[Incident], standing: list[CandidatePlan], query_cache: dict[str, list[float]]
+    ) -> list[dict]:
         features = [incident_features(i, self._city.network) for i in incidents]
-        return [r.model_dump() for r in self._store.recall(features)]
+        recalled = await self._store.recall(features, standing, query_cache=query_cache)
+        return [r.model_dump() for r in recalled]
 
     def _run_completed(self, run_id: str) -> bool:
+        from app.models.scenario import ScenarioStatus
+
         try:
             return self._scenarios.get(run_id).status is ScenarioStatus.COMPLETED
         except KeyError:

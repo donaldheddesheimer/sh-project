@@ -266,12 +266,14 @@ export interface Recommendation {
 }
 
 export type ScenarioStatus = 'queued' | 'proposing' | 'simulating' | 'recommending' | 'completed' | 'failed'
+export type MemoryMode = 'use' | 'ignore'
 
 export interface ScenarioRunRequest {
   incident_id?: string | null
   incident_ids?: string[] | null // analyze several incidents together (overrides incident_id)
   horizon_s?: number
   ems_probe?: boolean
+  memory_mode?: MemoryMode
 }
 
 export interface ScenarioRun {
@@ -289,7 +291,9 @@ export interface ScenarioRun {
   recommendation: Recommendation | null
   error: string | null
   rounds: number // simulation rounds (an MCP agent may run several)
+  memory_mode: MemoryMode
   recalled: string[] // remembered episodes given to the agent as lessons
+  recall_provenance: RecalledExperience[]
   implementation: Implementation | null // set once the recommendation was applied to the live city
 }
 
@@ -325,6 +329,33 @@ export type EpisodeStatus =
 
 export type Outcome = 'effective' | 'ineffective' | 'inconclusive'
 
+export interface ResponseCheck {
+  kind: 'corridor' | 'diversion'
+  ok: boolean | null
+  detail: string
+}
+
+export interface RecalledExperience {
+  id: string
+  similarity: number
+  structured_score: number
+  semantic_score: number | null
+  combined_score: number
+  ranking_score: number
+  provisional: boolean
+  trusted: boolean
+  incidents: string[]
+  chosen: string
+  chosen_name: string
+  kinds: string[]
+  verdict: Outcome
+  summary: string
+  what_worked: string[]
+  what_didnt: string[]
+  next_time: string[]
+  numbers: Record<string, number | null>
+}
+
 export interface WindowStats {
   samples: number
   mean_delay: number
@@ -354,6 +385,8 @@ export interface Scorecard {
   best_by_rubric: string | null
   material: boolean
   outcome: Outcome
+  checks: ResponseCheck[]
+  provisional: boolean
   notes: string[]
 }
 
@@ -388,6 +421,7 @@ export interface Episode {
   run_id: string | null
   rounds: number
   candidates: number
+  memory_mode: MemoryMode
   analysis_wall_s: number | null
   detected_sim_time: number | null
   implemented_sim_time: number | null
@@ -397,6 +431,7 @@ export interface Episode {
   scorecard: Scorecard | null
   lesson: Lesson | null
   recalled: string[]
+  recall_provenance: RecalledExperience[]
   memory_path: string | null
   error: string | null
   steps: EpisodeStep[]
@@ -423,6 +458,44 @@ export interface DemoInfo {
   analyst: string
   current: Episode | null
   memory: MemoryStats
+}
+
+export interface LearningReportEpisode {
+  id: string
+  script_id: string | null
+  analyst: string
+  memory_mode: MemoryMode
+  eligible_for_recall: boolean
+  recalled_sources: string[]
+  recall_provenance: RecalledExperience[]
+  warm: boolean
+  transfer: boolean
+  candidate_order: string[]
+  rounds: number
+  candidates_tried: number
+  analysis_wall_s: number | null
+  selected_plan: string
+  verdict: Outcome
+  delay_vs_baseline_pct: number | null
+  prediction_error: Record<string, number | null>
+  staleness_s: number | null
+  checks: ResponseCheck[]
+  provisional: boolean
+}
+
+export interface LearningComparison {
+  script_id: string | null
+  warm_episode_id: string
+  control_episode_id: string
+  transfer: boolean
+  useful: boolean | null
+  behavior_changes: string[]
+  deltas: Record<string, number | null>
+}
+
+export interface LearningReport {
+  episodes: LearningReportEpisode[]
+  comparisons: LearningComparison[]
 }
 
 export type StreamMessage =

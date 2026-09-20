@@ -1,10 +1,11 @@
 """Demo readiness that needs no SUMO: the scripted crashes name real roads, and lessons survive a round trip."""
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
 
-from app.learning.store import ExperienceStore
+from app.learning.store import PROVISIONAL_RANKING_FACTOR, ExperienceStore
 from app.models.domain import Severity
 from app.models.episode import Experience, IncidentFeatures, Lesson, PlanSummary, Scorecard, WindowStats
 
@@ -53,7 +54,7 @@ def test_memory_store_round_trip(tmp_path):
     store = ExperienceStore(tmp_path / "memory")
     assert store.load() == [] and store.next_number() == 1
 
-    assert store.save(_experience(7, [_features()])).is_file()
+    assert asyncio.run(store.save(_experience(7, [_features()]))).is_file()
     loaded = store.load()
     assert [e.id for e in loaded] == ["EP-0007"]
     assert loaded[0].chosen.id == "divert-advisory" and loaded[0].lesson.summary == "Diverting worked."
@@ -62,15 +63,18 @@ def test_memory_store_round_trip(tmp_path):
     assert "EP-0007" in store.playbook()
 
     # the same crash again recalls the lesson at full similarity; another kind of crash somewhere else does not
-    recalled = store.recall([_features()])
+    recalled = asyncio.run(store.recall([_features()]))
     assert [r.id for r in recalled] == ["EP-0007"]
-    assert recalled[0].similarity == pytest.approx(1.0)
+    assert recalled[0].structured_score == pytest.approx(1.0)
+    # a diversion lesson carrying no response evidence is provisional, so its ranking score is discounted
+    assert recalled[0].provisional and not recalled[0].trusted
+    assert recalled[0].similarity == pytest.approx(1.0 * PROVISIONAL_RANKING_FACTOR)
     assert recalled[0].chosen == "divert-advisory" and recalled[0].verdict == "effective"
     elsewhere = _features(
         incident_id="INC-0002", type="stall", severity="minor", segment_id="A1_A2", street="Oak St", direction="NB",
         upstream="A1", downstream="A2", blocked_lanes=[1], total_lanes=None,
     )
-    assert store.recall([elsewhere]) == []
+    assert asyncio.run(store.recall([elsewhere])) == []
 
     assert store.clear() == 1
     assert store.load() == [] and store.next_number() == 1 and store.playbook() == ""

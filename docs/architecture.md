@@ -198,9 +198,19 @@ above are the ones measured before the change; **the speed-up has not been timed
   the validator rejecting a plan.
 
 With lessons in the context (see [Autonomous episode](#autonomous-episode-applearning)),
-the mock prunes or reorders these proposals. `NemotronAgentProvider` (the REST pipeline's
-provider) is still a stub: Nemotron drives the [MCP tools](#mcp-tools-for-agents) through a
-tool-calling loop over NIM, in episodes only (`learning/analysts.py`).
+the mock prunes or reorders these proposals. `NemotronAgentProvider` drives REST Analyze
+Response through one NIM proposal call and one recommendation call. It validates JSON into
+`CandidatePlan` / `Recommendation` data only; ScenarioService still validates plans, simulates
+them and accepts only a completed candidate. Its first provider failure switches that run to
+the mock (`nemotron→mock`) when `AGENT_FALLBACK_TO_MOCK=true`, or fails it when false. A proposal
+that returns nothing valid is retried once with the validation errors appended to the conversation,
+because re-sending the identical prompt only resamples it. Nemotron also drives the
+[MCP tools](#mcp-tools-for-agents) in episodes (`learning/analysts.py`).
+
+`agent/briefing.py` holds what both analysts share: the candidate rows they read results from, the MCP
+server's `instructions` workflow prompt, and `PLAN_DESIGN`, the same plan-design and result-reading
+guidance without the tool-calling steps. The one-shot REST provider has no tools, so it is given
+`PLAN_DESIGN` rather than a workflow it cannot follow.
 
 **Safety.** `RuleBasedSafetyValidator` checks min/max green (including a pedestrian
 floor), non-shortened yellow and all-red clearance, cycle bounds, and offset range.
@@ -221,7 +231,7 @@ and client snippet: [docs/specs/scenario-engine-mcp.md](specs/scenario-engine-mc
 
 | Tool | Pipeline stages | Returns |
 |---|---|---|
-| `start_analysis(incident_ids?, horizon_s?, agent)` | trigger + capture | run id, the incident(s) (default: every active one), segments (worst congestion first), every signal's phases, standing responses, and `experience` (playbook + similar past episodes) when memory has any |
+| `start_analysis(incident_ids?, horizon_s?, agent, memory_mode?)` | trigger + capture | run id, the incident(s) (default: every active one), segments (worst congestion first), every signal's phases, standing responses, and `experience` (playbook + similar past episodes) when memory mode is `use`; `ignore` makes a no-recall control |
 | `validate_plan(run_id, plan)` | validate | `{safe, violations}` without simulating |
 | `simulate_plans(run_id, plans[])` | validate + simulate, one round | this round's candidates with deltas against the baseline (blocks while the branches run; baseline added on the first round) |
 | `get_analysis(run_id)` | none | every candidate so far |
@@ -250,13 +260,36 @@ rules (two-crash rule, decisions, thresholds). This table is the code path.
 | 3 | Analyze | `MockAnalyst` (`ScenarioService.run_pipeline`) or `NemotronAnalyst` (MCP client over NIM, fallback to the mock) | a completed `ScenarioRun`; episode `analyzing` |
 | 4 | Implement | `Implementor.implement(run_id, by)` in one `run_on_live` command | re-validation on live programs, EMS probes, `apply_plan`; `Implementation` on the run and the episode; the plan joins the standing responses; episode `monitoring` |
 | 5 | Monitor | `LiveMonitor` (a frame observer) | `LiveSample` every 5 simulated seconds; a `LiveRecord` after the window |
-| 6 | Score | `build_scorecard` | `Scorecard` (code only): predicted vs realised on absolute simulation time, outcome |
+| 6 | Score | live `response_notes()` → `build_scorecard` | `Scorecard` (code only): predicted vs realised on absolute simulation time, typed corridor/diversion checks, provisional state, outcome |
 | 7 | Review | `MockReviewer` / `NemotronReviewer` | `Lesson` (verdict = the scorecard's outcome); episode `reviewing` |
 | 8 | Remember | `ExperienceStore.save` | `memory/episodes/EP-NNNN.md` + `playbook.md`; episode `completed`; live sim paused |
-| 9 | Recall | `ScenarioService.lessons_source` → `ExperienceStore.recall` | `IncidentContext.lessons`, `ScenarioRun.recalled`, MCP `experience` |
+| 9 | Recall | `ScenarioService.lessons_source` → `ExperienceStore.recall` | structured/semantic/combined/ranking scores and query-scoped trust in `IncidentContext.lessons`, `ScenarioRun.recalled`, MCP `experience` |
 
 Hooks (`incident_listeners`, `reset_listeners`, implementation listeners, the monitor) run
 inside the frame pipeline or a request, so they change state synchronously and spawn tasks
 for slow work. The implementor's live apply runs in a shielded task: once started, a plan
 that reached the live signals is always recorded as standing, even if its agent is
 superseded mid-apply.
+
+Response checks determine trust, not the scorecard verdict. A corridor needs a recorded
+pre-emption and a diversion needs a recorded diverted vehicle; failed or unavailable evidence
+makes the stored lesson provisional and caps confidence at 0.4. Recall discounts an
+unconfirmed provisional lesson. It trusts one for the current query only after two distinct,
+verified experiences with the same plan family and verdict also score at least 0.75 by the
+structured matcher. The mock may reorder on any recalled lesson, but only trusted structured
+matches at or above 0.75 may prune candidates.
+
+Diversion attribution is deliberately conservative. `Implementation.diverted` is the count
+returned by the current apply call and can prove success. The monitor-close response note is
+a lifetime total across every advisory still active in the shared controller: zero proves
+explicit failure, but a positive total cannot be assigned to the newest response and remains
+unknown unless its apply-time count was already positive.
+
+Memory mode and recall provenance are persisted on scenario, episode and durable experience.
+An `ignore` control remains in the learning report but is never eligible for recall or the
+playbook. Optional `NimEmbedder` calls `/embeddings` asynchronously: current situations use
+`input_type=query`, experiences use `passage`, and sidecars invalidate on model or input hash.
+The blend is `max(structured, min(0.74, 0.65 × structured + 0.35 × semantic))`; semantic scores
+can raise recall and reorder candidates but can never satisfy the structured pruning threshold.
+`GET /api/learning/report` compares warm runs against same-script controls and exposes the
+configured transfer signals in the episode panel without claiming measurements not in the data.

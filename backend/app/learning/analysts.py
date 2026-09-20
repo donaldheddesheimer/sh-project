@@ -19,6 +19,7 @@ from mcp.server.mcpserver import MCPServer
 
 from app.agent.nemotron import NimClient
 from app.learning.implementor import Implementor
+from app.models.episode import MemoryMode
 from app.models.scenario import ScenarioStatus
 from app.services.scenarios import ScenarioService
 
@@ -50,8 +51,8 @@ class MockAnalyst:
         self._implementor = implementor
         self._may_implement = may_implement
 
-    async def run(self, incident_ids: list[str], on_run: OnRun) -> str:
-        a = await self._scenarios.open(None, None, True, self.name, incident_ids=incident_ids)
+    async def run(self, incident_ids: list[str], on_run: OnRun, memory_mode: MemoryMode = "use") -> str:
+        a = await self._scenarios.open(None, None, True, self.name, memory_mode=memory_mode, incident_ids=incident_ids)
         on_run(a.run.id)
         await self._scenarios.run_pipeline(a)  # a cancel (superseded) propagates; failures fail the run
         if a.run.status is not ScenarioStatus.COMPLETED:
@@ -78,11 +79,11 @@ class NemotronAnalyst:
         self._timeout_s = timeout_s
         self._may_implement = may_implement
 
-    async def run(self, incident_ids: list[str], on_run: OnRun) -> str:
+    async def run(self, incident_ids: list[str], on_run: OnRun, memory_mode: MemoryMode = "use") -> str:
         async with asyncio.timeout(self._timeout_s):
-            return await self._loop(incident_ids, on_run)
+            return await self._loop(incident_ids, on_run, memory_mode)
 
-    async def _loop(self, incident_ids: list[str], on_run: OnRun) -> str:
+    async def _loop(self, incident_ids: list[str], on_run: OnRun, memory_mode: MemoryMode) -> str:
         async with Client(self._server, read_timeout_seconds=TOOL_READ_TIMEOUT_S) as client:
             listed = await client.list_tools()
             tools = [
@@ -112,7 +113,9 @@ class NemotronAnalyst:
                     continue
                 for call in calls:
                     name = call["function"]["name"]
-                    text, ok = await self._call(client, name, call["function"].get("arguments"), incident_ids)
+                    text, ok = await self._call(
+                        client, name, call["function"].get("arguments"), incident_ids, memory_mode
+                    )
                     if ok and name == "start_analysis":
                         run_id = _field(text, "run_id")
                         if run_id:
@@ -126,7 +129,9 @@ class NemotronAnalyst:
                 raise AnalystError(f"Nemotron did not submit a recommendation within {MAX_STEPS} turns")
             return run_id
 
-    async def _call(self, client: Client, name: str, raw_args: str | None, incident_ids: list[str]) -> tuple[str, bool]:
+    async def _call(
+        self, client: Client, name: str, raw_args: str | None, incident_ids: list[str], memory_mode: MemoryMode
+    ) -> tuple[str, bool]:
         """Run one tool call; returns the result text and whether it succeeded (tool errors go back to the model)."""
         try:
             args = raw_args if isinstance(raw_args, dict) else json.loads(raw_args or "{}")
@@ -135,7 +140,7 @@ class NemotronAnalyst:
         if name not in TOOLS or not isinstance(args, dict):
             return f"unknown tool {name} or arguments that are not an object", False
         if name == "start_analysis":  # the episode decides which incidents are solved together
-            args.update(incident_ids=incident_ids, agent=self.name)
+            args.update(incident_ids=incident_ids, agent=self.name, memory_mode=memory_mode)
         result = await client.call_tool(name, args)
         text = "\n".join(getattr(c, "text", "") for c in result.content)
         return text, not result.is_error

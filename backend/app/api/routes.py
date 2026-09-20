@@ -21,7 +21,7 @@ from app.models.api import (
     SpeedRequest,
 )
 from app.models.domain import Incident, NetworkGeometry, SignalProgram
-from app.models.episode import DemoInfo, Episode, Implementation
+from app.models.episode import DemoInfo, Episode, Implementation, LearningReport
 from app.models.scenario import ScenarioRun, ScenarioRunRequest
 from app.services.city import CityService, Conflict, NotReady
 from app.services.scenarios import ScenarioService
@@ -211,7 +211,7 @@ async def demo_start(episodes: Episodes, city: City, request: DemoStartRequest) 
     if not city.smart_city.simulation_is_source:
         raise HTTPException(409, "demo scripts require the mock Smart City provider; VSS incidents are operator-analyzed")
     try:
-        return await episodes.start_demo(request.script)
+        return await episodes.start_demo(request.script, request.memory_mode)
     except KeyError as exc:
         raise HTTPException(404, f"unknown demo script {request.script}") from exc
     except ValueError as exc:
@@ -246,6 +246,12 @@ async def memory(store: Memory) -> dict:
 async def clear_memory(store: Memory) -> dict:
     """Forget every lesson, for a cold run."""
     return {"removed": store.clear()}
+
+
+@router.get("/learning/report", response_model=LearningReport)
+async def learning_report(store: Memory) -> LearningReport:
+    """Durable cold/warm and cross-script transfer evidence; this endpoint makes no inference beyond its rules."""
+    return store.report()
 
 
 @router.get("/cameras", response_model=list[Camera])

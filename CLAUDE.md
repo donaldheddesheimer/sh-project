@@ -45,7 +45,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Task | POSIX (`make`) | Windows |
 |---|---|---|
 | Set up | `make setup` | `python -m venv backend\.venv`, then `backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt`, then `npm --prefix frontend install` |
-| Backend tests (24, real SUMO; the 5 demo-readiness ones passed once, run by the user's request). **Reference only: never run unasked (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
+| Backend tests (24, real SUMO; for what has and has not been run see README "Tests"). **Reference only: never run unasked (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
 | One test. **Reference only: never run unasked (Hard rules)** | `cd backend && .venv/bin/pytest -q -k <name>` | `.venv\Scripts\python.exe -m pytest -q -k <name>` (in `backend`) |
 | Backend on :8000 | `make backend` | `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` |
 | Frontend on :5173 | `make frontend` | `npm --prefix frontend run dev` |
@@ -72,7 +72,8 @@ venv directly (this is what works in PowerShell or Git Bash):
 | To change | Look at |
 |---|---|
 | REST endpoints, `/ws/state` | [backend/app/api/routes.py](backend/app/api/routes.py) |
-| MCP tools and their `instructions` prompt | [backend/app/api/mcp_tools.py](backend/app/api/mcp_tools.py) |
+| MCP tools | [backend/app/api/mcp_tools.py](backend/app/api/mcp_tools.py) |
+| The analyst prompt and candidate rows both analysts share | [backend/app/agent/briefing.py](backend/app/agent/briefing.py) |
 | Live orchestration, ops log, WebSocket frames | [backend/app/services/city.py](backend/app/services/city.py) |
 | Analyze Response pipeline (`open → capture → evaluate → finish/fail`) | [backend/app/services/scenarios.py](backend/app/services/scenarios.py) |
 | One candidate branch in a fresh SUMO process | [backend/app/simulation/branching.py](backend/app/simulation/branching.py) |
@@ -99,9 +100,11 @@ venv directly (this is what works in PowerShell or Git Bash):
 - **Providers are interfaces.** `CityService` sees `SmartCityProvider` and `AgentProvider`
   only; `providers.py` picks mock vs NVIDIA/Nemotron. `NvidiaSmartCityProvider` polls VSS
   over MCP (or a development replay file), map-matches reports and has `CityService` mirror
-  matched collisions into the twin. The REST pipeline's `NemotronAgentProvider` is still a
-  stub: with `AGENT_PROVIDER=nemotron` Analyze Response fails. Nemotron runs only as an
-  episode's analyst (`EPISODE_ANALYST`).
+  matched collisions into the twin. `NemotronAgentProvider` powers REST Analyze Response with
+  schema-validated plan data; the safety validator and completed-candidate gate still decide
+  what can run. Its first failure switches that run to the mock when
+  `AGENT_FALLBACK_TO_MOCK=true`, or fails it when false. Nemotron also runs as an episode
+  analyst (`EPISODE_ANALYST`).
 - **One thread owns the live TraCI connection.** TraCI is blocking and not thread-safe.
   Touch the live simulation only through `CityService.run_on_live(fn)`; scripted crashes are
   fired by the runner thread itself (`set_scripted_events`).
@@ -194,7 +197,9 @@ venv directly (this is what works in PowerShell or Git Bash):
 - **Tests.** Never run them, and write them only when asked (Hard rules). The team chose demo
   over coverage (recorded in `docs/milestone-2/MASTER.md`); the five demo-readiness tests
   (`test_demo_setup.py`, `test_demo_smoke.py`, one in `test_simulation.py`; README "Tests")
-  passed on one run the user asked for. Verify by reading the code and report what was not run. Known gaps:
+  passed on one run the user asked for, which predates the async `ExperienceStore`:
+  `test_memory_store_round_trip` was updated for it and has not been re-run.
+  Verify by reading the code and report what was not run. Known gaps:
   pre-emption, reroute, the MCP tools, Nemotron, warm recall and the two-crash rule have no
   tests; `ScenarioService` and the episode are covered only by the two smoke tests. The suite
   is in `backend/tests/`; the `make_sim` fixture in `tests/conftest.py` starts real SUMO

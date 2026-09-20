@@ -89,6 +89,11 @@ do not run tests unasked (CLAUDE.md hard rule 1). The 19 older ones were not re-
 new test is written so that a failure means a bug in the app and not in the test; read the
 failure message before touching the test.
 
+That run predates this branch. `ExperienceStore.save` and `.recall` are async here, so
+`test_memory_store_round_trip` was updated to `asyncio.run` them and to expect the provisional
+ranking discount its fixture now earns (a diversion lesson with no response evidence, see
+[Memory](#the-autonomous-self-learning-episode)). **The updated test has not been run.**
+
 | Test | Needs SUMO | What it shows |
 |---|---|---|
 | `test_demo_setup.py::test_demo_scripts_name_real_segments_and_lanes` | no | every grid demo script names a real segment and valid lanes, so `POST /api/demo/start` can arm it |
@@ -322,7 +327,7 @@ scripted crash ─► live sim plays it as "real data" ─► crash detected, st
 | **Monitor** | Caches live data before and after the plan goes live, for a fixed number of **simulated** seconds. | No |
 | **Scorecard** | Deterministic numbers: what was predicted, what really happened, how far apart. | No |
 | **Reviewer** | A separate call that sees only the scorecard and the condensed episode (never the analyst's reasoning) and writes the lesson. The mock reviewer uses templates. | Nemotron / no (mock) |
-| **Memory** | Stores lessons and recalls the relevant ones for the next incident. | No (embeddings optional, later) |
+| **Memory** | Stores lessons, records whether they were used, and recalls relevant eligible lessons for the next incident. | No (optional embedding NIM) |
 | **Episode service** | The state machine that ties these together. It is the only thing that starts an agent, and only while a demo script is armed. | No |
 
 ### Terms
@@ -341,6 +346,10 @@ Used the same way everywhere in this README, the code and the ops log.
 | **Monitor window** | The fixed number of simulated seconds the applied plan is watched (how it is chosen: see Monitor under [How the pieces work](#how-the-pieces-work)). |
 | **Staleness** | Live time that passed between the branch snapshot and the moment the plan went live. Recorded with every episode. |
 | **Lesson / experience** | The reviewer's verdict plus the numbers and the situation, stored as one memory entry. |
+| **Memory mode** | `use` recalls eligible lessons; `ignore` is a no-recall control. It still stores the finished episode for the learning report but never lets that lesson enter later recall. |
+| **Response check** | Code-computed proof that an applied corridor pre-empted or a diversion actually diverted a vehicle. |
+| **Provisional lesson** | A corridor or diversion lesson with failed or missing response evidence. It can reorder candidates, but needs query-scoped replication before it can prune them. |
+| **Learning report** | The durable cold/warm and cross-script comparison at `GET /api/learning/report`; it reports the configured useful-transfer rule, not an unsupported causal claim. |
 | **Playbook** | A short, generated digest of recent lessons (`memory/playbook.md`), handed to an MCP agent with every analysis. |
 | **Superseded** | An episode stopped because another crash arrived while its agent was still working. |
 | **Demo script** | A JSON file in `demos/` that says when each crash happens (`DemoScript`). Not the [demo walkthroughs](#demo-walkthrough-analyze-response) above. |
@@ -440,7 +449,17 @@ about how far to trust the twin.
 - how many plans were tried and rejected;
 - whether the recommendation matched the mock's rubric among the simulated plans
   (`agent/mock.py`, reused as the "what should have won" reference);
-- a `material` flag and an outcome.
+- a `material` flag and an outcome;
+- typed response checks for an applied corridor or diversion, plus a `provisional` flag when
+  an applicable check failed or its evidence was unavailable.
+
+The monitor reads the live simulation's response notes as its window closes. A corridor
+passes only after at least one pre-emption. A diversion passes only when the current apply
+call itself reports at least one diverted vehicle: the later note is a lifetime total across
+every still-active advisory, so a positive total cannot be attributed to the newest one. A
+lifetime total of zero is explicit failure; an unattributable positive total, an empty note,
+or an unrelated note is unknown. Explicitly idle or disabled behavior fails, while missing
+evidence is unknown. Either result makes the lesson provisional without changing its verdict.
 
 Materiality thresholds, chosen in this pass (constants in `scorecard.py`): **5% mean delay,
 5 vehicles of peak queue, 30 s of EMS response**. Timing plans move delay by about 1%, so
@@ -458,7 +477,8 @@ what did not, what to try next time, and a confidence. It is given only the scor
 the condensed episode (the situation, one line per plan tried, the plan applied). The mock
 reviewer uses templates. The Nemotron reviewer asks NIM for the prose as JSON and falls back
 to the mock. Either way the verdict is the scorecard's outcome: the model explains it and
-cannot overrule it. The raw samples are condensed into the scorecard and discarded.
+cannot overrule it. A provisional lesson's confidence is capped at 0.4 after either reviewer
+returns. The raw samples are condensed into the scorecard and discarded.
 
 **Memory** (`learning/store.py`). Each completed episode becomes
 `memory/episodes/EP-NNNN.md`: a JSON front-matter block holding the whole `Experience` (so
@@ -469,11 +489,12 @@ files survive restarts. Illustrative shape, placeholders instead of numbers:
 
 ```
 ---
-{"id": "EP-0004", "script_id": "crash-ahead", "analyst": "nemotron",
+{"id": "EP-0004", "script_id": "crash-ahead", "analyst": "nemotron", "memory_mode": "use",
+ "eligible_for_recall": true, "recalled": ["EP-0003"], "recall_provenance": [...],
  "incidents": [{"type": "collision", "severity": "major", "street": "Main St",
                 "direction": "EB", "blocked_lanes": [0], "total_lanes": 2, ...}],
  "chosen": {"id": "<plan id>", "kinds": ["<timing | corridor | diversion>"]},
- "tried": [...], "scorecard": {...},
+ "tried": [...], "scorecard": {"checks": [...], "provisional": false, ...},
  "lesson": {"verdict": "<effective | ineffective | inconclusive>", "next_time": [...]}}
 ---
 # EP-0004: <one-line summary>
@@ -483,10 +504,24 @@ What was tried, the numbers, and the lesson, in prose.
 `memory/playbook.md` is a generated digest of the 20 most recent lessons. Both it and
 `memory/episodes/` are git-ignored; `DELETE /api/memory` forgets everything for a cold run.
 
-Recall ranks past episodes by how similar the situation is, then by recency, then by the
-lesson's confidence, and hands the top 3 to the agent. Past episodes below 0.3 similarity are
-not recalled. Each current incident is matched to its most alike past incident with these
-weights (sum 1.0):
+Recall records a structured, semantic, combined and final ranking score for each result.
+With `EMBEDDING_MODEL` unset (the default), semantic is null and the combined score is exactly
+the structured score. With it configured, an NVIDIA-compatible embedding NIM embeds current
+incidents plus standing responses as a `query`, and durable experiences (situation, plan family,
+verdict and next-time guidance) as `passage` entries. Vectors live beside each episode as
+`EP-NNNN.vec.json` with the model id, input hash and vector; `DELETE /api/memory` deletes both
+markdown and sidecars. A saved episode is embedded only after its markdown is durable, and a
+first recall batches stale legacy entries into one passage request. This costs one query per
+analysis and one passage per saved episode.
+
+`semantic = clamp(cosine, 0, 1)` and
+`combined = max(structured, min(0.74, 0.65 × structured + 0.35 × semantic))`. Trusted lessons
+rank by combined score; an unconfirmed provisional lesson is discounted to 75% of that score.
+Results then sort by ranking score, recency and confidence, and the top 3 are handed to the
+agent. Results below a 0.3 ranking score are not recalled. An embedding outage emits one ops
+warning, falls back to the exact structured behavior, and emits one recovery event after a
+successful call. Each current incident is matched to its most alike past incident with these
+structured weights (sum 1.0):
 
 | Feature | Weight |
 |---|---|
@@ -498,26 +533,50 @@ weights (sum 1.0):
 | the same lane(s) blocked | 0.1 |
 | as many incidents at once | 0.1 |
 
-So another crash on the same segment scores 1.0 and `varied-crash` against a `crash-ahead`
-lesson about 0.65. Embedding-based recall (an NVIDIA embedding NIM) can later replace this
-behind the same `recall` call.
+Legacy markdown remains readable. If an older corridor or diversion experience has no
+response checks, it is treated in memory as unknown and provisional (including the 0.4
+confidence cap) without rewriting the stored file.
 
-**Injection.** Recalled lessons go into the agent's context (`IncidentContext.lessons`) and
-are listed on the run (`ScenarioRun.recalled`). Over MCP, `start_analysis` returns an
-`experience` block (the playbook plus the top similar episodes), and `recall_experience`
-returns more. The instructions say lessons only seed the first round: they never replace
-`validate_plan` and `simulate_plans`, so memory advises while the validator and the simulator
-stay the gate.
+So another crash on the same segment scores 1.0 and `varied-crash` against a `crash-ahead`
+lesson about 0.65. Semantic similarity can complement this ranking but cannot grant pruning
+authority.
+
+**Injection and controls.** `memory_mode: "use" | "ignore"` is accepted by demo starts,
+REST Analyze Response and MCP `start_analysis` (default `use`). An `ignore` run receives no
+lessons, then saves an `eligible_for_recall=false` control experience. Recalled lessons and
+their structured, semantic, combined, ranking and trust scores are persisted on the scenario,
+episode and experience as recall provenance. Over MCP, `start_analysis` returns an `experience`
+block (the playbook plus the top similar episodes), and `recall_experience` returns more. The
+instructions say lessons only seed the first round: they never replace `validate_plan` and
+`simulate_plans`, so memory advises while the validator and the simulator stay the gate.
+
+At recall time, a provisional lesson becomes trusted for that query only when two distinct
+other experiences have structured scores of at least 0.75, the same plan family and verdict,
+and successful applicable response checks. Confirmation does not rewrite memory.
 
 **The mock acts on lessons** (`_apply_lessons` in `agent/mock.py`), for a single incident only:
 
-- A close match (similarity 0.75 or more) that found a plan `effective` makes the mock
-  simulate that plan first with just two others: 4 candidates, one wave of branches.
-- A close match that found a plan `ineffective` drops that plan.
+- A trusted close structured match (0.75 or more) that found a plan `effective` makes the
+  mock simulate that plan first with just two others: 4 candidates, one wave of branches.
+- A trusted close structured match that found a plan `ineffective` drops that plan.
 - A looser match (0.5 to 0.75) only reorders: effective plans first, ineffective last.
+
+Provisional lessons can participate in the harmless reorder band, but never remove
+candidates unless the recall-time replication rule confirms them. Semantic similarity will
+likewise never grant pruning authority.
 
 A warm `crash-ahead` run therefore uses fewer candidates and less wall time. That is
 memorisation, not transfer; `varied-crash` (about 0.65) shows only a reordering.
+
+**Learning report.** `GET /api/learning/report` reads durable experiences, not the in-memory
+episode list. Per episode it shows script, analyst, mode, recalled sources, warm/transfer flags,
+candidate order, rounds, candidates tried, wall time, chosen plan/verdict, delay against the
+baseline, prediction error, staleness, checks and provisional state. It pairs a warm run with
+the nearest `ignore` control of the same script. A cross-script comparison is `useful` when it
+finds at least one configured signal: an effective recalled family moved earlier; an ineffective
+one moved later or was omitted; fewer candidates or rounds; an ineffective control verdict
+improved; or realised delay materially improved without a material queue or EMS regression.
+The collapsed **Learning** panel renders the same report.
 
 **Finish.** The monitor stops, the live sim is paused (`EPISODE_PAUSE_ON_FINISH`, unless
 another episode is working), the lesson is written, and the episode is `completed`.
@@ -543,6 +602,9 @@ Endpoints are in the [API](#api) table. Every setting is in `backend/app/config.
 | `MEMORY_ENABLED`, `MEMORY_DIR` | true, `<repo>/memory` | Memory on/off and where it lives |
 | `SCENARIO_MAX_CANDIDATES` | 9 | Most plans an analysis simulates, the baseline included. The mock proposes exactly 9 on the grid when an EMS origin or responder exists |
 | `ANALYSIS_LIVE_SPEED` | unset | A speed multiplier above 0 and up to 64 (the console's limit). While an analysis is open the live sim runs at it, so the branches get more of the machine, and the previous speed comes back when the analysis ends. Any speed change by the operator, or a demo start, ends the hold and nothing is restored. Built, not measured |
+| `EMBEDDING_MODEL` | unset | Enables optional semantic recall through an OpenAI-compatible embedding NIM; unset preserves structured-only recall |
+| `EMBEDDING_BASE_URL` | `NEMOTRON_BASE_URL` | OpenAI-compatible `/embeddings` endpoint for `EMBEDDING_MODEL` |
+| `AGENT_FALLBACK_TO_MOCK` | true | REST Analyze Response changes `agent` to `nemotron→mock` and continues with the mock after the first NIM failure |
 | `MCP_URL` | unset | Where the Nemotron analyst reaches the MCP tools; unset = this app's server, in-process |
 | `NEMOTRON_MODEL`, `NVIDIA_API_KEY`, `NEMOTRON_BASE_URL` | unset, unset, NIM | The model id has to be supplied (see [open questions](#decisions-and-open-questions)) |
 | `NVIDIA_VA_MCP_URL` | unset | Streamable-HTTP VSS Video Analytics MCP endpoint; required for live VSS unless replay is set |
@@ -584,21 +646,35 @@ reviewer, so no NIM key is needed except for step 7.
   monitor progress, startup retry for the script list, types in sync, and advisory wording.
 - [x] **10. Docs and the safety rule** (this README, `CLAUDE.md`, `docs/architecture.md`, the
   MCP spec, the UI).
-- [ ] **Measure the learning.** Same script cold (empty memory) and warm, plus
-  `varied-crash`: rounds and candidates used, wall time, recommendation quality
-  (`GET /api/episodes` has `rounds`, `candidates`, `analysis_wall_s`, `recalled` and the
-  scorecard). Same-script gains are memorisation; only the varied script shows transfer.
-  Planned as part 2 of [milestone 4](#next-milestone-4), with a run protocol that adds a cold
-  `varied-crash` control. Nothing has been measured yet.
+- [ ] **Measure the learning.** The report and controls are built, but no user-run numbers are
+  recorded yet. Follow [the learning protocol](#learning-protocol-user-run) and compare the
+  durable report, not the in-memory episode history.
 
 The items this list used to defer are taken up in [milestone 4](#next-milestone-4). The branch
 speed-up, the slower live speed during analysis, per-responder EMS metrics on the twin side and
-the `revert_response()` primitive are built in part 1 (not run, not measured). Embedding-based
-recall, reverting an applied plan when the scene clears, per-responder EMS in the scorecard,
-verifying corridor and diversion lessons and the REST `NemotronAgentProvider` are still planned
-(part 2). Still later: more tests for `ScenarioService`, the MCP tools and the learning package
-(only the five demo-readiness tests in [Tests](#tests) exist; further ones are written only when
-the user asks).
+the `revert_response()` primitive are built in part 1 (not run, not measured). Response checks,
+control-mode recall, optional semantic recall, the learning report and REST Nemotron are built
+but not run. Reverting an applied plan when the scene clears and per-responder EMS in the
+scorecard remain planned. Still later: more tests for `ScenarioService`, the MCP tools and the
+learning package (only the five demo-readiness tests in [Tests](#tests) exist; further ones are
+written only when the user asks).
+
+### Learning protocol (user run)
+
+Do this with the mock analyst first. Clear memory once, then start `crash-ahead` twice with
+`{"script":"crash-ahead","memory_mode":"use"}`: the first is cold and the second is warm
+memorisation. Then run `varied-crash` with `{"script":"varied-crash","memory_mode":"use"}`
+and again with `{"script":"varied-crash","memory_mode":"ignore"}`. Inspect
+`GET /api/learning/report`: the varied pair is the transfer-versus-control comparison; record
+rounds, candidates, wall time, selected plan/verdict, recall provenance and reported deltas.
+Do not label a result measured until those user-run numbers are recorded.
+
+Repeat the varied pair with a valid `EMBEDDING_MODEL` and key, then with an invalid embedding
+configuration: the valid path should add semantic scores and sidecars; the invalid path should
+continue with structured scores and one outage warning. Finally exercise REST Analyze Response
+with `AGENT_PROVIDER=nemotron`: once with valid model output, once with invalid model output
+(the mock should take over and the run should say `nemotron→mock`), and once with
+`AGENT_FALLBACK_TO_MOCK=false` (the run should fail rather than silently changing providers).
 
 ### Decisions and open questions
 
@@ -630,8 +706,8 @@ analysis and reduce staleness.
 
 - **The learnable signal is thin.** Timing plans move delay by about 1%, and the EMS
   corridor often loses once a queue has formed (see [limitations](#current-limitations)),
-  so many lessons will be `inconclusive`. The high-impact plans (corridor, diversion) have
-  the least verification, so check them before trusting their lessons.
+  so many lessons will be `inconclusive`. Corridor and diversion response checks prevent
+  unverified lessons from pruning, but do not make the underlying signal stronger.
 - **Live-apply paths have never run on the live sim.** The corridor's `setPhase` jump in
   particular was never exercised. A pre-emption command that fails the runtime transition
   check no longer stops the live twin: it drops the corridor, logs at `ERROR` and adds a
@@ -735,7 +811,8 @@ backend/app/
   simulation/metrics.py live + horizon TrafficMetrics
   smart_city/           provider boundary, mock, VSS MCP/replay clients, mapping and map matching
   agent/                AgentProvider: base, mock (9 rule-based plans, pruned by lessons);
-                        nemotron.py: the NIM chat client (its REST AgentProvider is a stub)
+                        nemotron.py: the NIM chat client and the REST AgentProvider;
+                        briefing.py: the analyst prompt and candidate rows both analysts share
   safety/validator.py   SafetyValidator (signal policies + corridors) and rule-based MVP limits
   websocket/hub.py      non-blocking WebSocket fan-out
   learning/episode.py   EpisodeService: demo scripts, the episode state machine, two-crash rule
@@ -744,7 +821,8 @@ backend/app/
   learning/monitor.py   live sample ring and monitor windows
   learning/scorecard.py predicted vs realised, materiality thresholds, outcome
   learning/reviewer.py  mock and Nemotron reviewers (scorecard → lesson)
-  learning/store.py     markdown memory, playbook, similarity recall
+  learning/store.py     markdown memory, playbook, structured/semantic recall and learning report
+  learning/embeddings.py optional OpenAI-compatible embedding NIM client
 backend/tests/          network, simulation, runner, safety/agent, mock provider, API, demo setup and smoke tests
 frontend/src/
   App.tsx               layout + actions
@@ -764,7 +842,7 @@ simulation/
   scenarios/pittsburgh_oakland/  the same files and demo scripts for Oakland; synthetic demand
   scenarios/*/vss/      development-only VSS-shaped replay timelines (coordinates not run/verified)
   controllers/          how pre-emption plugs in (the code lives in backend/app/simulation/)
-memory/                 written at runtime: episodes/EP-NNNN.md lessons and playbook.md (git-ignored)
+memory/                 written at runtime: episodes/EP-NNNN.md lessons, EP-NNNN.vec.json sidecars and playbook.md (git-ignored)
 Dockerfile              backend image (backend/ + simulation/); build context is the repo root
 scripts/deploy-cloudrun.sh  deploy that image to Google Cloud Run, with the flags the twin needs
 vercel.json             static build of frontend/ for the separately hosted UI
@@ -791,17 +869,18 @@ docs/
 | GET | `/api/signals/{intersection}` | active signal program |
 | GET | `/api/cameras`, `/api/events` | camera registry, ops log |
 | GET | `/api/smart-city/status` | provider health, last success/error, and how many documents the **latest** poll filtered as unconfirmed or could not read |
-| POST | `/api/scenarios/run` | start Analyze Response: `{"incident_id"?, "incident_ids"?, "horizon_s": 600, "ems_probe": true}` → `ScenarioRun` (202; 409 if no active incident or a run is open). `incident_ids` analyzes several crashes together |
+| POST | `/api/scenarios/run` | start Analyze Response: `{"incident_id"?, "incident_ids"?, "horizon_s": 600, "ems_probe": true, "memory_mode": "use"}` → `ScenarioRun` (202; 409 if no active incident or a run is open). `memory_mode: "ignore"` makes a no-recall control; `incident_ids` analyzes several crashes together |
 | GET | `/api/scenarios` | recent runs (newest first, last 10) |
 | GET | `/api/scenarios/{id}` | one run with candidates, metrics, timelines, the recommendation, and `implementation` once applied |
 | POST | `/api/scenarios/{id}/implement` | operator path: apply the run's recommendation to the live sim (same code as the agent's) → `Implementation`. 404 unknown run; 409 not completed, already applied, predating a reset or an incident cleared; 400 rejected by the validator on the live programs |
 | GET | `/api/demo` | demo scripts, the armed script, the analyst, the latest episode, memory stats |
-| POST | `/api/demo/start` | `{"script": "crash-ahead"}`: reset and resume the city, then arm the script → the `armed` `Episode` (202); 409 with an external VSS provider |
+| POST | `/api/demo/start` | `{"script": "crash-ahead", "memory_mode": "use"}`: reset and resume the city, then arm the script → the `armed` `Episode` (202). Use `ignore` for a persisted no-recall control |
 | POST | `/api/demo/stop` | disarm: no more scripted crashes or autonomous response; aborts the working episode |
 | GET | `/api/episodes`, `/api/episodes/{id}` | recent episodes (newest first, last 20), one episode |
 | GET, DELETE | `/api/memory` | remembered episodes and the playbook; DELETE forgets them (a cold run) |
+| GET | `/api/learning/report` | durable episodes plus same-script warm-versus-control comparisons and the configured transfer status |
 | WS | `/ws/state` | `hello` (state, events, trend, latest run, latest episode) then `state` / `status` / `event` / `scenario` / `episode` messages |
-| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, default all active incidents), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md)) |
+| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md)) |
 
 ## Current limitations
 
@@ -854,8 +933,10 @@ docs/
 - `NvidiaSmartCityProvider` is built against NVIDIA's published VSS 3.2 MCP tool contract,
   but neither the live client nor replay fixtures have been run. A real server may expose
   field variants that need an update in the intentionally isolated `vss_mapping.py`.
-  The REST pipeline's `NemotronAgentProvider` remains a stub; Nemotron runs only as an
-  episode's analyst and reviewer.
+- REST `NemotronAgentProvider` now validates JSON plans and recommendations but has not been
+  exercised against a NIM model.
+  On its first failure a run becomes `nemotron→mock` when `AGENT_FALLBACK_TO_MOCK=true`; with
+  it false the run fails. Nemotron still runs as an episode analyst and reviewer too.
 - Mirrored crash size, spacing, blocked-lane effects and pass speed are twin assumptions,
   not quantities observed by VSS. Lane 0 is assumed because VSS has no lane-grade position.
 - Synthetic network (the grid) and synthetic demand (both cities). The crash physics
@@ -869,7 +950,8 @@ docs/
 
 ## Next: milestone 4
 
-**Parts 1 and 3 are built and merged; neither has been run or measured. Part 2 is planned.**
+**Parts 1 and 3 are built and merged; neither has been run or measured. Agent-memory transfer
+(part 2) is built but not run.**
 
 **First, the rest of milestone 3 has to be run.** Its cold mock run has passed one smoke test
 (see [Tests](#tests)). What remains is to run the rest of it (the
@@ -885,7 +967,7 @@ kept.
 | Part | Branch and plan | What it delivers | Status |
 |---|---|---|---|
 | 1. Twin engine | `feature/twin-engine`, [plan](docs/milestone-4/feature-twin-engine.md) | The branch speed-up in `sumo.py`; the EMS corridor explained and its levers tried (a longer detection distance, a combined corridor and diversion plan); per-responder EMS response from the twin; a `revert_response()` primitive; a pre-emption failure on the live twin that degrades instead of stopping it; an opt-in slower live speed during analysis | Built, none of it measured or run |
-| 2. Agent and memory | `feature/agent-memory`, [plan](docs/milestone-4/feature-agent-memory.md) | Reverting an applied plan when the scene clears (automatic, and by the operator); per-responder EMS in the scorecard; response checks, so corridor and diversion lessons are verified before they are trusted; embedding-based recall; a learning report and the cold, warm and varied run protocol; the REST `NemotronAgentProvider` | Planned |
+| 2. Agent and memory | `feature/agent-memory`, [plan](docs/milestone-4/feature-agent-memory.md) | Built, not run: response checks/trust, `use`/`ignore` controls, optional embedding recall, learning report/protocol and REST `NemotronAgentProvider`. Revert-on-clear and per-responder EMS in the scorecard remain planned. | Built, not run |
 | 3. VSS input | `feature/vss-input`, [plan](docs/milestone-4/feature-vss-input.md) | `NvidiaSmartCityProvider` on the VSS Video Analytics MCP tools, with a replay client for development; a map matcher (lat/lon and place names → segment and lane); mirroring a reported incident into the twin so it can be analyzed; cameras and match details in the UI; Oakland demo scripts | Built, not run |
 
 **Prepared but not faked** still holds for part 3. The full Blueprint is not installed or run;
@@ -919,9 +1001,10 @@ the previous pass, plus five fixes found while reading the code. The single-cras
 | | `services/city.py` | `incident_listeners`, `reset_listeners`, `add_frame_observer`, `set_scripted_events`, `crash_command` (fills defaults the same way as Inject), `publish_episode`, and `episode` in `hello`. |
 | | `simulation/branching.py` | `apply_plan` also returns the vehicles diverted. |
 | | `agent/mock.py` | `_apply_lessons`: close lessons prune the plan set, looser ones reorder it. |
-| | `agent/nemotron.py` | `NimClient`: OpenAI-compatible chat completions over `httpx2`. |
-| | `api/mcp_tools.py`, `api/routes.py`, `models/*`, `providers.py`, `main.py`, `config.py` | The tools, endpoints, records, settings and wiring described above. |
-| UI | `components/EpisodePanel.tsx` (new), `plans/ResponsePlans.tsx`, `hooks/useCityStream.ts`, `lib/plans.ts`, `api/*`, `dev/replay.ts`, `styles.css` | The Autonomous agent panel, **Apply to live signals**, the applied/advisory footer, Analyze Response disabled while an episode is working, and the types in sync. |
+| | `agent/nemotron.py`, `learning/embeddings.py` | OpenAI-compatible NIM chat and optional `/embeddings` clients over the existing `httpx2`. A failed proposal is retried once with the validation errors fed back. |
+| | `agent/briefing.py` (new) | The analyst prompt and candidate rows both analysts share, so the agent layer no longer imports them from `api/mcp_tools.py`. The REST provider gets `PLAN_DESIGN`, the tool-free half. |
+| | `api/mcp_tools.py`, `api/routes.py`, `models/*`, `providers.py`, `main.py`, `config.py` | The tools, endpoints, records, settings and wiring described above, including transfer controls and the learning report. |
+| UI | `components/EpisodePanel.tsx` (new), `plans/ResponsePlans.tsx`, `hooks/useCityStream.ts`, `lib/plans.ts`, `api/*`, `dev/replay.ts`, `styles.css` | The Autonomous agent panel, **Apply to live signals**, the applied/advisory footer, collapsed Learning report, Analyze Response disabled while an episode is working, and the types in sync. |
 | Config and docs | `.env.example`, `requirements.txt` (`httpx2`, already a dependency of `mcp`), `.gitignore` (`memory/`), `CLAUDE.md`, `docs/architecture.md`, `docs/specs/scenario-engine-mcp.md`, this README | The safety rule now names its one gated exception everywhere. |
 
 ### What was and was not checked

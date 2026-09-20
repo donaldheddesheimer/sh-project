@@ -20,6 +20,7 @@ from app.models.domain import (
     TrafficMetrics,
     VehicleState,
 )
+from app.models.episode import MemoryMode
 
 
 class RunStatus(StrEnum):
@@ -99,6 +100,7 @@ class SpeedRequest(BaseModel):
 
 class DemoStartRequest(BaseModel):
     script: str = Field(description="A demo script id from simulation/scenarios/<scenario>/demos/*.json")
+    memory_mode: MemoryMode = Field("use", description="use recalled lessons, or ignore them for a control run")
 
 
 class ControlResponse(BaseModel):

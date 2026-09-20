@@ -1,7 +1,8 @@
 # Milestone 4: real input, a faster twin, a memory that transfers (parallel work plan)
 
-> **Status: planned. Nothing in this milestone is built or run.** This is a live plan, not a
-> historical record. The [README](../../README.md) is the source of truth for status (its
+> **Status: in progress.** Goal 3's agent-memory transfer scope is built but not run; its
+> auto-revert and per-responder EMS items remain planned, as do twin-engine and VSS. This is a
+> live plan, not a historical record. The [README](../../README.md) is the source of truth for status (its
 > "Next: milestone 4" table); each handoff's `## Result` records what was built. The format
 > follows [milestone 2](../milestone-2/MASTER.md), but that milestone's rules (file ownership,
 > "frozen" files, "no new test files, run things to verify") were for that effort and do not
@@ -27,7 +28,7 @@ tiny contract (below), and everything else is independent.
 | Branch | Handoff | In one line | Size |
 |---|---|---|---|
 | `feature/twin-engine` | [feature-twin-engine.md](feature-twin-engine.md) | `sumo.py` speed-up, corridor explained and improved, per-responder EMS numbers (twin side), `revert_response()`, live-safe pre-emption failure, slower live speed during analysis | 13 |
-| `feature/agent-memory` | [feature-agent-memory.md](feature-agent-memory.md) | auto-revert on scene clear, lesson trust checks, embedding recall, the learning report, per-responder scorecard, the REST `NemotronAgentProvider` | 13 |
+| `feature/agent-memory` | [feature-agent-memory.md](feature-agent-memory.md) | built, not run: lesson trust, embedding recall, learning report and REST `NemotronAgentProvider`; planned: auto-revert and per-responder scorecard | 13 |
 | `feature/vss-input` | [feature-vss-input.md](feature-vss-input.md) | `NvidiaSmartCityProvider` on the VSS MCP tools, map matching, mirroring incidents into the twin, cameras and incident UI, Oakland demo scripts | 13 |
 
 **Size** is a rough workload estimate (S = 1, M = 2, L = 3 points per task, listed in each

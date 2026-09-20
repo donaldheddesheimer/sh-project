@@ -74,6 +74,8 @@ Point the frontend at it (Vercel project -> Settings -> Environment Variables):
   VITE_API_BASE_URL=$URL
   VITE_WS_BASE_URL=${URL/https:/wss:}
 
-This service is billed while idle (see the flag notes in this script). To stop paying
-without deleting it:  gcloud run services update $SERVICE --region $REGION --min-instances 0
+Billed while idle by design, on the order of \$0.30/hour at us-central1 list prices.
+When the demo is over, either of:
+  pause   gcloud run services update $SERVICE --region $REGION --min-instances 0
+  remove  gcloud run services delete $SERVICE --region $REGION
 MSG

@@ -115,10 +115,16 @@ call. Unset, both variables fall back to the page's own origin, which is what lo
 
 What to know before relying on it:
 
-- **It bills while idle.** One always-on 4-vCPU instance is not in the free tier. Between
-  demos, `gcloud run services update <service> --region <region> --min-instances 0` stops
-  the charge without deleting the service; the next request then pays a cold start plus the
-  300 s warm-up. Delete the service to stop paying entirely.
+- **It bills while idle**, because keeping the twin running is the whole point. Budget by
+  the hour, not the month: 4 vCPU + 4 GiB with CPU always allocated is on the order of
+  **$0.30/hour** at us-central1 list prices, so a two-hour demo is well under a dollar, and
+  a new account's $300 free credit covers it. It is a monthly bill only if you leave it up
+  for a month. Between demos,
+  `gcloud run services update <service> --region <region> --min-instances 0` stops the
+  charge without deleting the service; the next request then pays a cold start plus the
+  300 s warm-up. `gcloud run services delete <service> --region <region>` stops it
+  entirely. Confirm the current rate on Google's pricing page before relying on the
+  figure.
 - **Lessons do not survive a restart.** `memory/` is container-local, and Cloud Run
   instances are replaced at will. Each new instance starts cold, so a "warm run" demo has
   to happen within one instance's life. A durable store (GCS or a volume mount) is not

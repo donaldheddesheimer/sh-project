@@ -1031,6 +1031,15 @@ docs/
   - *Branch start-up may still serialise on Windows.* Each `traci.connect` attempt runs under
     the module lock; if a refused loopback connect takes about a second there, parallel
     branches still wait on each other and the ~1 s saving shrinks. Not timed.
+- **A vehicle SUMO is teleporting is not counted while it is in transfer.** SUMO lifts a
+  vehicle that has been stuck longer than `--time-to-teleport` (300 s in both scenarios) out
+  of its lane and re-inserts it downstream; in between it is on no lane, so the twin leaves it
+  out of the live metrics, the map and the vehicle count until it comes back. A long incident
+  demo reaches this; a crash-free baseline does not teleport at all. Counting those records in
+  was a bug: TraCI answers `INVALID_DOUBLE_VALUE` (-2^30) for such a vehicle's speed, angle and
+  position, and a single one dragged the console's mean speed to millions of negative mph. The
+  records are now dropped as the subscription is read (`_read_vehicles` in
+  `simulation/sumo.py`); read from the code, not run.
 - The mock agent is rule-based: it proposes a fixed set of 9 plans (fewer when a close
   lesson prunes them) and recommends with a fixed rule (see
   [architecture.md](docs/architecture.md#analyze-response-pipeline)).

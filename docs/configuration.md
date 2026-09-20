@@ -39,6 +39,11 @@ Nemotron the startup team; an Anthropic key adds Claude. Open **Agent** and chan
 | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
 | Nemotron | `NVIDIA_API_KEY` | Analyst: `nvidia/nemotron-3-ultra-550b-a55b`; reviewer: `nvidia/nemotron-3.5-lightning-30b-a3b` |
 
+The large analyst model is slower and busier than the reviewer: one completion may take minutes,
+and the hosted endpoint answers 503 "Service temporarily overloaded" under load. `nemotron_timeout_s`
+(300 s) is the limit for a single completion, and a retryable status is retried three times with a
+growing pause; both are reviewed defaults in `config.py`, not environment settings.
+
 Only configured providers appear. A keyed NVIDIA deployment deliberately withholds Mock, so
 it cannot silently present a deterministic run as model-backed. The exact analyst and reviewer
 models are shown beside the selector. Changing the selector does not require editing `.env` or

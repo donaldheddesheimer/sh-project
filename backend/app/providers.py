@@ -102,7 +102,11 @@ def build_agent_provider(settings: Settings) -> AgentProvider:
     if not api_key:
         raise RuntimeError("the Nemotron REST provider requires an NVIDIA API key")
     return NemotronAgentProvider(
-        settings.nemotron_base_url, settings.nemotron_model, api_key, settings.scenario_max_candidates
+        settings.nemotron_base_url,
+        settings.nemotron_model,
+        api_key,
+        settings.scenario_max_candidates,
+        settings.nemotron_timeout_s,
     )
 
 
@@ -160,6 +164,7 @@ def build_episode_teams(
             settings.nemotron_base_url,
             settings.nemotron_reviewer_model,
             nvidia_key,
+            settings.nemotron_timeout_s,
             json_mode=True,
         )
         provider = NemotronAgentProvider(
@@ -167,6 +172,7 @@ def build_episode_teams(
             settings.nemotron_model,
             nvidia_key,
             settings.scenario_max_candidates,
+            settings.nemotron_timeout_s,
         )
         teams["nemotron"] = AgentTeam(
             analyst=PipelineAnalyst(

@@ -215,6 +215,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 
 - [docs/architecture.md](docs/architecture.md): current design, the Analyze Response and episode stage tables, the safety model.
 - [docs/specs/scenario-engine-mcp.md](docs/specs/scenario-engine-mcp.md): MCP tool contract and a client snippet.
+- [docs/mcp-curl.md](docs/mcp-curl.md): calling the MCP tools by hand (curl, PowerShell), with the refusals an agent sees.
 - [simulation/controllers/README.md](simulation/controllers/README.md): how pre-emption stays safe.
 - [docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md): the **current** plan for milestone 4
   (three parts, file ownership, the step-0 contract, decisions to confirm). The README's "Next:

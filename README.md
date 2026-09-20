@@ -8,7 +8,7 @@ rule-based mock offline) drives them, applies its choice to the live twin and le
 the result (see [the autonomous episode](#the-autonomous-self-learning-episode)).
 
 This repository has completed **milestone 2**, built **milestone 3** (the autonomous
-episode; it has not been run yet), and built two of milestone 4's three parts without running
+episode; only its cold mock run has been run, once, by a smoke test), and built two of milestone 4's three parts without running
 them (see [Next: milestone 4](#next-milestone-4)). It
 has a live SUMO digital twin of a 3×3 downtown grid and a FastAPI backend that streams city
 state over WebSocket. There is a React/MapLibre operations console: inject a collision,
@@ -17,8 +17,8 @@ in parallel SUMO branches. Those plans include signal timing, an EMS green corri
 diversion advisory. The console compares each plan against the baseline and recommends one.
 The **autonomous episode** runs that loop without clicks: a scripted crash, an agent that
 tests plans, applies the best one to the live twin, watches it and stores a lesson for the
-next incident. It is built but has not been run end to end yet (see
-[Review notes](#review-notes-the-episode-pass)). Everything runs on a laptop with no GPU. The
+next incident. Its cold mock run has completed once in a smoke test (see [Tests](#tests));
+the rest is unrun (see [Review notes](#review-notes-the-episode-pass)). Everything runs on a laptop with no GPU. The
 NVIDIA Smart City input is implemented against the published VSS 3.2 MCP contract, with a
 simulation-time replay client for development; neither client has been run here.
 
@@ -70,7 +70,7 @@ Other commands:
 
 | | |
 |---|---|
-| `make test` | backend test suite (24 tests, real SUMO processes; see [Tests](#tests) for timings and what has never been run) |
+| `make test` | backend test suite (24 tests, real SUMO processes; see [Tests](#tests) for timings and what is not covered) |
 | `make build` | type-check and production-build the UI |
 | http://localhost:5173/?fixture=scenario | Analyze Response replays a recorded run (synthetic numbers) instead of calling `POST /api/scenarios/run`; `?fixture=scenario-failed` replays the failure path. Only the analysis call is replaced: the backend must still be running and a collision active, because the map and the button's prerequisites come from the live stream |
 | `make network` | regenerate the SUMO network and demand from their build scripts |
@@ -83,9 +83,10 @@ Other commands:
 ## Tests
 
 `backend/tests/` holds 24 tests: 19 from earlier milestones and five demo-readiness tests added
-afterwards. The 19 older ones take 20–40 s. **The five new ones are written and have never been
-run**: the agent that wrote them may not run tests (CLAUDE.md hard rule 1), so the first run is
-yours. Each is written so that a failure means a bug in the app and not in the test; read the
+afterwards. The 19 older ones take 20–40 s. **The five new ones passed on their first run
+(2026-09-19, Windows, Python 3.11.9), which was made once at the user's request**; agents still
+do not run tests unasked (CLAUDE.md hard rule 1). The 19 older ones were not re-run then. Each
+new test is written so that a failure means a bug in the app and not in the test; read the
 failure message before touching the test.
 
 | Test | Needs SUMO | What it shows |
@@ -97,10 +98,17 @@ failure message before touching the test.
 | `test_demo_smoke.py::test_autonomous_episode_runs_end_to_end_with_the_mock` | yes, whole app | `crash-ahead` runs to a completed episode: plan applied, lesson stored in memory |
 
 The two smoke tests each boot their own city and their own memory, and pin every setting a `.env`
-could change. Each takes about a minute (an estimate, not a measurement), and they wait up to 5–7
+could change. Measured on that first run: the two no-SUMO tests 0.2 s together, the snapshot test
+4 s, the Analyze Response smoke test 23 s and the episode smoke test 54 s. They wait up to 5–7
 minutes before failing, so a slow machine is not a failure. When one times out, its message shows
 the last run or episode state. Run one with
 `.venv\Scripts\python.exe -m pytest -q tests/test_demo_smoke.py -k episode` (from `backend`).
+
+What the episode smoke test does and does not show. It is the first time the autonomous episode
+has run end to end: a cold `crash-ahead` with the mock analyst completed, the agent applied a
+plan, and a lesson file was written. It ran at 8× with a 300 s analysis horizon and a 120 s
+monitor window, not the walkthrough's 4× and 600 s. It asserts no plan, delay or verdict beyond
+"a valid verdict", so it says the loop works and nothing about how well it responds.
 
 Not covered: a warm second episode (recall), the two-crash rule, Oakland, the MCP tools,
 Nemotron and pre-emption. Tests are written only when the user asks for them.
@@ -235,7 +243,7 @@ make frontend
 
 ## Demo walkthrough: autonomous episode
 
-Built but not yet run end to end, so the timings below are estimates. Use the
+Only a smoke test at different settings has run it (see [Tests](#tests)), so the timings below are still estimates. Use the
 **Autonomous agent** panel at the top of the side column, or the API.
 
 1. For a cold run, clear the memory: the panel's **clear**, or `DELETE /api/memory`.
@@ -262,8 +270,10 @@ analysis rounds of 10–16 s each plus the 600 s window, about 150 s), so use 8�
 ## The autonomous, self-learning episode
 
 This is milestone 3 and the single place that describes it. It is **built
-but has not been run end to end**: no run has exercised it yet. A smoke test for it is written
-but has not been run either (see [Tests](#tests)). Only build checks were run (see
+but has been run end to end only once**: a smoke test ran a cold `crash-ahead` with the mock
+analyst to a completed episode (see [Tests](#tests) for what that does and does not show).
+Nothing else about it has run: the UI, warm recall, `varied-crash`, `crash-already`,
+`double-crash`, Nemotron. Beyond that test, only build checks were run (see
 [Review notes](#review-notes-the-episode-pass)).
 
 **Status at a glance**
@@ -926,8 +936,9 @@ docs/
 **Parts 1 and 3 are built and merged; neither has been run or measured. Agent-memory transfer
 (part 2) is built but not run.**
 
-**First, milestone 3 has to be run.** It is built, not yet run end to end. What remains is to
-run it (the [review notes](#review-notes-the-episode-pass) list what to try, in order), to run
+**First, the rest of milestone 3 has to be run.** Its cold mock run has passed one smoke test
+(see [Tests](#tests)). What remains is to run the rest of it (the
+[review notes](#review-notes-the-episode-pass) list what to try, in order), to run
 it with Nemotron once a model id is chosen, and to measure the learning (see the task list).
 
 Milestone 4 takes what milestones 2 and 3 deferred: the NVIDIA Smart City input that was the

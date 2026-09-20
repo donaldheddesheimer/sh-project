@@ -5,7 +5,8 @@ backend and a React/MapLibre console. When an incident hits, candidate responses
 timing, EMS green corridor, diversion) are **simulated in parallel SUMO branches before
 anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged. Milestone 3,
 the autonomous, self-learning episode (agent responds, applies its plan to the live twin,
-measures it, stores a lesson), is built but not yet run end to end. Milestone 4's faster twin
+measures it, stores a lesson), is built and has run end to end once (a cold mock run, in a
+smoke test; README "Tests"). Milestone 4's faster twin
 and NVIDIA Smart City input are built and merged, neither run nor measured; its transferable
 memory remains planned in [docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md).
 Read [README.md](README.md) for the demos and the episode (its "The autonomous, self-learning
@@ -44,8 +45,8 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Task | POSIX (`make`) | Windows |
 |---|---|---|
 | Set up | `make setup` | `python -m venv backend\.venv`, then `backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt`, then `npm --prefix frontend install` |
-| Backend tests (24, real SUMO; the 5 demo-readiness ones are written and unrun). **Reference only: never run (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
-| One test. **Reference only: never run (Hard rules)** | `cd backend && .venv/bin/pytest -q -k <name>` | `.venv\Scripts\python.exe -m pytest -q -k <name>` (in `backend`) |
+| Backend tests (24, real SUMO; the 5 demo-readiness ones passed once, run by the user's request). **Reference only: never run unasked (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
+| One test. **Reference only: never run unasked (Hard rules)** | `cd backend && .venv/bin/pytest -q -k <name>` | `.venv\Scripts\python.exe -m pytest -q -k <name>` (in `backend`) |
 | Backend on :8000 | `make backend` | `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` |
 | Frontend on :5173 | `make frontend` | `npm --prefix frontend run dev` |
 | Frontend check | `make build` | `npm --prefix frontend run lint` and `npm --prefix frontend run build` (both clean today; a >500 kB chunk warning is expected) |
@@ -195,8 +196,8 @@ venv directly (this is what works in PowerShell or Git Bash):
   candidate order, never rank; the baseline stays neutral.
 - **Tests.** Never run them, and write them only when asked (Hard rules). The team chose demo
   over coverage (recorded in `docs/milestone-2/MASTER.md`); the five demo-readiness tests
-  (`test_demo_setup.py`, `test_demo_smoke.py`, one in `test_simulation.py`; README "Tests") are
-  written and unrun. Verify by reading the code and report what was not run. Known gaps:
+  (`test_demo_setup.py`, `test_demo_smoke.py`, one in `test_simulation.py`; README "Tests")
+  passed on one run the user asked for. Verify by reading the code and report what was not run. Known gaps:
   pre-emption, reroute, the MCP tools, Nemotron, warm recall and the two-crash rule have no
   tests; `ScenarioService` and the episode are covered only by the two smoke tests. The suite
   is in `backend/tests/`; the `make_sim` fixture in `tests/conftest.py` starts real SUMO

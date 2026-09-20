@@ -4,11 +4,16 @@ import type { AnalyzeState } from '../lib/plans'
 import { Icon } from './Icon'
 
 const SPEEDS = [1, 2, 4, 8, 16]
+const MAPS = [
+  { id: 'downtown_grid', name: '3×3 Grid' },
+  { id: 'pittsburgh_oakland', name: 'Pittsburgh' },
+]
 
 type Action = 'start' | 'pause' | 'reset' | 'inject' | 'dispatch'
 
 interface Props {
   networkName: string | null
+  mapId: string | null
   simTime: number | null
   status: StatusInfo | null
   connected: boolean
@@ -18,12 +23,26 @@ interface Props {
   fixture: boolean
   onAction: (action: Action) => void
   onSpeed: (speed: number) => void
+  onMap: (mapId: string) => void
   onAnalyze: () => void
 }
 
 export function TopBar(props: Props) {
-  const { networkName, simTime, status, connected, hasIncident, busy, analyze, fixture, onAction, onSpeed, onAnalyze } =
-    props
+  const {
+    networkName,
+    mapId,
+    simTime,
+    status,
+    connected,
+    hasIncident,
+    busy,
+    analyze,
+    fixture,
+    onAction,
+    onSpeed,
+    onMap,
+    onAnalyze,
+  } = props
   const run = status?.status ?? 'starting'
   const live = connected && run !== 'starting' && run !== 'error'
   const running = run === 'running'
@@ -58,6 +77,20 @@ export function TopBar(props: Props) {
       )}
 
       <div className="sim-clock">
+        <div className="topbar-stack map-stack">
+          <label className="topbar-caption" htmlFor="map-select">Map</label>
+          <select
+            id="map-select"
+            className="map-select"
+            value={mapId ?? ''}
+            disabled={!connected || !mapId || !!busy}
+            title="Switching maps starts a fresh simulation"
+            onChange={(event) => onMap(event.target.value)}
+          >
+            {!mapId && <option value="">Loading…</option>}
+            {MAPS.map((map) => <option key={map.id} value={map.id}>{map.name}</option>)}
+          </select>
+        </div>
         <div className="topbar-stack">
           <span className="topbar-caption">Network state</span>
           <div className="topbar-row">
@@ -125,7 +158,7 @@ export function TopBar(props: Props) {
             <button
               className="btn"
               disabled={!live || !hasIncident || !!busy}
-              title={hasIncident ? 'Send a responder from Fire Station 3 to the active incident' : 'No active incident'}
+              title={hasIncident ? 'Send a responder to the active incident' : 'No active incident'}
               onClick={() => onAction('dispatch')}
             >
               <Icon name="medical" /> Dispatch EMS

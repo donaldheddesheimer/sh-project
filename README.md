@@ -10,9 +10,9 @@ the result (see [the autonomous episode](#the-autonomous-self-learning-episode))
 This repository has completed **milestone 2**, built **milestone 3** (the autonomous
 episode; only its cold mock run has been run, once, by a smoke test), and built two of
 milestone 4's three parts without running them (see [Next: milestone 4](#next-milestone-4)). It
-has a live SUMO digital twin of a 3×3 downtown grid and a FastAPI backend that streams city
-state over WebSocket. There is a React/MapLibre operations console: inject a collision,
-watch the queue spill back, then click **Analyze Response** to test up to 9 candidate plans
+has live SUMO digital twins of a 3×3 downtown grid and Oakland, Pittsburgh, with a FastAPI
+backend that streams city state over WebSocket. There is a React/MapLibre operations console:
+inject a collision, watch the queue spill back, then click **Analyze Response** to test up to 9 candidate plans
 in parallel SUMO branches. Those plans include signal timing, an EMS green corridor and a
 diversion advisory. The console compares each plan against the baseline and recommends one.
 The **autonomous episode** runs that loop after a scripted or operator-injected crash: an
@@ -284,9 +284,12 @@ its phase, queues and speed.
 
 ### Console layout
 
-The command bar groups live state, simulation speed and incident actions. The map stays
-central, with incident details and KPIs on the right and trends or scenario comparisons in
-the lower dock. **Analyze Response** brings the Response plans panel into view. The
+The command bar switches between the **3×3 Grid** and **Pittsburgh** and groups live state,
+simulation speed and incident actions. Switching maps starts a fresh live simulation, so
+map-local incidents, analysis runs, episodes, trends and selections are cleared; durable
+agent memory remains available. The map stays central, with incident details and KPIs on the
+right and trends or scenario comparisons in the lower dock. **Analyze Response** brings the
+Response plans panel into view. The
 Autonomous agent panel starts collapsed and opens when an episode appears. On narrow screens,
 the speed control becomes a compact selector so all incident actions stay visible.
 
@@ -298,7 +301,9 @@ the base stylesheet.
 
 A second scenario, `pittsburgh_oakland`, runs the same console and pipeline on a real street
 layout: central Oakland around Fifth and Forbes Avenues, with 332 road links and 33 signals.
-The downtown grid stays the default, and the tests always use it.
+The downtown grid stays the default, and the tests always use it. Use the **Map** selector in
+the running console to switch cities without restarting either server. `SCENARIO_DIR` and the
+commands below only choose which map is active at startup.
 
 ```bash
 make backend-oakland   # or SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland in .env
@@ -902,6 +907,7 @@ backend/app/
   models/episode.py     episode records: Episode, Implementation, Scorecard, Lesson, Experience
   models/api.py         CityState, requests/responses, ops events
   services/city.py      CityService: frames → CityState, commands, ops log
+  services/maps.py      runtime map switch: replace the active service graph, keep WebSocket clients
   services/scenarios.py ScenarioService: the Analyze Response pipeline (REST and MCP drivers)
   simulation/interface.py  TrafficSimulation contract
   simulation/sumo.py    SUMO/TraCI implementation (collisions, EMS, snapshots, metrics)
@@ -968,6 +974,7 @@ docs/
 | POST | `/api/incidents/{id}/clear` | clear the scene and reopen lanes |
 | POST | `/api/simulation/start` \| `pause` \| `reset` | run control |
 | POST | `/api/simulation/speed` | `{"multiplier": 8}` |
+| POST | `/api/simulation/map` | `{"map_id":"downtown_grid"}` or `{"map_id":"pittsburgh_oakland"}` replaces the live twin and returns its `NetworkGeometry` |
 | POST | `/api/emergency/dispatch` | send EMS to the latest incident |
 | GET | `/api/signals/{intersection}` | active signal program |
 | GET | `/api/cameras`, `/api/events` | camera registry, ops log |
@@ -983,7 +990,7 @@ docs/
 | GET | `/api/episodes`, `/api/episodes/{id}` | recent episodes (newest first, last 20), one episode |
 | GET, DELETE | `/api/memory` | remembered episodes and the playbook; DELETE forgets them (a cold run) |
 | GET | `/api/learning/report` | durable episodes plus same-script warm-versus-control comparisons and the configured transfer status |
-| WS | `/ws/state` | `hello` (state, events, trend, latest run, latest episode) then `state` / `status` / `event` / `scenario` / `episode` messages |
+| WS | `/ws/state` | `hello` (network geometry, state, events, trend, latest run, latest episode) then `state` / `status` / `event` / `scenario` / `episode` messages; a new `hello` announces a runtime map switch |
 | MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md)) |
 
 ## Current limitations
@@ -1141,8 +1148,9 @@ the previous pass, plus five fixes found while reading the code. The single-cras
   returned HTTP 200 for the Claude and Nemotron credentials in the local `.env`, and each
   configured model id appeared in its provider's catalog. No secret value was printed or
   added to Git. These checks made no inference call.
-- **Not run in this branch:** the operator-controlled flow, runtime provider selection,
-  Claude/Nemotron inference, the single-container deployment and the updated panel. The cold
+- **Not run in this branch:** runtime switching between the grid and Pittsburgh, the
+  operator-controlled flow, runtime provider selection, Claude/Nemotron inference, the
+  single-container deployment and the updated panel. The cold
   mock smoke run documented under [Tests](#tests) predates this work. CLAUDE.md hard rule 1
   prohibits agents from running tests, scratch scripts or the app without a user request, so
   the existing suite was not re-run.

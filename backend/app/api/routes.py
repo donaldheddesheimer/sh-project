@@ -18,6 +18,7 @@ from app.models.api import (
     DispatchResponse,
     InjectIncidentRequest,
     InjectIncidentResponse,
+    MapSelectionRequest,
     OpsEvent,
     SpeedRequest,
 )
@@ -25,6 +26,7 @@ from app.models.domain import Incident, NetworkGeometry, SignalProgram
 from app.models.episode import DemoInfo, Episode, Implementation, LearningReport
 from app.models.scenario import ScenarioRun, ScenarioRunRequest
 from app.services.city import CityService, Conflict, NotReady
+from app.services.maps import UnknownMap
 from app.services.scenarios import ScenarioService
 from app.smart_city.base import Camera, SmartCityStatus
 
@@ -33,23 +35,23 @@ ws_router = APIRouter()
 
 
 def get_city(request: Request) -> CityService:
-    return request.app.state.city
+    return request.app.state.map_manager.services.city
 
 
 def get_scenarios(request: Request) -> ScenarioService:
-    return request.app.state.scenarios
+    return request.app.state.map_manager.services.scenarios
 
 
 def get_implementor(request: Request) -> Implementor:
-    return request.app.state.implementor
+    return request.app.state.map_manager.services.implementor
 
 
 def get_episodes(request: Request) -> EpisodeService:
-    return request.app.state.episodes
+    return request.app.state.map_manager.services.episodes
 
 
 def get_memory(request: Request) -> ExperienceStore:
-    return request.app.state.memory
+    return request.app.state.map_manager.services.memory
 
 
 City = Annotated[CityService, Depends(get_city)]
@@ -140,6 +142,15 @@ async def reset(city: City) -> ControlResponse:
 async def speed(city: City, request: SpeedRequest) -> ControlResponse:
     await city.set_speed(request.multiplier)
     return _control(city)
+
+
+@router.post("/simulation/map", response_model=NetworkGeometry)
+async def select_map(request: Request, selection: MapSelectionRequest) -> NetworkGeometry:
+    """Replace the live twin with one of the bundled maps; all map-local state starts fresh."""
+    try:
+        return await request.app.state.map_manager.select(selection.map_id)
+    except UnknownMap as exc:
+        raise HTTPException(404, f"unknown map {exc.args[0]}") from exc
 
 
 @router.post("/emergency/dispatch", response_model=DispatchResponse, status_code=202)
@@ -283,5 +294,5 @@ async def events(city: City, limit: int = 50) -> list[OpsEvent]:
 
 @ws_router.websocket("/ws/state")
 async def state_stream(ws: WebSocket) -> None:
-    city: CityService = ws.app.state.city
+    city: CityService = ws.app.state.map_manager.services.city
     await city.hub.serve(ws, hello=city.hello_message())

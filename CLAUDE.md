@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-Traffic operations center: a live SUMO digital twin (3×3 downtown grid) behind a FastAPI
-backend and a React/MapLibre console. When an incident hits, candidate responses (signal
+Traffic operations center: runtime-selectable SUMO digital twins (3×3 downtown grid and
+Oakland, Pittsburgh) behind a FastAPI backend and a React/MapLibre console. When an incident hits, candidate responses (signal
 timing, EMS green corridor, diversion) are **simulated in parallel SUMO branches before
 anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged. Milestone 3,
 the autonomous, self-learning episode (agent responds, applies its plan to the live twin,
@@ -50,7 +50,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Backend on :8000 | `make backend` | `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` |
 | Frontend on :5173 | `make frontend` | `npm --prefix frontend run dev` |
 | Frontend check | `make build` | `npm --prefix frontend run lint` and `npm --prefix frontend run build` (both clean today; a >500 kB chunk warning is expected) |
-| Oakland, Pittsburgh instead of the grid | `make backend-oakland` (still :8000) | set `SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland` in `.env`, then run the backend as usual |
+| Start on Oakland, Pittsburgh instead of the grid | `make backend-oakland` (still :8000) | set `SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland` in `.env`, then run the backend as usual; the console selector switches at runtime |
 | Rebuild Oakland net/demand/timing | `make network-oakland` | run `simulation/networks/pittsburgh_oakland/build_network.py` with the venv python |
 | Regenerate network/demand | `make network` | run `simulation/networks/grid3x3/build_network.py` then `simulation/scenarios/downtown_grid/build_demand.py` with the venv python |
 
@@ -76,6 +76,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | MCP tools | [backend/app/api/mcp_tools.py](backend/app/api/mcp_tools.py) |
 | The analyst prompt and candidate rows both analysts share | [backend/app/agent/briefing.py](backend/app/agent/briefing.py) |
 | Live orchestration, ops log, WebSocket frames | [backend/app/services/city.py](backend/app/services/city.py) |
+| Runtime switching between the bundled maps | [backend/app/services/maps.py](backend/app/services/maps.py) |
 | Analyze Response pipeline (`open → capture → evaluate → finish/fail`) | [backend/app/services/scenarios.py](backend/app/services/scenarios.py) |
 | One candidate branch in a fresh SUMO process | [backend/app/simulation/branching.py](backend/app/simulation/branching.py) |
 | TraCI behavior: collisions, EMS, snapshots, rubbernecking | [backend/app/simulation/sumo.py](backend/app/simulation/sumo.py) (contract: `interface.py`) |

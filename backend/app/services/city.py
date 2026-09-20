@@ -181,12 +181,13 @@ class CityService:
     def hello_message(self) -> str:
         events = ",".join(e.model_dump_json() for e in self.events.recent())
         state = self._state.model_dump_json() if self._state else "null"
+        network = self.geometry.model_dump_json()
         trend = ",".join(s.model_dump_json() for s in self._trend)
         scenario = self.latest_scenario.model_dump_json() if self.latest_scenario else "null"
         episode = self.latest_episode.model_dump_json() if self.latest_episode else "null"
         return envelope(
             "hello",
-            f'{{"status":{self.status_json()},"state":{state},"events":[{events}],"history":[{trend}],'
+            f'{{"status":{self.status_json()},"network":{network},"state":{state},"events":[{events}],"history":[{trend}],'
             f'"scenario":{scenario},"episode":{episode}}}',
         )
 

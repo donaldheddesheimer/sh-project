@@ -67,7 +67,7 @@ live twin ─► detect ─► trigger ─► capture ─► propose ─► vali
 | 5 | Validate | `validation_findings` → `RuleBasedSafetyValidator` | each plan and the captured programs | `violations[]`; a plan with any is `rejected` and never simulated |
 | 6 | Simulate | `branching.run_branch` on a 4-worker pool | snapshot, plan, probe, horizon | `SimulationCandidate`: `completed` with horizon `TrafficMetrics`, a 30 s `timeline`, `notes` and `wall_time_s`, or `failed` with the error in `notes`. Status `simulating` |
 | 7 | Recommend | `AgentProvider.recommend` | the context and every candidate | `Recommendation {candidate_id, summary, rationale[]}` naming a completed candidate (else the baseline). Status `completed`, a summary in the ops log, the snapshot file deleted |
-| 8 | Present | `frontend/src/components/plans/` | `scenario` messages and `hello.data.scenario` | plan cards with deltas against the baseline, rejection reasons, a KPI comparison, a horizon chart, map overlays. Advisory until applied |
+| 8 | Present | `frontend/src/components/plans/` | `scenario` messages and `hello.data.scenario` | plan cards with deltas against the baseline, rejection reasons, a KPI comparison, a horizon chart, map overlays. Advisory until applied. While stages 2–7 are in flight the map also carries the cosmetic thinking overlay (`frontend/src/lib/thinkingRoutes.ts`), whose detours are traced from the map geometry alone and never from a candidate: decoration, not analysis |
 
 **A branch** (stage 6) is a brand-new SUMO process: restore the snapshot, dispatch the EMS
 probe (before the plan, so every branch sends it at the same moment), apply the timing

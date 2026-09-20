@@ -353,6 +353,11 @@ body {
   color: var(--muted);
 }
 
+.think-hud {
+  top: 58px;
+  left: 14px;
+}
+
 .incident-marker {
   cursor: pointer;
 }
@@ -860,6 +865,10 @@ body {
     text-overflow: ellipsis;
   }
 
+  .think-hud-note {
+    display: none;
+  }
+
   .dock-tabs {
     overflow-x: auto;
     padding-right: 0;
@@ -898,10 +907,22 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* CityMap also drops the flowing gradient and the route particles, drawing the routes once. */
   .run-running .dot,
   .live-dot[data-live='true'],
-  .incident-marker .pulse {
+  .incident-marker .pulse,
+  .think-ring span,
+  .think-dots span {
     animation: none;
+  }
+
+  /* One still ring instead of three that would stack into a solid disc. */
+  .think-ring span:nth-child(n + 2) {
+    display: none;
+  }
+
+  .think-ring span {
+    opacity: 0.55;
   }
 
   .side {

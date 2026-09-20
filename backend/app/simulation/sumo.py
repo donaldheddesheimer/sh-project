@@ -31,6 +31,7 @@ from app.models.domain import (
     Disruption,
     EmergencyCorridor,
     EmergencyDispatch,
+    EmergencyResponse,
     EmergencyStatus,
     EmergencyVehicleState,
     IncidentType,
@@ -51,7 +52,13 @@ from app.models.domain import (
 from app.simulation.interface import TrafficSimulation
 from app.simulation.metrics import MetricsCollector, StepObservation
 from app.simulation.network import PhaseKind, RoadNetwork, phase_kind
-from app.simulation.preemption import PreemptionController, ResponderApproach, SetPhase, TlsObservation
+from app.simulation.preemption import (
+    PreemptionController,
+    ResponderApproach,
+    SetPhase,
+    TlsObservation,
+    check_transition,
+)
 from app.simulation.reroute import DiversionAdvisory
 from app.simulation.scenario import Scenario
 
@@ -176,7 +183,9 @@ class SumoSimulation(TrafficSimulation):
         self._rubbernecking: set[str] = set()
         self._pending_offsets: dict[str, float] = {}
         self._preemption: PreemptionController | None = None
+        self._preemption_notes: list[str] = []  # what a corridor did before it was dropped (response_notes)
         self._diversion: DiversionAdvisory | None = None
+        self._base_program_ids: dict[str, str] = {}  # intersection -> program running before the first policy
         self._programs: dict[tuple[str, str], SignalProgram] = {}  # active program per (tls, program id)
         self._custom_programs: dict[tuple[str, str], list[tuple[float, str]]] = {}  # installed at runtime
         self._seq = itertools.count(1)
@@ -269,7 +278,8 @@ class SumoSimulation(TrafficSimulation):
                 delay = wall_start + (i + 1) * self._step_length / speed_multiplier - time.monotonic()
                 if delay > 0:
                     time.sleep(delay)
-        return self._collector.end_window(self._time, self._realised_emergency_eta(start_time))
+        responses = self._emergency_responses(start_time)
+        return self._collector.end_window(self._time, _aggregate_response(responses), responses)
 
     # --------------------------------------------------------- per-step work
 
@@ -607,6 +617,9 @@ class SumoSimulation(TrafficSimulation):
 
         program_id = program.program_id
         if policy.phase_durations:
+            # the first policy's program is the one revert_response() goes back to; a second policy on the
+            # same intersection replaces a program this simulation installed, not the intersection's base
+            self._base_program_ids.setdefault(policy.intersection_id, program.program_id)
             phase_index = c.trafficlight.getPhase(tls_id)
             elapsed = program.phases[phase_index].duration - (c.trafficlight.getNextSwitch(tls_id) - self._time)
             phases = [
@@ -758,16 +771,25 @@ class SumoSimulation(TrafficSimulation):
                 total += EXPECTED_SIGNAL_WAIT_S
         return total
 
-    def _realised_emergency_eta(self, window_start: float) -> float | None:
-        """Response time of the responders that matter to this window: the last one to reach its scene.
+    def _emergency_responses(self, window_start: float) -> list[EmergencyResponse]:
+        """One entry per responder that matters to this window, in dispatch order.
 
-        Responders that reached their scene before the window began are not counted. None if none did, or if
-        any responder still has not arrived (with one responder this is simply its response time).
+        A responder that reached its scene before the window began did not respond *during* it and is left
+        out. Each one's response time starts at the later of the window and its own dispatch, so a unit sent
+        mid-window is not charged for the time before it existed. ``_aggregate_response`` reduces this list
+        to ``TrafficMetrics.emergency_vehicle_eta``, so the two can never disagree.
         """
-        relevant = [d for d in self._dispatches.values() if d.arrived_at is None or d.arrived_at >= window_start]
-        if not relevant or any(d.arrived_at is None for d in relevant):
-            return None
-        return max(d.arrived_at - max(window_start, d.dispatched_at) for d in relevant)
+        return [
+            EmergencyResponse(
+                vehicle_id=d.id,
+                destination_segment=d.destination_segment,
+                dispatched_at=d.dispatched_at,
+                arrived_at=d.arrived_at,
+                response_s=None if d.arrived_at is None else d.arrived_at - max(window_start, d.dispatched_at),
+            )
+            for d in self._dispatches.values()
+            if d.arrived_at is None or d.arrived_at >= window_start
+        ]
 
     def _emergency_state(self, d: EmergencyDispatch) -> EmergencyVehicleState:
         r = self._veh.get(d.id)
@@ -795,6 +817,7 @@ class SumoSimulation(TrafficSimulation):
         for intersection_id in corridor.intersection_ids:
             self._tls_id(intersection_id)  # raises for an unknown or unsignalized intersection
         self._preemption = PreemptionController(corridor, self._step_length)
+        self._preemption_notes = []  # the replaced corridor's record goes with it
 
     def reroute_vehicles(self, action: RerouteAction) -> int:
         for segment_id in action.avoid_segment_ids:
@@ -805,9 +828,83 @@ class SumoSimulation(TrafficSimulation):
         return self._diversion.activate(action, list(self._veh))
 
     def response_notes(self) -> list[str]:
-        notes = self._preemption.notes() if self._preemption is not None else []
+        notes = self._preemption.notes() if self._preemption is not None else list(self._preemption_notes)
         if self._diversion is not None:
             notes += self._diversion.notes()
+        return notes
+
+    # ------------------------------------------------------------------ reverting
+
+    def revert_response(self) -> list[str]:
+        """Take every response back off this simulation (see ``TrafficSimulation.revert_response``)."""
+        notes = self._revert_signals()
+        if self._pending_offsets:
+            # an offset that never found a green to stretch has changed nothing yet, so dropping it is the
+            # whole revert; one already applied lives in the signal's clock and cannot be undone safely
+            n = len(self._pending_offsets)
+            self._pending_offsets = {}
+            notes.append(f"{n} offset shift{'' if n == 1 else 's'} dropped before taking effect")
+        if self._preemption is not None:
+            self._drop_preemption()
+            notes.append("EMS corridor disabled; each signal carries on with its own program")
+        if self._diversion is not None and self._diversion.active:
+            cleared = self._diversion.deactivate(self._veh)
+            notes.append(
+                f"diversion advisory stopped; travel-time overrides cleared on {cleared} "
+                f"vehicle{'' if cleared == 1 else 's'} (routes already changed are left alone)"
+            )
+        return notes
+
+    def _drop_preemption(self) -> None:
+        """Abandon the corridor, keeping its record for ``response_notes``.
+
+        A service in progress is simply forgotten, which is safe: the last command the controller can have
+        sent is either an extension of a running green (it changes no light and the green now ends into the
+        program's own yellow) or a jump taken from a fully served all-red. Nothing is left pending that
+        could skip a clearance - the same position a timing policy applied mid-service leaves.
+        """
+        if self._preemption is None:
+            return
+        self._preemption_notes = self._preemption.notes()
+        self._preemption = None
+
+    def _revert_signals(self) -> list[str]:
+        """Put every intersection a timing policy changed back on the program it was running before.
+
+        The running phase keeps its index, its state and its remaining time, so no light on the street
+        changes at this step and the clearance that follows is the base program's own. An intersection now
+        running a program this simulation did not install is left alone: mapping a phase index into an
+        unknown program is the kind of guess ``check_transition`` exists to catch.
+        """
+        notes: list[str] = []
+        c = self.conn.trafficlight
+        for intersection_id, base_id in sorted(self._base_program_ids.items()):
+            tls_id = self._tls_id(intersection_id)
+            current_id = c.getProgram(tls_id)
+            if current_id == base_id:
+                self._base_program_ids.pop(intersection_id)
+                continue  # already back: a restore, or a second revert
+            if (tls_id, current_id) not in self._custom_programs:
+                notes.append(f"{intersection_id}: left on program {current_id}, which this simulation did not install")
+                self._base_program_ids.pop(intersection_id)
+                continue
+            base = next((lg for lg in c.getAllProgramLogics(tls_id) if lg.programID == base_id), None)
+            phase_index = c.getPhase(tls_id)
+            if base is None or phase_index >= len(base.phases):
+                notes.append(f"{intersection_id}: left on program {current_id}; program {base_id} does not match it")
+                self._base_program_ids.pop(intersection_id)
+                continue
+            # a policy only ever re-times the base program's phases, so this is the same state: asserted, not assumed
+            check_transition(c.getRedYellowGreenState(tls_id), base.phases[phase_index].state)
+            remaining = max(0.0, c.getNextSwitch(tls_id) - self._time)
+            c.setProgram(tls_id, base_id)  # switches to wherever that program's own clock stood...
+            c.setPhase(tls_id, phase_index)  # ...so put the running phase back, with its progress
+            c.setPhaseDuration(tls_id, remaining)
+            self._base_program_ids.pop(intersection_id)
+            notes.append(
+                f"{intersection_id}: timing reverted to program {base_id} "
+                f"(phase {phase_index}, {remaining:.0f}s left)"
+            )
         return notes
 
     def _vehicle_type(self, vehicle_id: str) -> str | None:
@@ -858,7 +955,9 @@ class SumoSimulation(TrafficSimulation):
         self._rubbernecking = set()
         self._pending_offsets = {}
         self._preemption = None
+        self._preemption_notes = []
         self._diversion = None
+        self._base_program_ids = {}  # the snapshot restores each signal to the program it was running
         self._programs = {}
         self._collector.reset()
         # ids stay unique: new EMS units and policy programs number on from the restored ones
@@ -868,6 +967,17 @@ class SumoSimulation(TrafficSimulation):
         self._subscribe_all()
         self._read_state()
         self._apply_rubbernecking()  # per-vehicle speed overrides are not part of SUMO's saved state
+
+
+def _aggregate_response(responses: list[EmergencyResponse]) -> float | None:
+    """The window's single EMS figure: the last responder to reach its scene.
+
+    None if no responder mattered to the window, or if any of them still has not arrived (with one
+    responder this is simply its response time).
+    """
+    if not responses or any(r.response_s is None for r in responses):
+        return None
+    return max(r.response_s for r in responses)
 
 
 def _congestion_level(value: float) -> CongestionLevel:

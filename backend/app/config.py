@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     # --- NVIDIA integration (unused by the mock providers) ------------------
     nvidia_api_key: SecretStr | None = None
     nvidia_va_mcp_url: str | None = None  # VSS Video Analytics MCP server
+    vss_replay_file: Path | None = None  # development-only VSS-shaped incident timeline
+    vss_poll_s: float = 5.0
+    vss_match_max_dist_m: float = 40.0
+    vss_require_vlm_confirmation: bool = True
+    vss_default_severity: Literal["minor", "major", "critical"] = "major"
     nemotron_base_url: str = "https://integrate.api.nvidia.com/v1"  # NIM, OpenAI-compatible
     nemotron_model: str | None = None
 
@@ -78,6 +83,11 @@ class Settings(BaseSettings):
     def _from_repo_root(cls, value: Path) -> Path:
         # `make backend` runs from backend/, so a cwd-relative SCENARIO_DIR would depend on how it was started
         return value if value.is_absolute() else REPO_ROOT / value
+
+    @field_validator("vss_replay_file")
+    @classmethod
+    def _replay_from_repo_root(cls, value: Path | None) -> Path | None:
+        return value if value is None or value.is_absolute() else REPO_ROOT / value
 
     @field_validator("cors_origins", mode="before")
     @classmethod

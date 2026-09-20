@@ -1,0 +1,9 @@
+{
+  "id": "crash-already",
+  "name": "Crash already happened",
+  "description": "The console opens with a queue forming behind a Forbes Avenue eastbound collision (714429624#0, three lanes); the crash occurs inside the 300 s warm-up.",
+  "crashes": [
+    { "at_sim_s": 240 }
+  ],
+  "monitor_s": 600
+}

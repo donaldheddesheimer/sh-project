@@ -2,7 +2,7 @@ import type { FeatureCollection, Geometry } from 'geojson'
 import { GeoJSONSource, Map as MapLibreMap, Marker, NavigationControl, setWorkerUrl } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useRef } from 'react'
-import type { CityState, Incident, NetworkGeometry } from '../../api/types'
+import type { Camera, CityState, Incident, NetworkGeometry } from '../../api/types'
 import { duration } from '../../lib/format'
 import type { PlanOverlay } from '../../lib/plans'
 import { baseStyle, layers } from './style'
@@ -17,6 +17,7 @@ const FIT_PADDING = { top: 56, bottom: 24, left: 24, right: 24 }
 interface Props {
   network: NetworkGeometry
   state: CityState | null
+  cameras: Camera[]
   selection: Selection | null
   planOverlay: PlanOverlay | null
   onSelect: (selection: Selection | null) => void
@@ -79,13 +80,14 @@ function markerElement(className: string, html: string): HTMLDivElement {
   return el
 }
 
-export function CityMap({ network, state, selection, planOverlay, onSelect }: Props) {
+export function CityMap({ network, state, cameras, selection, planOverlay, onSelect }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const ready = useRef(false)
   const incidentMarkers = useRef(new Map<string, Marker>())
   const emsMarkers = useRef(new Map<string, Marker>())
   const corridorMarkers = useRef(new Map<string, Marker>())
+  const cameraMarkers = useRef(new Map<string, Marker>())
   const onSelectRef = useRef(onSelect)
   useEffect(() => {
     onSelectRef.current = onSelect
@@ -106,6 +108,7 @@ export function CityMap({ network, state, selection, planOverlay, onSelect }: Pr
     const incidents = incidentMarkers.current
     const responders = emsMarkers.current
     const corridors = corridorMarkers.current
+    const camerasOnMap = cameraMarkers.current
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
     map.touchZoomRotate.disableRotation()
 
@@ -172,10 +175,26 @@ export function CityMap({ network, state, selection, planOverlay, onSelect }: Pr
       incidents.clear()
       responders.clear()
       corridors.clear()
+      camerasOnMap.clear()
       map.remove()
       mapRef.current = null
     }
+    // Cameras arrive asynchronously and are synced by their own effect below; rebuilding the
+    // whole map for them would tear down every marker and the operator's pan and zoom.
   }, [network])
+
+  // ---- cameras ------------------------------------------------------------------------------
+  // Their own effect, because the list is fetched after the first render and can be retried.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const apply = () => syncCameraMarkers(map, cameraMarkers.current, cameras)
+    if (ready.current) apply()
+    else map.once('load', apply)
+    return () => {
+      map.off('load', apply)
+    }
+  }, [cameras])
 
   // ---- live state -------------------------------------------------------------------------
   useEffect(() => {
@@ -282,9 +301,26 @@ export function CityMap({ network, state, selection, planOverlay, onSelect }: Pr
   return <div ref={container} className="map-canvas" />
 }
 
+function syncCameraMarkers(map: MapLibreMap, markers: Map<string, Marker>, cameras: Camera[]) {
+  const active = new Set(cameras.filter((camera) => camera.location).map((camera) => camera.id))
+  for (const camera of cameras) {
+    if (!camera.location || markers.has(camera.id)) continue
+    const el = markerElement('camera-marker', '')
+    el.title = `${camera.id} · ${camera.name}`
+    markers.set(camera.id, new Marker({ element: el }).setLngLat([camera.location.lon, camera.location.lat]).addTo(map))
+  }
+  for (const [id, marker] of markers) {
+    if (!active.has(id)) {
+      marker.remove()
+      markers.delete(id)
+    }
+  }
+}
+
 function syncIncidentMarkers(map: MapLibreMap, markers: Map<string, Marker>, incidents: Incident[]) {
   const active = new Set(incidents.map((i) => i.id))
   for (const incident of incidents) {
+    if (!incident.location.point) continue
     if (markers.has(incident.id)) continue
     const el = markerElement(
       `incident-marker severity-${incident.severity}`,

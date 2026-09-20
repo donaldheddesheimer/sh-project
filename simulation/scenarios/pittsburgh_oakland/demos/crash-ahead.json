@@ -1,0 +1,9 @@
+{
+  "id": "crash-ahead",
+  "name": "Crash ahead",
+  "description": "A major collision on Forbes Avenue eastbound (714429624#0, three lanes) after the console opens; lanes 0 and 1 are valid right-side lanes on the default Oakland crash link.",
+  "crashes": [
+    { "at_sim_s": 420 }
+  ],
+  "monitor_s": 600
+}

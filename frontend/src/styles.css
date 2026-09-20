@@ -712,6 +712,18 @@ button {
   color: var(--text-2);
   white-space: nowrap;
 }
+.camera-marker,
+.legend-camera {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--page);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px rgba(77, 205, 255, 0.45);
+}
+.camera-marker {
+  opacity: 0.72;
+}
 .station-icon {
   display: grid;
   place-items: center;

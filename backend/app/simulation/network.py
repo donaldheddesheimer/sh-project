@@ -51,7 +51,7 @@ def phase_kind(state: str) -> PhaseKind:
 
 
 class GeoProjector:
-    """Converts SUMO x/y metres to lon/lat.
+    """Converts between SUMO x/y metres and lon/lat.
 
     Uses the network's own projection when it has one (e.g. OSM imports);
     synthetic networks are anchored at the scenario's geo origin.
@@ -73,6 +73,12 @@ class GeoProjector:
     def to_point(self, x: float, y: float) -> GeoPoint:
         lon, lat = self.to_lonlat(x, y)
         return GeoPoint(lat=lat, lon=lon)
+
+    def to_xy(self, lon: float, lat: float) -> tuple[float, float]:
+        if self._geo:
+            x, y = self._net.convertLonLat2XY(lon, lat)
+            return float(x), float(y)
+        return (lon - self._lon0) * self._m_per_deg_lon, (lat - self._lat0) * EARTH_M_PER_DEG_LAT
 
 
 @dataclass
@@ -125,6 +131,13 @@ class RouteApproach:
     intersection_id: str
     segment_id: str  # the approach (its incoming segment)
     distance_m: float  # to the stop line
+
+
+@dataclass(frozen=True)
+class NearestSegment:
+    segment_id: str
+    distance_m: float
+    position_m: float
 
 
 class RoadNetwork:
@@ -263,6 +276,29 @@ class RoadNetwork:
                 return x0 + ux * d * t + uy * lateral_m, y0 + uy * d * t - ux * lateral_m
             remaining -= d
         return pts[-1]
+
+    def nearest_segments(self, x: float, y: float, limit: int | None = None) -> list[NearestSegment]:
+        """Segments nearest an x/y point, ordered deterministically by distance then id."""
+        found: list[NearestSegment] = []
+        for segment in self.segments.values():
+            best_distance = math.inf
+            best_position = 0.0
+            walked = 0.0
+            for (x0, y0), (x1, y1) in zip(segment.centerline, segment.centerline[1:]):
+                dx, dy = x1 - x0, y1 - y0
+                length = math.hypot(dx, dy)
+                if length == 0:
+                    continue
+                t = max(0.0, min(1.0, ((x - x0) * dx + (y - y0) * dy) / (length * length)))
+                px, py = x0 + t * dx, y0 + t * dy
+                distance = math.hypot(x - px, y - py)
+                if distance < best_distance:
+                    best_distance = distance
+                    best_position = walked + t * length
+                walked += length
+            found.append(NearestSegment(segment.id, best_distance, best_position))
+        found.sort(key=lambda item: (item.distance_m, item.segment_id))
+        return found[:limit] if limit is not None else found
 
     # --------------------------------------------------------------- geometry
 

@@ -7,9 +7,9 @@ recommended**. The experiments are exposed as MCP tools. An agent (Nemotron over
 rule-based mock offline) drives them, applies its choice to the live twin and learns from
 the result (see [the autonomous episode](#the-autonomous-self-learning-episode)).
 
-This repository has completed **milestone 2** and built **milestone 3** (the autonomous
-episode; it has not been run yet). Milestone 4 is planned, with part 1 built and unrun (see
-[Next: milestone 4](#next-milestone-4)). It
+This repository has completed **milestone 2**, built **milestone 3** (the autonomous
+episode; it has not been run yet), and built two of milestone 4's three parts without running
+them (see [Next: milestone 4](#next-milestone-4)). It
 has a live SUMO digital twin of a 3×3 downtown grid and a FastAPI backend that streams city
 state over WebSocket. There is a React/MapLibre operations console: inject a collision,
 watch the queue spill back, then click **Analyze Response** to test up to 9 candidate plans
@@ -19,7 +19,8 @@ The **autonomous episode** runs that loop without clicks: a scripted crash, an a
 tests plans, applies the best one to the live twin, watches it and stores a lesson for the
 next incident. It is built but has not been run end to end yet (see
 [Review notes](#review-notes-the-episode-pass)). Everything runs on a laptop with no GPU. The
-NVIDIA Smart City adapter is still a stub.
+NVIDIA Smart City input is implemented against the published VSS 3.2 MCP contract, with a
+simulation-time replay client for development; neither client has been run here.
 
 ## Quick start
 
@@ -228,7 +229,9 @@ make frontend
   because Oakland's grid runs diagonally (`heading_offset_deg` in `scenario.json`). A label
   is display only: an approach is identified by its incoming segment, so the five-leg
   junction at Fifth Ave and Neville St keeps all its approaches even though two of them read
-  SB (the inspector adds the street name there). There is no basemap under the road network.
+  SB (the inspector adds the street name there). The rotation stays inside those labels — a
+  heading on a VSS report is a true bearing and is compared with the segment's own true
+  bearing (`smart_city/matching.py`). There is no basemap under the road network.
 
 ## Demo walkthrough: autonomous episode
 
@@ -307,7 +310,7 @@ Used the same way everywhere in this README, the code and the ops log.
 | Term | Meaning |
 |---|---|
 | **Crash** | The physical event scripted into the simulation (a `Disruption`). |
-| **Incident** | The Smart City provider's report of a crash (`INC-0001`). Detection comes a few simulated seconds after the crash. |
+| **Incident** | A Smart City provider's report (`INC-0001`): a mock-detected crash or an external VSS event. |
 | **Analysis / run** | One `ScenarioRun` (`SCN-0001`): one snapshot, a baseline plus candidate plans, one recommendation. |
 | **Plan / candidate** | A `CandidatePlan` (signal timing changes, an EMS corridor, reroutes) before simulating; a `SimulationCandidate` once it has metrics. `baseline` is the do-nothing plan. |
 | **Implement** | Apply the recommended plan to the *live* simulation, as opposed to simulating it in a branch. Recorded with who did it: `agent`, `operator`, or `coordinator` (the episode service, when Nemotron recommended but did not apply). |
@@ -320,15 +323,19 @@ Used the same way everywhere in this README, the code and the ops log.
 | **Superseded** | An episode stopped because another crash arrived while its agent was still working. |
 | **Demo script** | A JSON file in `demos/` that says when each crash happens (`DemoScript`). Not the [demo walkthroughs](#demo-walkthrough-analyze-response) above. |
 | **Armed** | A demo script is loaded. While one is armed, every detected crash starts an episode (a manual Inject too); `POST /api/demo/stop` disarms. |
+| **Mirror** | Reflect an externally reported collision in the twin as one linked disruption, removed when the report clears. |
+| **Map match** | Turn a report's lat/lon, place or sensor into a road segment, position and assumed lane, with method and confidence. |
+| **Replay client** | Development-only VSS client that releases VSS-shaped fixture documents on simulation time and labels them `vss-replay`. |
 
 ### Scripted crash scenarios
 
 A demo script says when each crash happens. The live runner fires each crash at its
 simulation time, on every boot. A crash before the end of warm-up (300 s) has **already
 happened** when the console opens, so a queue is forming. A later crash **will happen** while
-the demo runs. Scripts live in `simulation/scenarios/downtown_grid/demos/*.json` and are
+the demo runs. Scripts live in each scenario's `demos/*.json` and are
 loaded by `simulation/scenario.py`. `POST /api/demo/start` resets the city and arms one;
-`DEMO_SCRIPT` arms one at startup.
+`DEMO_SCRIPT` arms one at startup. They are available for both the grid and Oakland with the
+same ids; Oakland uses Forbes Avenue eastbound and Fifth Avenue westbound instead of the grid roads.
 
 | Script | Crashes | What it shows |
 |---|---|---|
@@ -516,6 +523,12 @@ Endpoints are in the [API](#api) table. Every setting is in `backend/app/config.
 | `ANALYSIS_LIVE_SPEED` | unset | A speed multiplier above 0 and up to 64 (the console's limit). While an analysis is open the live sim runs at it, so the branches get more of the machine, and the previous speed comes back when the analysis ends. Any speed change by the operator, or a demo start, ends the hold and nothing is restored. Built, not measured |
 | `MCP_URL` | unset | Where the Nemotron analyst reaches the MCP tools; unset = this app's server, in-process |
 | `NEMOTRON_MODEL`, `NVIDIA_API_KEY`, `NEMOTRON_BASE_URL` | unset, unset, NIM | The model id has to be supplied (see [open questions](#decisions-and-open-questions)) |
+| `NVIDIA_VA_MCP_URL` | unset | Streamable-HTTP VSS Video Analytics MCP endpoint; required for live VSS unless replay is set |
+| `VSS_REPLAY_FILE` | unset | Development-only VSS-shaped timeline; with `SMART_CITY_PROVIDER=nvidia`, takes precedence over the live URL |
+| `VSS_POLL_S` | 5 | Base wall-clock polling interval; failures back off to 60 s |
+| `VSS_MATCH_MAX_DIST_M` | 40 | Maximum geometry match distance |
+| `VSS_REQUIRE_VLM_CONFIRMATION` | true | Filter collisions unless VSS reports the VLM verdict `confirmed` |
+| `VSS_DEFAULT_SEVERITY` | `major` | Twin modelling fallback because VSS does not define the twin's severity |
 
 ### Task list
 
@@ -696,9 +709,9 @@ backend/app/
   simulation/preemption.py EMS green-corridor controller + runtime transition check (no TraCI)
   simulation/reroute.py diversion advisory with a compliance share
   simulation/runner.py  paced live loop on its own thread; fires scripted crashes
-  simulation/network.py static topology, phase labelling, geo projection
+  simulation/network.py static topology, phase labelling, bidirectional geo projection, nearest roads
   simulation/metrics.py live + horizon TrafficMetrics
-  smart_city/           SmartCityProvider: base, mock (ground truth + detection delay), nvidia (stub)
+  smart_city/           provider boundary, mock, VSS MCP/replay clients, mapping and map matching
   agent/                AgentProvider: base, mock (9 rule-based plans, pruned by lessons);
                         nemotron.py: the NIM chat client (its REST AgentProvider is a stub)
   safety/validator.py   SafetyValidator (signal policies + corridors) and rule-based MVP limits
@@ -726,7 +739,8 @@ simulation/
   networks/pittsburgh_oakland/  OSM extract (ODbL) + build_network.py → oakland.net.xml (33 signals)
   scenarios/downtown_grid/  scenario.sumocfg, demand, vehicle types, scenario.json,
                         demos/*.json scripted crash scenarios for episodes
-  scenarios/pittsburgh_oakland/  the same files for Oakland, except demos/; demand from build_demand.py (synthetic)
+  scenarios/pittsburgh_oakland/  the same files and demo scripts for Oakland; synthetic demand
+  scenarios/*/vss/      development-only VSS-shaped replay timelines (coordinates not run/verified)
   controllers/          how pre-emption plugs in (the code lives in backend/app/simulation/)
 memory/                 written at runtime: episodes/EP-NNNN.md lessons and playbook.md (git-ignored)
 Dockerfile              backend image (backend/ + simulation/); build context is the repo root
@@ -754,12 +768,13 @@ docs/
 | POST | `/api/emergency/dispatch` | send EMS to the latest incident |
 | GET | `/api/signals/{intersection}` | active signal program |
 | GET | `/api/cameras`, `/api/events` | camera registry, ops log |
+| GET | `/api/smart-city/status` | provider health, last success/error, and how many documents the **latest** poll filtered as unconfirmed or could not read |
 | POST | `/api/scenarios/run` | start Analyze Response: `{"incident_id"?, "incident_ids"?, "horizon_s": 600, "ems_probe": true}` → `ScenarioRun` (202; 409 if no active incident or a run is open). `incident_ids` analyzes several crashes together |
 | GET | `/api/scenarios` | recent runs (newest first, last 10) |
 | GET | `/api/scenarios/{id}` | one run with candidates, metrics, timelines, the recommendation, and `implementation` once applied |
 | POST | `/api/scenarios/{id}/implement` | operator path: apply the run's recommendation to the live sim (same code as the agent's) → `Implementation`. 404 unknown run; 409 not completed, already applied, predating a reset or an incident cleared; 400 rejected by the validator on the live programs |
 | GET | `/api/demo` | demo scripts, the armed script, the analyst, the latest episode, memory stats |
-| POST | `/api/demo/start` | `{"script": "crash-ahead"}`: reset and resume the city, then arm the script → the `armed` `Episode` (202) |
+| POST | `/api/demo/start` | `{"script": "crash-ahead"}`: reset and resume the city, then arm the script → the `armed` `Episode` (202); 409 with an external VSS provider |
 | POST | `/api/demo/stop` | disarm: no more scripted crashes or autonomous response; aborts the working episode |
 | GET | `/api/episodes`, `/api/episodes/{id}` | recent episodes (newest first, last 20), one episode |
 | GET, DELETE | `/api/memory` | remembered episodes and the playbook; DELETE forgets them (a cold run) |
@@ -814,10 +829,13 @@ docs/
 - The mock agent is rule-based: it proposes a fixed set of 9 plans (fewer when a close
   lesson prunes them) and recommends with a fixed rule (see
   [architecture.md](docs/architecture.md#analyze-response-pipeline)).
-- `NvidiaSmartCityProvider` and the REST pipeline's `NemotronAgentProvider` are documented
-  stubs that raise `NotImplementedError`. `SMART_CITY_PROVIDER=nvidia` fails at startup;
-  `AGENT_PROVIDER=nemotron` starts, but the REST Analyze Response then fails when it calls
-  the stub. Nemotron runs only as an episode's analyst and reviewer.
+- `NvidiaSmartCityProvider` is built against NVIDIA's published VSS 3.2 MCP tool contract,
+  but neither the live client nor replay fixtures have been run. A real server may expose
+  field variants that need an update in the intentionally isolated `vss_mapping.py`.
+  The REST pipeline's `NemotronAgentProvider` remains a stub; Nemotron runs only as an
+  episode's analyst and reviewer.
+- Mirrored crash size, spacing, blocked-lane effects and pass speed are twin assumptions,
+  not quantities observed by VSS. Lane 0 is assumed because VSS has no lane-grade position.
 - Synthetic network (the grid) and synthetic demand (both cities). The crash physics
   (blocked lane plus a 0.6 m/s pass speed) and congestion thresholds are calibrated for
   this grid, not measured data.
@@ -829,8 +847,7 @@ docs/
 
 ## Next: milestone 4
 
-**Mostly planned. Part 1 is built on `feature/twin-engine` and none of it has been run or
-measured; parts 2 and 3 are not built.**
+**Parts 1 and 3 are built and merged; neither has been run or measured. Part 2 is planned.**
 
 **First, milestone 3 has to be run.** It is built, not yet run end to end. What remains is to
 run it (the [review notes](#review-notes-the-episode-pass) list what to try, in order), to run
@@ -846,13 +863,12 @@ kept.
 |---|---|---|---|
 | 1. Twin engine | `feature/twin-engine`, [plan](docs/milestone-4/feature-twin-engine.md) | The branch speed-up in `sumo.py`; the EMS corridor explained and its levers tried (a longer detection distance, a combined corridor and diversion plan); per-responder EMS response from the twin; a `revert_response()` primitive; a pre-emption failure on the live twin that degrades instead of stopping it; an opt-in slower live speed during analysis | Built, none of it measured or run |
 | 2. Agent and memory | `feature/agent-memory`, [plan](docs/milestone-4/feature-agent-memory.md) | Reverting an applied plan when the scene clears (automatic, and by the operator); per-responder EMS in the scorecard; response checks, so corridor and diversion lessons are verified before they are trusted; embedding-based recall; a learning report and the cold, warm and varied run protocol; the REST `NemotronAgentProvider` | Planned |
-| 3. VSS input | `feature/vss-input`, [plan](docs/milestone-4/feature-vss-input.md) | `NvidiaSmartCityProvider` on the VSS Video Analytics MCP tools, with a replay client for development; a map matcher (lat/lon and place names → segment and lane); mirroring a reported incident into the twin so it can be analyzed; cameras and match details in the UI; Oakland demo scripts | Planned |
+| 3. VSS input | `feature/vss-input`, [plan](docs/milestone-4/feature-vss-input.md) | `NvidiaSmartCityProvider` on the VSS Video Analytics MCP tools, with a replay client for development; a map matcher (lat/lon and place names → segment and lane); mirroring a reported incident into the twin so it can be analyzed; cameras and match details in the UI; Oakland demo scripts | Built, not run |
 
 **Prepared but not faked** still holds for part 3. The full Blueprint is not installed or run;
 until a real VSS endpoint exists, the mock stays the default provider. The replay client reads
-VSS-shaped documents and labels their incidents `vss-replay`. The VSS field mapping in
-`smart_city/nvidia.py` cites the Blueprint's `smartcities` profile and has not been checked
-against a running server.
+VSS-shaped documents and labels their incidents `vss-replay`. The mapping was checked against
+NVIDIA's published VSS 3.2 Video Analytics MCP reference, but not against a running server.
 
 Not in milestone 4: further tests (milestone-4 agents write none; see [Tests](#tests)), autonomous episodes on real incidents
 without a demo script, and auth. The assumptions the plans make (for example what reverting a

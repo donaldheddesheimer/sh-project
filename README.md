@@ -997,13 +997,8 @@ docs/
 | GET | `/api/episodes`, `/api/episodes/{id}` | recent episodes (newest first, last 20), one episode |
 | GET, DELETE | `/api/memory` | remembered episodes and the playbook; DELETE forgets them (a cold run) |
 | GET | `/api/learning/report` | durable episodes plus same-script warm-versus-control comparisons and the configured transfer status |
-<<<<<<< HEAD
-| WS | `/ws/state` | `hello` (state, events, trend, latest run, latest episode) then `state` / `status` / `event` / `scenario` / `episode` messages |
-| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md); [calling it with curl](docs/mcp-curl.md)) |
-=======
 | WS | `/ws/state` | `hello` (network geometry, state, events, trend, latest run, latest episode) then `state` / `status` / `event` / `scenario` / `episode` messages; a new `hello` announces a runtime map switch |
-| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md)) |
->>>>>>> origin/main
+| MCP | `/mcp` | streamable HTTP: `start_analysis` (`incident_ids?`, `memory_mode?`, default all active incidents/use), `validate_plan`, `simulate_plans`, `get_analysis`, `submit_recommendation`, `implement_recommendation`, `recall_experience` ([spec](docs/specs/scenario-engine-mcp.md); [calling it with curl](docs/mcp-curl.md)) |
 
 ## Current limitations
 

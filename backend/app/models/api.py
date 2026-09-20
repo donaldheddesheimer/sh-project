@@ -72,6 +72,39 @@ class OpsEvent(BaseModel):
     incident_id: str | None = None
 
 
+class ModelCallStatus(StrEnum):
+    PENDING = "pending"  # the request is out; no reply yet
+    OK = "ok"
+    ERROR = "error"
+
+
+class ModelCall(BaseModel):
+    """One request to a hosted model, from the moment it is sent to its outcome.
+
+    The ops log says what the agent decided; this says whether the model was reached at all, with which
+    model id, and what came back. The same ``id`` is published twice (pending, then the outcome), so a
+    client replaces the entry rather than appending a second one.
+    """
+
+    id: int
+    timestamp: datetime
+    sim_time: float | None
+    provider: str = Field(description="nemotron or claude")
+    role: str = Field(description="which job called it: analyst or reviewer")
+    model: str = Field(description="exact model id sent to the endpoint")
+    purpose: str = Field(description="propose, recommend, decide or review")
+    endpoint: str = Field(description="URL the request went to, so it is visible which host answered")
+    status: ModelCallStatus
+    duration_ms: int | None = None
+    attempts: int = Field(1, description="HTTP attempts, more than one when the endpoint was busy and it backed off")
+    http_status: int | None = None
+    request_chars: int | None = Field(None, description="characters of prompt sent, a rough size for the request")
+    response_chars: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    detail: str | None = Field(None, description="a truncated preview of the reply, or the error that ended the call")
+
+
 class InjectIncidentRequest(BaseModel):
     type: IncidentType = IncidentType.COLLISION
     segment_id: str | None = Field(None, description="Defaults to the scenario's collision location")

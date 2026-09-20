@@ -151,7 +151,7 @@ class ModelReviewer:
             {"role": "user", "content": json.dumps(episode)},
         ]
         try:
-            reply = await self._chat.chat(messages, max_tokens=2048)
+            reply = await self._chat.chat(messages, max_tokens=2048, purpose="review")
             match = re.search(r"\{.*\}", reply.get("content") or "", re.DOTALL)
             data = json.loads(match.group(0)) if match else {}
             return Lesson(

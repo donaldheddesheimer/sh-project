@@ -4,6 +4,7 @@ import type {
   CityState,
   Episode,
   MetricSample,
+  ModelCall,
   NetworkGeometry,
   OpsEvent,
   ScenarioRun,
@@ -19,6 +20,7 @@ export type { MetricSample }
 const SAMPLE_EVERY_S = 5 // simulated seconds between trend samples
 const MAX_SAMPLES = 180 // 15 simulated minutes
 const MAX_EVENTS = 100
+const MAX_MODEL_CALLS = 100
 
 const STAGE: Record<ScenarioStatus, number> = {
   queued: 0,
@@ -49,6 +51,14 @@ function parseFrame(data: string): StreamMessage | null {
   }
 }
 
+/** A model call arrives twice (pending, then its outcome): replace the entry with that id, else append. */
+function mergeCall(calls: ModelCall[], next: ModelCall): ModelCall[] {
+  const at = calls.findIndex((call) => call.id === next.id)
+  if (at >= 0) return calls.map((call, index) => (index === at ? next : call))
+  const out = [...calls, next]
+  return out.length > MAX_MODEL_CALLS ? out.slice(out.length - MAX_MODEL_CALLS) : out
+}
+
 /** A newer run replaces the current one; an update to the same run never moves it backwards. */
 function supersedes(next: ScenarioRun, prev: ScenarioRun | null): boolean {
   if (!prev) return true
@@ -67,6 +77,7 @@ export interface CityStream {
   status: StatusInfo | null
   events: OpsEvent[]
   history: MetricSample[]
+  modelCalls: ModelCall[]
   connected: boolean
   scenario: ScenarioRun | null
   episode: Episode | null
@@ -81,6 +92,7 @@ export function useCityStream(): CityStream {
   const [status, setStatus] = useState<StatusInfo | null>(null)
   const [events, setEvents] = useState<OpsEvent[]>([])
   const [history, setHistory] = useState<MetricSample[]>([])
+  const [modelCalls, setModelCalls] = useState<ModelCall[]>([])
   const [connected, setConnected] = useState(false)
   const [scenario, setScenario] = useState<ScenarioRun | null>(null)
   const [episode, setEpisode] = useState<Episode | null>(null)
@@ -151,6 +163,7 @@ export function useCityStream(): CityStream {
             setNetwork((prev) => (sameNetwork(prev, msg.data.network) ? prev : msg.data.network))
             setEvents(msg.data.events)
             setHistory(msg.data.history)
+            setModelCalls(msg.data.model_calls ?? [])
             setScenario(msg.data.scenario ?? null)
             setEpisode(msg.data.episode ?? null)
             setPhaseLabels({})
@@ -180,6 +193,9 @@ export function useCityStream(): CityStream {
           case 'event':
             setEvents((prev) => [...prev.slice(-(MAX_EVENTS - 1)), msg.data])
             break
+          case 'model_call':
+            setModelCalls((prev) => mergeCall(prev, msg.data))
+            break
           case 'scenario':
             acceptScenario(msg.data)
             break
@@ -208,5 +224,17 @@ export function useCityStream(): CityStream {
     }
   }, [acceptScenario])
 
-  return { state, network, status, events, history, connected, scenario, episode, phaseLabels, acceptScenario }
+  return {
+    state,
+    network,
+    status,
+    events,
+    history,
+    modelCalls,
+    connected,
+    scenario,
+    episode,
+    phaseLabels,
+    acceptScenario,
+  }
 }

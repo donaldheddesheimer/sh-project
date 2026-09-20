@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import type { MetricSample, OpsEvent, RoadSegmentState, ScenarioRun, TrafficMetrics } from '../../api/types'
+import type { MetricSample, ModelCall, OpsEvent, RoadSegmentState, ScenarioRun, TrafficMetrics } from '../../api/types'
 import { compact, duration, mph } from '../../lib/format'
 import { Icon } from '../Icon'
 import { EventLog } from '../EventLog'
+import { ModelCallLog } from '../ModelCallLog'
 import { TrendChart } from '../TrendChart'
 import { Splitter } from '../Splitter'
 import { HorizonChart } from './HorizonChart'
@@ -12,6 +13,7 @@ interface Props {
   preferredTab: 'live' | 'comparison'
   history: MetricSample[]
   events: OpsEvent[]
+  modelCalls: ModelCall[]
   markers: { t: number; label: string }[]
   metrics: TrafficMetrics | null
   reference: MetricSample | null // last sample before detection, for the change beside each value
@@ -45,11 +47,11 @@ const tenth = (v: number) => v.toFixed(1)
 
 export function AnalysisDock(props: Props) {
   const {
-    preferredTab, history, events, markers, metrics, reference, segments, networkStatus,
+    preferredTab, history, events, modelCalls, markers, metrics, reference, segments, networkStatus,
     run, colors, activeId, selectedId, onHover, onSelect, onActivityResize, onActivityReset,
   } = props
   const activityRef = useRef<HTMLDivElement>(null)
-  const [tab, setTab] = useState<'live' | 'comparison' | 'activity'>(preferredTab)
+  const [tab, setTab] = useState<'live' | 'comparison' | 'activity' | 'models'>(preferredTab)
   useEffect(() => setTab(preferredTab), [preferredTab])
   const visibleTab = tab === 'comparison' && !run ? 'live' : tab
   const worstQueue = segments.find((s) => s.id === metrics?.max_queue_segment)
@@ -103,6 +105,20 @@ export function AnalysisDock(props: Props) {
           <Icon name="list" size={12} /> Activity
           {events.length > 0 && <span className="tag tag-minimal">{events.length}</span>}
         </button>
+        <button
+          type="button"
+          className={`dock-tab${visibleTab === 'models' ? ' active' : ''}`}
+          role="tab"
+          aria-selected={visibleTab === 'models'}
+          onClick={() => setTab('models')}
+        >
+          <Icon name="bolt" size={12} /> Model calls
+          {modelCalls.length > 0 && (
+            <span className={`tag tag-minimal${modelCalls.some((c) => c.status === 'error') ? ' tag-danger' : ''}`}>
+              {modelCalls.length}
+            </span>
+          )}
+        </button>
         <div className="dock-meta">
           {visibleTab !== 'comparison' ? (
             <span className="dock-live">
@@ -114,7 +130,11 @@ export function AnalysisDock(props: Props) {
         </div>
       </div>
 
-      {visibleTab === 'activity' ? (
+      {visibleTab === 'models' ? (
+        <div className="dock-body models-body">
+          <ModelCallLog calls={modelCalls} />
+        </div>
+      ) : visibleTab === 'activity' ? (
         <div className="dock-body activity-body">{activity}</div>
       ) : visibleTab === 'live' || !run ? (
         <div className="dock-body">

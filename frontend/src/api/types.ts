@@ -178,6 +178,32 @@ export interface OpsEvent {
   incident_id: string | null
 }
 
+export type ModelCallStatus = 'pending' | 'ok' | 'error'
+
+/**
+ * One HTTP request to the analyst or reviewer model. The same id arrives twice: `pending` when the
+ * request goes out, then again with its outcome, so an entry is replaced rather than appended.
+ */
+export interface ModelCall {
+  id: number
+  timestamp: string
+  sim_time: number | null
+  provider: string // nemotron or claude
+  role: string // analyst or reviewer
+  model: string
+  purpose: string // propose, recommend, decide or review
+  endpoint: string
+  status: ModelCallStatus
+  duration_ms: number | null
+  attempts: number
+  http_status: number | null
+  request_chars: number | null
+  response_chars: number | null
+  prompt_tokens: number | null
+  completion_tokens: number | null
+  detail: string | null // a truncated preview of the reply, or the error that ended the call
+}
+
 export interface SegmentGeometry {
   id: string
   name: string
@@ -518,6 +544,7 @@ export type StreamMessage =
         state: CityState | null
         events: OpsEvent[]
         history: MetricSample[]
+        model_calls: ModelCall[]
         scenario?: ScenarioRun | null // latest analysis run
         episode?: Episode | null // latest autonomous episode
       }
@@ -525,5 +552,6 @@ export type StreamMessage =
   | { type: 'state'; data: CityState }
   | { type: 'status'; data: StatusInfo }
   | { type: 'event'; data: OpsEvent }
+  | { type: 'model_call'; data: ModelCall } // a model request starting, or its outcome
   | { type: 'scenario'; data: ScenarioRun } // any change to an analysis run
   | { type: 'episode'; data: Episode } // any change to an episode

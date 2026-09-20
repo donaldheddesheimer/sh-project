@@ -21,6 +21,7 @@ from app.models.api import (
     EventLevel,
     InjectIncidentRequest,
     MetricSample,
+    ModelCall,
     OpsEvent,
     ProviderInfo,
     RunStatus,
@@ -42,6 +43,7 @@ from app.models.domain import (
 from app.models.episode import Episode
 from app.models.scenario import ScenarioRun
 from app.services.events import EventLog
+from app.services.model_log import ModelCallLog
 from app.simulation.branching import probe_for_incident
 from app.simulation.interface import TrafficSimulation
 from app.simulation.network import RoadNetwork
@@ -99,6 +101,7 @@ class CityService:
         agent: AgentProvider,
         frame_observers: list[FrameObserver],
         hub: ConnectionHub,
+        model_calls: ModelCallLog,
     ):
         self.settings = settings
         self.scenario = scenario
@@ -107,6 +110,10 @@ class CityService:
         self.agent = agent
         self.hub = hub
         self.events = EventLog(on_event=self._broadcast_event)
+        # Built before this service (the model clients are constructed first), so it is given its
+        # broadcaster and the simulation clock here.
+        self.model_calls = model_calls
+        self.model_calls.attach(self._broadcast_model_call, self._sim_time)
         self.providers = ProviderInfo(smart_city=smart_city.name, agent=agent.name, simulator="Eclipse SUMO")
         self.geometry: NetworkGeometry = network.geometry()
         self._observers = frame_observers
@@ -196,6 +203,7 @@ class CityService:
 
     def hello_message(self) -> str:
         events = ",".join(e.model_dump_json() for e in self.events.recent())
+        model_calls = ",".join(c.model_dump_json() for c in self.model_calls.recent())
         state = self._state.model_dump_json() if self._state else "null"
         network = self.geometry.model_dump_json()
         trend = ",".join(s.model_dump_json() for s in self._trend)
@@ -204,7 +212,7 @@ class CityService:
         return envelope(
             "hello",
             f'{{"status":{self.status_json()},"network":{network},"state":{state},"events":[{events}],"history":[{trend}],'
-            f'"scenario":{scenario},"episode":{episode}}}',
+            f'"model_calls":[{model_calls}],"scenario":{scenario},"episode":{episode}}}',
         )
 
     async def incidents(self, include_cleared: bool = False) -> list[Incident]:
@@ -669,6 +677,9 @@ class CityService:
 
     def _broadcast_event(self, event: OpsEvent) -> None:
         self.hub.broadcast(envelope("event", event.model_dump_json()))
+
+    def _broadcast_model_call(self, call: ModelCall) -> None:
+        self.hub.broadcast(envelope("model_call", call.model_dump_json()))
 
     def _sim_time(self) -> float | None:
         return self._state.sim_time if self._state else None

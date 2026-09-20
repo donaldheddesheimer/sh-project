@@ -19,6 +19,7 @@ from app.models.api import (
     InjectIncidentRequest,
     InjectIncidentResponse,
     MapSelectionRequest,
+    ModelCall,
     OpsEvent,
     SpeedRequest,
 )
@@ -294,6 +295,16 @@ async def smart_city_status(city: City) -> SmartCityStatus:
 @router.get("/events", response_model=list[OpsEvent])
 async def events(city: City, limit: Annotated[int, Query(ge=1, le=200)] = 50) -> list[OpsEvent]:
     return city.events.recent(limit)
+
+
+@router.get("/model-calls", response_model=list[ModelCall])
+async def model_calls(city: City, limit: Annotated[int, Query(ge=1, le=100)] = 50) -> list[ModelCall]:
+    """Recent requests to the analyst/reviewer models: whether they were reached, and what came back.
+
+    The console shows the same entries in its Model calls tab; this is the curl path for checking a
+    deployment's credentials without opening the console. An empty list means no model has been called yet.
+    """
+    return city.model_calls.recent(limit)
 
 
 @ws_router.websocket("/ws/state")

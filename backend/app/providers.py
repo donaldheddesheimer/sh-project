@@ -24,6 +24,7 @@ from app.models.domain import Severity
 from app.models.api import EventLevel
 from app.safety.validator import RuleBasedSafetyValidator
 from app.services.city import CityService, FrameObserver
+from app.services.model_log import ModelCallLog
 from app.services.scenarios import ScenarioService
 from app.simulation.network import RoadNetwork
 from app.simulation.scenario import load_scenario
@@ -93,7 +94,7 @@ def check_keyed_deployment(settings: Settings) -> None:
         )
 
 
-def build_agent_provider(settings: Settings) -> AgentProvider:
+def build_agent_provider(settings: Settings, model_log: ModelCallLog) -> AgentProvider:
     api_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
     selected = settings.agent_provider
     if selected == "auto":
@@ -110,11 +111,16 @@ def build_agent_provider(settings: Settings) -> AgentProvider:
         api_key,
         settings.scenario_max_candidates,
         settings.nemotron_timeout_s,
+        model_log,
     )
 
 
 def build_episode_teams(
-    settings: Settings, scenarios: ScenarioService, implementor: Implementor, mcp_server: MCPServer
+    settings: Settings,
+    scenarios: ScenarioService,
+    implementor: Implementor,
+    mcp_server: MCPServer,
+    model_log: ModelCallLog,
 ) -> tuple[dict[str, AgentTeam], str]:
     """Configured analyst/reviewer teams and the startup selection.
 
@@ -153,6 +159,7 @@ def build_episode_teams(
             settings.claude_model,
             claude_key,
             settings.anthropic_workspace_id,
+            model_log=model_log,
         )
         teams["claude"] = AgentTeam(
             analyst=ModelAnalyst(
@@ -163,6 +170,7 @@ def build_episode_teams(
                 settings.agent_may_implement,
             ),
             fallback=fallback_analyst,
+            # The reviewer shares the analyst's client, so its calls are logged under the analyst role.
             reviewer=ModelReviewer("claude", claude, fallback_reviewer),
             analyst_model=settings.claude_model,
             reviewer_model=settings.claude_model,
@@ -175,6 +183,8 @@ def build_episode_teams(
             nvidia_key,
             settings.nemotron_timeout_s,
             json_mode=True,
+            model_log=model_log,
+            role="reviewer",
         )
         provider = NemotronAgentProvider(
             settings.nemotron_base_url,
@@ -182,6 +192,7 @@ def build_episode_teams(
             nvidia_key,
             settings.scenario_max_candidates,
             settings.nemotron_timeout_s,
+            model_log,
         )
         teams["nemotron"] = AgentTeam(
             analyst=PipelineAnalyst(
@@ -251,7 +262,9 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
         )
 
     smart_city, observers = build_smart_city_provider(settings, network)
-    agent = build_agent_provider(settings)
+    # One log for this service graph: the model clients record into it, CityService broadcasts it.
+    model_log = ModelCallLog()
+    agent = build_agent_provider(settings, model_log)
     city = CityService(
         settings=settings,
         scenario=scenario,
@@ -261,6 +274,7 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
         agent=agent,
         frame_observers=observers,
         hub=hub,
+        model_calls=model_log,
     )
     validator = RuleBasedSafetyValidator()
     scenarios = ScenarioService(
@@ -287,7 +301,7 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
         embedder=embedder,
         on_embedding_event=report_embedding_event,
     )
-    teams, selected_team = build_episode_teams(settings, scenarios, implementor, mcp_server)
+    teams, selected_team = build_episode_teams(settings, scenarios, implementor, mcp_server, model_log)
     episodes = EpisodeService(
         settings=settings,
         city=city,

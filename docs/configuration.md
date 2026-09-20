@@ -50,6 +50,26 @@ and restart.
 A loaded credential does not prove that the key is valid, funded, or authorized for an
 inference request. Model-backed failures stay visible; the backend never falls back to Mock.
 
+## Checking that a model is really being called
+
+The console's **Model calls** tab (in the dock, beside Activity) lists every HTTP request to the
+analyst and reviewer models: the model id and endpoint, the purpose (`propose`, `recommend`,
+`decide`, `review`), how long it took, its HTTP status, token usage and a preview of the reply.
+An entry appears as soon as the request goes out and is replaced by its outcome, so a long
+completion is visible while it runs. An empty tab means no model has been called yet.
+
+That distinguishes the three cases a failed run otherwise blurs: the model answered but its plans
+were rejected (`ok`, with the reply preview), the endpoint refused or was overloaded (`error`, with
+the HTTP status), or nothing was called at all (no entry, which means the Mock team is running).
+`GET /api/model-calls` returns the same entries for a headless check:
+
+```bash
+curl -s localhost:8000/api/model-calls | head
+```
+
+Nothing there is a credential: the log records model ids, endpoints, sizes and errors, never the
+API key or the full prompt. The log is in memory only and starts fresh on restart or a map switch.
+
 ## Local development
 
 ### macOS and Linux
@@ -108,6 +128,7 @@ accept those operational choices through `.env`; only the three credential names
 | `GET /api/health` | Process and live-city health |
 | `GET /api/state` | Current city state |
 | `WS /ws/state` | Live state and workflow events |
+| `GET /api/model-calls` | Recent analyst/reviewer model requests and their outcomes |
 | `GET /api/demo` | Available scripts, analysts, model ids, episode, and memory state |
 | `POST /api/demo/start` | Arm autonomous response. `{}` arms `AUTONOMOUS_SCRIPT` with memory on (what the **Arm agent** button sends); `{"script": ..., "memory_mode": ...}` selects another script or a no-recall control run |
 | `POST /api/demo/stop` | Disarm autonomous response |

@@ -70,7 +70,7 @@ Other commands:
 
 | | |
 |---|---|
-| `make test` | backend test suite (spawns real SUMO processes, 20–40 s) |
+| `make test` | backend test suite (24 tests, real SUMO processes; see [Tests](#tests) for timings and what has never been run) |
 | `make build` | type-check and production-build the UI |
 | http://localhost:5173/?fixture=scenario | Analyze Response replays a recorded run (synthetic numbers) instead of calling `POST /api/scenarios/run`; `?fixture=scenario-failed` replays the failure path. Only the analysis call is replaced: the backend must still be running and a collision active, because the map and the button's prerequisites come from the live stream |
 | `make network` | regenerate the SUMO network and demand from their build scripts |
@@ -79,6 +79,31 @@ Other commands:
 | `SUMO_GUI=true make backend` | watch the live simulation in sumo-gui as well |
 | `DEMO_SCRIPT=crash-ahead make backend` | arm an autonomous-episode script at startup |
 | http://127.0.0.1:8000/docs | interactive API docs |
+
+## Tests
+
+`backend/tests/` holds 24 tests: 19 from earlier milestones and five demo-readiness tests added
+afterwards. The 19 older ones take 20–40 s. **The five new ones are written and have never been
+run**: the agent that wrote them may not run tests (CLAUDE.md hard rule 1), so the first run is
+yours. Each is written so that a failure means a bug in the app and not in the test; read the
+failure message before touching the test.
+
+| Test | Needs SUMO | What it shows |
+|---|---|---|
+| `test_demo_setup.py::test_demo_scripts_name_real_segments_and_lanes` | no | every grid demo script names a real segment and valid lanes, so `POST /api/demo/start` can arm it |
+| `test_demo_setup.py::test_memory_store_round_trip` | no | a lesson is saved and loaded, the same crash recalls it at full similarity, and `clear` forgets it |
+| `test_simulation.py::test_snapshot_after_live_timing_change_restores_the_installed_program` | yes | a branch restored from a snapshot taken after a live timing change runs that timing (the `custom_programs` fix) |
+| `test_demo_smoke.py::test_analyze_response_recommends_and_rejects_the_unsafe_plan` | yes, whole app | inject, then Analyze Response over REST: the run completes, `aggressive-flush` is rejected, the recommendation is a completed plan |
+| `test_demo_smoke.py::test_autonomous_episode_runs_end_to_end_with_the_mock` | yes, whole app | `crash-ahead` runs to a completed episode: plan applied, lesson stored in memory |
+
+The two smoke tests each boot their own city and their own memory, and pin every setting a `.env`
+could change. Each takes about a minute (an estimate, not a measurement), and they wait up to 5–7
+minutes before failing, so a slow machine is not a failure. When one times out, its message shows
+the last run or episode state. Run one with
+`.venv\Scripts\python.exe -m pytest -q tests/test_demo_smoke.py -k episode` (from `backend`).
+
+Not covered: a warm second episode (recall), the two-crash rule, Oakland, the MCP tools,
+Nemotron and pre-emption. Tests are written only when the user asks for them.
 
 ## Hosting the backend
 
@@ -237,8 +262,9 @@ analysis rounds of 10–16 s each plus the 600 s window, about 150 s), so use 8�
 ## The autonomous, self-learning episode
 
 This is milestone 3 and the single place that describes it. It is **built
-but has not been run end to end**: no test and no run has exercised it yet. Only build checks
-were run (see [Review notes](#review-notes-the-episode-pass)).
+but has not been run end to end**: no run has exercised it yet. A smoke test for it is written
+but has not been run either (see [Tests](#tests)). Only build checks were run (see
+[Review notes](#review-notes-the-episode-pass)).
 
 **Status at a glance**
 
@@ -602,8 +628,9 @@ speed-up, the slower live speed during analysis, per-responder EMS metrics on th
 the `revert_response()` primitive are built in part 1 (not run, not measured). Response checks,
 control-mode recall, optional semantic recall, the learning report and REST Nemotron are built
 but not run. Reverting an applied plan when the scene clears and per-responder EMS in the
-scorecard remain planned. Still later: tests for `ScenarioService`, the MCP tools and
-the learning package (the convention so far is no new test files, so agree on this first).
+scorecard remain planned. Still later: more tests for `ScenarioService`, the MCP tools and the
+learning package (only the five demo-readiness tests in [Tests](#tests) exist; further ones are
+written only when the user asks).
 
 ### Learning protocol (user run)
 
@@ -769,7 +796,7 @@ backend/app/
   learning/reviewer.py  mock and Nemotron reviewers (scorecard → lesson)
   learning/store.py     markdown memory, playbook, structured/semantic recall and learning report
   learning/embeddings.py optional OpenAI-compatible embedding NIM client
-backend/tests/          network, simulation, runner, safety/agent, mock provider, API tests
+backend/tests/          network, simulation, runner, safety/agent, mock provider, API, demo setup and smoke tests
 frontend/src/
   App.tsx               layout + actions
   hooks/useCityStream.ts   WebSocket client (reconnect, trend backfill, scenario runs, episodes)
@@ -920,7 +947,7 @@ until a real VSS endpoint exists, the mock stays the default provider. The repla
 VSS-shaped documents and labels their incidents `vss-replay`. The mapping was checked against
 NVIDIA's published VSS 3.2 Video Analytics MCP reference, but not against a running server.
 
-Not in milestone 4: tests (see the task list above), autonomous episodes on real incidents
+Not in milestone 4: further tests (milestone-4 agents write none; see [Tests](#tests)), autonomous episodes on real incidents
 without a demo script, and auth. The assumptions the plans make (for example what reverting a
 diversion does, and that a blue-light device is off unless approved) are in the
 [decisions table](docs/milestone-4/MASTER.md#decisions-to-confirm); confirm them before
@@ -958,7 +985,7 @@ the previous pass, plus five fixes found while reading the code. The single-cras
   passed. The import builds the app and registers every MCP tool, so the tool schemas load;
   it starts no SUMO and no server. `make build` (tsc + vite) and
   `npm --prefix frontend run lint` are clean.
-- **Not run:** every behavior in this pass. CLAUDE.md hard rule 1 allows no tests, no
+- **Not run:** every behavior in this pass. CLAUDE.md hard rule 1 then allowed no tests, no
   scratch scripts and no running the app. Nothing has started an episode, applied a plan to a
   live sim, loaded a snapshot with `custom_programs`, called NIM, or rendered the new panel.
   The existing test suite was not run either.

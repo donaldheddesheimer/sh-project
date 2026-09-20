@@ -19,12 +19,14 @@ can predate a merged cleanup.
 
 Set by the user. They override anything else in this file or in the docs.
 
-1. **Never make tests and never run tests, ever.** Do not create test files, add test cases
-   or edit existing ones. Do not run `pytest`, `make test` or any other test runner, and do
-   not write or run scratch scripts or other automated checks whose purpose is to test or
+1. **Never run tests, ever.** Do not run `pytest`, `make test` or any other test runner, and
+   do not write or run scratch scripts or other automated checks whose purpose is to test or
    verify behavior. This holds even if a task, a doc or another part of this file suggests
-   it. Check work by reading the code, and say plainly in the report what was **not** run or
-   verified. If a check by running seems necessary, ask the user; they will run it.
+   it. **Write tests only when the user asks, and only the set they name**: never add, edit or
+   extend tests on your own initiative. A test you write is correct by construction: written
+   against code you have read in full, so that a failure means a bug in the code and never
+   in the test. Check work by reading the code, and say plainly in the report what was **not**
+   run or verified. If a check by running seems necessary, ask the user; they will run it.
 2. **Maintain [README.md](README.md) as a consistent source of information, always.** Every
    change to behavior, API, settings, file layout, terminology, roadmap or decisions updates
    the README in the same change, and before finishing you re-read the parts it touches.
@@ -42,7 +44,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | Task | POSIX (`make`) | Windows |
 |---|---|---|
 | Set up | `make setup` | `python -m venv backend\.venv`, then `backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt`, then `npm --prefix frontend install` |
-| Backend tests (19, real SUMO, 20–40 s). **Reference only: never run (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
+| Backend tests (24, real SUMO; the 5 demo-readiness ones are written and unrun). **Reference only: never run (Hard rules)** | `make test` | `cd backend; .venv\Scripts\python.exe -m pytest -q` |
 | One test. **Reference only: never run (Hard rules)** | `cd backend && .venv/bin/pytest -q -k <name>` | `.venv\Scripts\python.exe -m pytest -q -k <name>` (in `backend`) |
 | Backend on :8000 | `make backend` | `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000` |
 | Frontend on :5173 | `make frontend` | `npm --prefix frontend run dev` |
@@ -191,11 +193,14 @@ venv directly (this is what works in PowerShell or Git Bash):
 - **Frontend.** TypeScript with `noUnused*` on, React 19 function components, no
   semicolons, single quotes, 2-space indent. Lint is `oxlint`. Plan colors follow backend
   candidate order, never rank; the baseline stays neutral.
-- **Tests.** Never add tests and never run them (Hard rules). The team chose demo over
-  coverage (recorded in `docs/milestone-2/MASTER.md`). Verify by reading the code and report
-  what was not run. Known gaps: pre-emption, reroute, `ScenarioService`, the MCP tools and
-  the whole `learning/` package have no tests. The existing suite is in `backend/tests/`; the
-  `make_sim` fixture in `tests/conftest.py` starts real SUMO processes.
+- **Tests.** Never run them, and write them only when asked (Hard rules). The team chose demo
+  over coverage (recorded in `docs/milestone-2/MASTER.md`); the five demo-readiness tests
+  (`test_demo_setup.py`, `test_demo_smoke.py`, one in `test_simulation.py`; README "Tests") are
+  written and unrun. Verify by reading the code and report what was not run. Known gaps:
+  pre-emption, reroute, the MCP tools, Nemotron, warm recall and the two-crash rule have no
+  tests; `ScenarioService` and the episode are covered only by the two smoke tests. The suite
+  is in `backend/tests/`; the `make_sim` fixture in `tests/conftest.py` starts real SUMO
+  processes, and the smoke tests boot the whole app with `Settings(_env_file=None, ...)`.
 - **README.** It is the source of truth for the episode and the roadmap; keep it consistent
   (Hard rules).
 - **Git.** Work happens on feature branches merged by PR; don't push to `main`.

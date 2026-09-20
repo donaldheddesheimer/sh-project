@@ -1,7 +1,7 @@
 # Handoff: `feature/agent-memory`
 
 Read [MASTER.md](MASTER.md) first. It has the step-0 contract, the file ownership, the
-decisions and the rules, and the hard rules in it (no tests, nothing run, README kept
+decisions and the rules, and the hard rules in it (no new tests, nothing run, README kept
 consistent) apply to every line below. This file covers only your branch.
 
 ## Context

@@ -1,15 +1,14 @@
-"""Runtime configuration, read from environment variables (or a .env file)."""
+"""Application defaults plus the two API keys allowed from the environment."""
 
 from __future__ import annotations
 
-import json
 import tempfile
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic import SecretStr, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -17,12 +16,29 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), extra="ignore")
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        """Keep deployment behavior in code/UI; environment files are credentials only."""
+
+        def api_keys_only() -> dict[str, object]:
+            values = {**dotenv_settings(), **env_settings()}
+            return {key: value for key, value in values.items() if key in {"anthropic_api_key", "nvidia_api_key"}}
+
+        return init_settings, api_keys_only, file_secret_settings
+
     # --- provider selection -------------------------------------------------
     smart_city_provider: Literal["mock", "nvidia"] = "mock"
     agent_provider: Literal["mock", "nemotron"] = "mock"
 
     # --- traffic simulation -------------------------------------------------
-    # downtown_grid (the tests use it) or pittsburgh_oakland; a relative path is taken from the repo root
+    # downtown_grid (the tests and startup use it) or pittsburgh_oakland; runtime UI/API switching is primary
     scenario_dir: Path = REPO_ROOT / "simulation" / "scenarios" / "downtown_grid"
     sumo_binary: str | None = None  # default: bundled eclipse-sumo, then $SUMO_HOME, then PATH
     sumo_gui: bool = False  # open sumo-gui for the live simulation (debugging)
@@ -40,20 +56,13 @@ class Settings(BaseSettings):
     scenario_history: int = 10  # runs kept in memory for GET /api/scenarios
     scenario_idle_timeout_s: float = 300.0  # an MCP agent's open run fails after this long without a tool call
 
-    # --- twin engine --------------------------------------------------------
-    # Branches are CPU-hungry (scenario_workers SUMO processes at once) and the live simulation shares the
-    # machine with them. Slowing the live city while a run is open trades wall-clock realism for branches
-    # that finish sooner. None leaves the speed alone; the operator's own speed change always wins. Bounded like
-    # POST /api/simulation/speed (SpeedRequest): 0 would divide by zero in the runner and put the live city in error.
-    analysis_live_speed: float | None = Field(None, gt=0, le=64)
-
     # --- autonomous demo episode (app/learning/) ----------------------------
     demo_script: str | None = None  # arm this demos/*.json script at startup
     # Startup default only; the operator can switch among configured providers from the demo panel.
-    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "auto"
+    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "mock"
     episode_monitor_s: float | None = None  # sim seconds a plan is watched (default: script monitor_s, else horizon)
     episode_agent_timeout_s: float = 300.0  # wall-clock limit for one model-backed analyst run
-    episode_fallback_to_mock: bool = True  # use mock analyst/reviewer when Claude or Nemotron fails
+    episode_fallback_to_mock: bool = False  # selected model failures stay visible; choose Mock explicitly if desired
     episode_pause_on_finish: bool = True  # pause the live simulation when an episode completes
     agent_may_implement: bool = True  # allow the MCP implement_recommendation tool (the operator path is separate)
     memory_enabled: bool = True  # store lessons and recall them for the next incident
@@ -63,7 +72,7 @@ class Settings(BaseSettings):
     # --- memory and agents --------------------------------------------------
     embedding_model: str | None = None  # unset keeps recall structured-only
     embedding_base_url: str | None = None  # defaults to NEMOTRON_BASE_URL after settings load
-    agent_fallback_to_mock: bool = True  # REST Analyze Response uses mock after a Nemotron failure
+    agent_fallback_to_mock: bool = False  # model failures stay visible instead of changing providers silently
 
     # --- mock Smart City provider ------------------------------------------
     incident_detection_delay_s: float = 4.0  # simulated seconds between a crash and its detection
@@ -77,42 +86,26 @@ class Settings(BaseSettings):
     vss_require_vlm_confirmation: bool = True
     vss_default_severity: Literal["minor", "major", "critical"] = "major"
     nemotron_base_url: str = "https://integrate.api.nvidia.com/v1"  # NIM, OpenAI-compatible
-    nemotron_model: str | None = None
+    nemotron_model: str | None = "nvidia/nemotron-3-super-120b-a12b"
 
     # --- Anthropic integration (unused unless Claude is configured) --------
     anthropic_api_key: SecretStr | None = None
     anthropic_workspace_id: str | None = None  # required by organization-level keys; scoped keys omit it
     claude_base_url: str = "https://api.anthropic.com"
-    claude_model: str | None = None
+    claude_model: str | None = "claude-haiku-4-5-20251001"
 
-    # NoDecode: pydantic-settings json.loads() a list-typed env var inside the settings source,
-    # before any validator runs, so a comma-separated CORS_ORIGINS would raise there rather than
-    # reach _split_cors_origins. NoDecode hands the raw string to the validator instead.
-    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     @field_validator("scenario_dir")
     @classmethod
     def _from_repo_root(cls, value: Path) -> Path:
-        # `make backend` runs from backend/, so a cwd-relative SCENARIO_DIR would depend on how it was started
+        # Programmatic overrides may be relative; make them independent of the caller's cwd.
         return value if value.is_absolute() else REPO_ROOT / value
 
     @field_validator("vss_replay_file")
     @classmethod
     def _replay_from_repo_root(cls, value: Path | None) -> Path | None:
         return value if value is None or value.is_absolute() else REPO_ROOT / value
-
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def _split_cors_origins(cls, value: object) -> object:
-        # Because of NoDecode this sees the raw env string, so it accepts both forms: the JSON
-        # list pydantic-settings would otherwise have parsed, and a plain comma-separated list,
-        # which is what a hosting panel or `gcloud run deploy --set-env-vars` can actually carry.
-        if not isinstance(value, str):
-            return value
-        text = value.strip()
-        if text.startswith("["):
-            return json.loads(text)
-        return [origin.strip() for origin in text.split(",") if origin.strip()]
 
     @model_validator(mode="after")
     def _default_embedding_base_url(self) -> Settings:

@@ -83,10 +83,8 @@ Other commands:
 | `make build` | type-check and production-build the UI |
 | http://localhost:5173/?fixture=scenario | Analyze Response replays a recorded run (synthetic numbers) instead of calling `POST /api/scenarios/run`; `?fixture=scenario-failed` replays the failure path. Only the analysis call is replaced: the backend must still be running and a collision active, because the map and the button's prerequisites come from the live stream |
 | `make network` | regenerate the SUMO network and demand from their build scripts |
-| `make backend-oakland` | the backend simulating [Oakland, Pittsburgh](#second-city-oakland-pittsburgh) instead of the grid (same port, so `make frontend` works as is) |
+| **Map** selector | switch the running twin between the grid and [Oakland, Pittsburgh](#second-city-oakland-pittsburgh) |
 | `make network-oakland` | rebuild the Oakland network, demand and signal timing from the OSM extract |
-| `SUMO_GUI=true make backend` | watch the live simulation in sumo-gui as well |
-| `DEMO_SCRIPT=crash-ahead make backend` | arm an autonomous-episode script at startup |
 | http://127.0.0.1:8000/docs | interactive API docs |
 
 ## Tests
@@ -111,8 +109,8 @@ ranking discount its fixture now earns (a diversion lesson with no response evid
 | `test_demo_smoke.py::test_analyze_response_recommends_and_rejects_the_unsafe_plan` | yes, whole app | inject, then Analyze Response over REST: the run completes, `aggressive-flush` is rejected, the recommendation is a completed plan |
 | `test_demo_smoke.py::test_autonomous_episode_runs_end_to_end_with_the_mock` | yes, whole app | `crash-ahead` runs to a completed episode: plan applied, lesson stored in memory |
 
-The two smoke tests each boot their own city and their own memory, and pin every setting a `.env`
-could change. Measured on that first run: the two no-SUMO tests 0.2 s together, the snapshot test
+The two smoke tests each boot their own city and their own memory, and pin their operational
+settings programmatically. Measured on that first run: the two no-SUMO tests 0.2 s together, the snapshot test
 4 s, the Analyze Response smoke test 23 s and the episode smoke test 54 s. They wait up to 5–7
 minutes before failing, so a slow machine is not a failure. When one times out, its message shows
 the last run or episode state. Run one with
@@ -142,29 +140,18 @@ demo template:
 cp .env.demo.example .env
 ```
 
-Keep `EPISODE_ANALYST=mock` as the credit-free startup selection and configure either or
-both credential sets. The **Analyst** selector in the Autonomous agent panel switches the
-analyst and reviewer between runs without editing `.env` or restarting the backend:
+Only API keys belong in this file. The app starts on the credit-free Mock team; model ids,
+safe analysis behavior and other defaults live in code. The **Analyst** selector switches
+the analyst and reviewer between runs without editing `.env` or restarting the backend:
 
 ```dotenv
 ANTHROPIC_API_KEY=your-anthropic-api-key
-ANTHROPIC_WORKSPACE_ID=your-anthropic-workspace-id
-CLAUDE_MODEL=claude-haiku-4-5-20251001
-
 NVIDIA_API_KEY=your-nvidia-api-key
-NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b
-NEMOTRON_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
 
-`ANTHROPIC_WORKSPACE_ID` is required for an organization-level Anthropic key. Omit it only
-when the key is already scoped to a workspace. The selector lists only providers whose key
-and model are configured. It is locked while an episode is armed or running so one episode
-cannot change models halfway through.
-
-For a provider qualification run, set `EPISODE_FALLBACK_TO_MOCK=false`; otherwise a failed
-analyst or reviewer call intentionally falls back to the deterministic mock. With fallback
-disabled, either failure marks the episode failed. `AGENT_PROVIDER` should stay `mock`: it
-belongs to the separate one-click Analyze Response path.
+The selector lists only providers whose key is configured. It is locked while an episode is
+armed or running so one episode cannot change models halfway through. Model-backed runs do
+not silently fall back to Mock: an analyst or reviewer error marks the episode failed.
 
 Never place either key in a tracked file, a Docker build argument, the frontend, or a
 `VITE_*` variable. A Claude web subscription and Claude API billing are separate.
@@ -219,28 +206,21 @@ gcloud run deploy traffic-ops-demo \
   --concurrency=80 \
   --timeout=3600 \
   --session-affinity \
-  --no-cpu-throttling \
-  --set-env-vars=SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland,SMART_CITY_PROVIDER=mock,AGENT_PROVIDER=mock,EPISODE_ANALYST=mock,SIM_SPEED=16,ANALYSIS_LIVE_SPEED=1,SCENARIO_WORKERS=2,MEMORY_DIR=/tmp/traffic-memory
+  --no-cpu-throttling
 ```
 
-After the mock deployment works, attach both keys without rebuilding. Add
-`ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID` to `--update-env-vars` when the Anthropic key is
-organization-level:
+After the mock deployment works, attach both API keys without rebuilding:
 
 ```bash
 gcloud run services update traffic-ops-demo \
   --region us-central1 \
-  --update-env-vars=EPISODE_ANALYST=mock,CLAUDE_MODEL=claude-haiku-4-5-20251001,ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID,NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b \
   --update-secrets=ANTHROPIC_API_KEY=anthropic-api-key:latest,NVIDIA_API_KEY=nvidia-api-key:latest
 ```
 
-Reload the console and select Mock, Claude or Nemotron from the panel. Keep
-`EPISODE_FALLBACK_TO_MOCK=false` for a qualification run if a failed paid-provider call must
-be impossible to mistake for success.
-
-`MEMORY_DIR=/tmp/traffic-memory` is deliberately temporary: lessons survive repeated runs
-on the warm demo instance, but not a replacement or restart. Keep `--max=1`; multiple
-instances would create different live cities. Because the service is public, anyone with
+Reload the console and select Mock, Claude or Nemotron from the panel. Lessons live on the
+container's ephemeral filesystem, so they survive repeated runs on the warm instance but
+not a replacement or restart. Keep `--max=1`; multiple instances would create different
+live cities. Because the service is public, anyone with
 the URL can operate the simulation. After the event, avoid paying for an always-warm
 instance:
 
@@ -318,12 +298,11 @@ were not run for this change.
 
 A second scenario, `pittsburgh_oakland`, runs the same console and pipeline on a real street
 layout: central Oakland around Fifth and Forbes Avenues, with 332 road links and 33 signals.
-The downtown grid stays the default, and the tests always use it. Use the **Map** selector in
-the running console to switch cities without restarting either server. `SCENARIO_DIR` and the
-commands below only choose which map is active at startup.
+The downtown grid stays the startup default, and the tests always use it. Use the **Map**
+selector in the running console to switch cities without restarting either server.
 
 ```bash
-make backend-oakland   # or SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland in .env
+make backend
 make frontend
 ```
 
@@ -388,19 +367,18 @@ analysis rounds of 10–16 s each plus the 600 s window, about 150 s), so use 8�
 
 ### Running the stage demo on Oakland with Claude or Nemotron
 
-The safe [demo environment template](#model-api-keys) already selects Oakland, 16× speed
-and a credit-free Mock startup. It slows the live city to 1× while branches run, then restores
-16× for monitoring, so the live city stays inside the branches' prediction horizon. Once
-either or both provider credentials are present, use
+Start on the credit-free Mock team, select Oakland in the **Map** control, then arm the demo;
+the script selects 16×. Analysis automatically holds the live city at 1× while branches run,
+then restores the operator's speed for monitoring, keeping the city inside the prediction
+horizon. Once either or both API keys are present, use
 the **Analyst** selector to switch the analyst and reviewer together between Mock, Claude
 and Nemotron without editing `.env` or restarting. The exact model id beside the selector
 is the model that will receive the next episode. For Cloud Run, add the credentials through
 Secret Manager as described in [Google Cloud Run demo](#google-cloud-run-demo).
 
-For a real provider qualification, use `EPISODE_FALLBACK_TO_MOCK=false`: an analyst or
-reviewer failure then fails the episode instead of silently completing through Mock. Prove
-the operator-controlled path with Mock, then Claude, and spend Nemotron credits only on the
-final qualification run; the ordered gates are in the
+Model-backed runs never silently fall back to Mock: an analyst or reviewer failure fails the
+episode. Prove the operator-controlled path with Mock, then Claude, and spend Nemotron credits
+only on the final qualification run; the ordered gates are in the
 [demo-readiness roadmap](#demo-readiness-gate).
 
 After **Operator collision** is armed, inject exactly one collision to start it. **Do not
@@ -601,9 +579,8 @@ below these a difference is noise. The outcome:
 **Reviewer** (`learning/reviewer.py`). It writes a `Lesson`: verdict, summary, what worked,
 what did not, what to try next time, and a confidence. It is given only the scorecard and
 the condensed episode (the situation, one line per plan tried, the plan applied). The mock
-reviewer uses templates. Claude or Nemotron writes the prose as JSON. When
-`EPISODE_FALLBACK_TO_MOCK=true`, a failed review call falls back to the mock; when false, the
-episode fails. Either way the verdict is the scorecard's outcome: the reviewer explains it
+reviewer uses templates. Claude or Nemotron writes the prose as JSON. A failed model review
+fails the episode rather than changing providers. The verdict is the scorecard's outcome: the reviewer explains it
 and cannot overrule it. A provisional lesson's confidence is capped at 0.4 after either
 reviewer returns. The raw samples are condensed into the scorecard and discarded.
 
@@ -714,33 +691,23 @@ analysis, because its snapshot describes a city that no longer exists.
 
 ### Settings
 
-Endpoints are in the [API](#api) table. Every setting is in `backend/app/config.py` **and**
-`.env.example`.
+Endpoints are in the [API](#api) table. Operational behavior is not configured through
+environment variables. It uses reviewed defaults in `backend/app/config.py` plus runtime
+controls in the console and API:
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `DEMO_SCRIPT` | unset | Arm a script at startup |
-| `EPISODE_ANALYST` | `auto` | Startup selection only: `auto` prefers configured Claude, then Nemotron, then mock; or set `mock`, `claude`, `nemotron`. The panel can switch configured teams later. The demo template pins Mock so startup never spends credits. |
-| `EPISODE_MONITOR_S` | unset | Overrides the monitor window (see Monitor above) |
-| `EPISODE_AGENT_TIMEOUT_S` | 300 | Wall-clock limit for one Claude or Nemotron analysis (plus a cap of 16 model turns) |
-| `EPISODE_FALLBACK_TO_MOCK` | true | Use the mock analyst or reviewer when the selected model fails; false makes either failure fail the episode |
-| `EPISODE_PAUSE_ON_FINISH` | true | Pause the live sim when an episode completes |
-| `AGENT_MAY_IMPLEMENT` | true | Let the agent apply its recommendation (the operator path works either way) |
-| `MEMORY_ENABLED`, `MEMORY_DIR` | true, `<repo>/memory` | Memory on/off and where it lives |
-| `SCENARIO_MAX_CANDIDATES` | 9 | Most plans an analysis simulates, the baseline included. The mock proposes exactly 9 on the grid when an EMS origin or responder exists |
-| `ANALYSIS_LIVE_SPEED` | unset | A speed multiplier above 0 and up to 64 (the console's limit). While an analysis is open the live sim runs at it, so the branches get more of the machine, and the previous speed comes back when the analysis ends. Any speed change by the operator, or a demo start, ends the hold and nothing is restored. Built, not measured |
-| `EMBEDDING_MODEL` | unset | Enables optional semantic recall through an OpenAI-compatible embedding NIM; unset preserves structured-only recall |
-| `EMBEDDING_BASE_URL` | `NEMOTRON_BASE_URL` | OpenAI-compatible `/embeddings` endpoint for `EMBEDDING_MODEL` |
-| `AGENT_FALLBACK_TO_MOCK` | true | REST Analyze Response changes `agent` to `nemotron→mock` and continues with the mock after the first NIM failure |
-| `MCP_URL` | unset | Where a model analyst reaches the MCP tools; unset = this app's server, in-process |
-| `NEMOTRON_MODEL`, `NVIDIA_API_KEY`, `NEMOTRON_BASE_URL` | unset, unset, NIM | The model id has to be supplied (see [open questions](#decisions-and-open-questions)) |
-| `CLAUDE_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID`, `CLAUDE_BASE_URL` | unset, unset, unset, Anthropic | Claude model and credentials. Organization-level keys require a workspace id; workspace-scoped keys do not. |
-| `NVIDIA_VA_MCP_URL` | unset | Streamable-HTTP VSS Video Analytics MCP endpoint; required for live VSS unless replay is set |
-| `VSS_REPLAY_FILE` | unset | Development-only VSS-shaped timeline; with `SMART_CITY_PROVIDER=nvidia`, takes precedence over the live URL |
-| `VSS_POLL_S` | 5 | Base wall-clock polling interval; failures back off to 60 s |
-| `VSS_MATCH_MAX_DIST_M` | 40 | Maximum geometry match distance |
-| `VSS_REQUIRE_VLM_CONFIRMATION` | true | Filter collisions unless VSS reports the VLM verdict `confirmed` |
-| `VSS_DEFAULT_SEVERITY` | `major` | Twin modelling fallback because VSS does not define the twin's severity |
+| Runtime control | Where |
+|---|---|
+| Active map | **Map** selector or `POST /api/simulation/map` |
+| Simulation running state and speed | Top bar or `/api/simulation/*` |
+| Demo script and memory mode | Autonomous agent panel or `POST /api/demo/start` |
+| Mock, Claude or Nemotron team | **Analyst** selector or `POST /api/demo/analyst` |
+| Clear learned lessons | Autonomous agent panel or `DELETE /api/memory` |
+
+The environment accepts only `ANTHROPIC_API_KEY` and `NVIDIA_API_KEY`. Claude defaults to
+`claude-haiku-4-5-20251001`, Nemotron defaults to
+`nvidia/nemotron-3-super-120b-a12b`, startup stays on Mock, and model failures remain visible.
+An analysis automatically holds the live city at 1× to stay inside the branch horizon; an
+operator speed change overrides that hold and is restored as the active choice.
 
 ### Task list
 
@@ -767,7 +734,7 @@ to be seen (see [Review notes](#review-notes-the-episode-pass)). Every step work
   completed episode leaves a readable `memory/episodes/EP-….md`.
 - [x] **6. Finish step.** Stop the monitor, pause the live sim, store the lesson.
 - [x] **7. Nemotron analyst** (`learning/analysts.py`, `agent/nemotron.py`). *Done when:*
-  the same script runs with `EPISODE_ANALYST=nemotron`.
+  the same script runs after selecting Nemotron in the console.
 - [x] **7a. Claude and runtime selection.** Claude Messages API adapter plus an operator
   selector for configured mock, Claude and Nemotron teams. *Done when:* each model completes
   the same operator-controlled episode without a restart. Not run yet.
@@ -800,12 +767,8 @@ and again with `{"script":"varied-crash","memory_mode":"ignore"}`. Inspect
 rounds, candidates, wall time, selected plan/verdict, recall provenance and reported deltas.
 Do not label a result measured until those user-run numbers are recorded.
 
-Repeat the varied pair with a valid `EMBEDDING_MODEL` and key, then with an invalid embedding
-configuration: the valid path should add semantic scores and sidecars; the invalid path should
-continue with structured scores and one outage warning. Finally exercise REST Analyze Response
-with `AGENT_PROVIDER=nemotron`: once with valid model output, once with invalid model output
-(the mock should take over and the run should say `nemotron→mock`), and once with
-`AGENT_FALLBACK_TO_MOCK=false` (the run should fail rather than silently changing providers).
+Optional embedding recall and the separate REST Nemotron provider remain internal integration
+paths; they need runtime controls before they belong in the stage workflow.
 
 ### Decisions and open questions
 
@@ -820,7 +783,7 @@ with `AGENT_PROVIDER=nemotron`: once with valid model output, once with invalid 
 - The two-crash rule.
 - No lesson is stored for a superseded episode.
 - A standing plan stays on the signals after its agent is superseded.
-- The mock analyst takes over if NIM fails.
+- Model failures stay visible instead of silently changing to Mock.
 - A scene cleared mid-window aborts the episode.
 - The mock analyst acts on lessons.
 
@@ -828,10 +791,8 @@ with `AGENT_PROVIDER=nemotron`: once with valid model output, once with invalid 
 weights and the mock's pruning rules above; comparing predicted and realised on absolute
 simulation time.
 
-**Open:** which NIM model id to use (`nvidia/nemotron-3-super-120b-a12b` is built for agentic
-tool calling; `nvidia/nemotron-3-nano-30b-a3b` is faster); whether to turn on
-`ANALYSIS_LIVE_SPEED` (built and off by default, not yet measured) to slow the live sim during
-analysis and reduce staleness.
+**Open:** whether `nvidia/nemotron-3-super-120b-a12b` remains the right default as newer
+agentic Nemotron models become available.
 
 ### Risks and known gaps
 
@@ -898,8 +859,7 @@ analysis and reduce staleness.
 Rules the code keeps:
 
 - **The rest of the app never knows where data came from.** `CityService` sees only the
-  `SmartCityProvider` and `AgentProvider` interfaces, and a factory picks the
-  implementation from `SMART_CITY_PROVIDER` / `AGENT_PROVIDER`.
+  `SmartCityProvider` and `AgentProvider` interfaces; the service factory owns the choice.
 - **The simulation has no decision logic.** `TrafficSimulation` executes and measures;
   callers decide what to try.
 - **Agents never set signal states; one gated implementor applies recommendations.** Agents
@@ -920,7 +880,7 @@ Details, design decisions and the NVIDIA integration plan are in
 ```
 backend/app/
   main.py               FastAPI app + lifespan
-  config.py             env settings (SMART_CITY_PROVIDER, AGENT_PROVIDER, SIM_*, SCENARIO_*, ANALYSIS_LIVE_SPEED, EPISODE_*, MEMORY_*)
+  config.py             reviewed application defaults + API-key-only environment boundary
   providers.py          provider and analyst factories + service assembly
   api/routes.py         REST + /ws/state
   api/mcp_tools.py      the scenario engine as MCP tools at /mcp
@@ -1055,8 +1015,8 @@ docs/
   rubbernecking, responder and diagnostics bookkeeping no longer makes a TraCI round trip
   per vehicle (lane and lane position ride on the existing subscription), and starting a branch no longer pays SUMO's fixed ~1 s
   connect wait. **Neither speed-up has been timed**: the wall-clock figures above are the
-  ones measured before the change. The opt-in `ANALYSIS_LIVE_SPEED` setting (see
-  [Settings](#settings)) is a further, equally unmeasured lever.
+  ones measured before the change. The automatic 1× analysis hold is what kept the qualified
+  live snapshot inside the branch horizon; the operator can override it with the speed control.
 - **Known deviations in the twin-engine speed-up, deliberately left as they are** (read from
   the code, not run):
   - *Rubbernecking with two crashes on one segment.* The old code tested a vehicle against
@@ -1082,9 +1042,8 @@ docs/
   but neither the live client nor replay fixtures have been run. A real server may expose
   field variants that need an update in the intentionally isolated `vss_mapping.py`.
 - REST `NemotronAgentProvider` now validates JSON plans and recommendations but has not been
-  exercised against a NIM model.
-  On its first failure a run becomes `nemotron→mock` when `AGENT_FALLBACK_TO_MOCK=true`; with
-  it false the run fails. Nemotron still runs as an episode analyst and reviewer too.
+  exercised against a NIM model. Model failures remain failures rather than silently changing
+  providers. Nemotron still runs as an episode analyst and reviewer too.
 - Mirrored crash size, spacing, blocked-lane effects and pass speed are twin assumptions,
   not quantities observed by VSS. Lane 0 is assumed because VSS has no lane-grade position.
 - Synthetic network (the grid) and synthetic demand (both cities). The crash physics
@@ -1113,7 +1072,7 @@ calling or prove billing. Use this order to protect the Nemotron credit balance:
 |---|---|---|---|
 | 1 | Operator-controlled flow, runtime Mock / Claude / Nemotron selector, exact model label and single-container Cloud Run packaging | Local UI passed | The UI changed Oakland → 3×3 grid → Oakland and the selector exposed all three configured teams. Container deployment is still covered by gate 6. |
 | 2 | Local mock episode | **Passed 2026-09-20** | Cold `EP-0001` completed with 8 candidates, applied `corridor-plus-divert`, compared 562.5 s, recorded 7.22 m/s mean speed, received an `effective` verdict and wrote a readable lesson. Fallback was disabled. |
-| 3 | Local Claude qualification | Awaiting explicit data-sharing approval | Run with `EPISODE_FALLBACK_TO_MOCK=false`; the local qualification is prepared, but no incident briefing has been sent to Anthropic yet. |
+| 3 | Local Claude qualification | Awaiting explicit data-sharing approval | The local qualification is prepared and model failures cannot fall back to Mock, but no incident briefing has been sent to Anthropic yet. |
 | 4 | Recall and failure drills | **Passed 2026-09-20** | Warm `EP-0002` recalled `EP-0001` and pruned 8 candidates to 4. `varied-crash` `EP-0003` recalled both lessons at 0.35 similarity and evaluated 9 candidates. Reset aborted `EP-0005` after 71.5 s of monitoring; Clear scene aborted `EP-0006` after 66 s. |
 | 5 | Local Nemotron qualification | Pending | Only after gates 2–4 pass, keep fallback off, select **Nemotron** and run one operator-controlled episode. Stop after the first successful analysis/review cycle to conserve credits. |
 | 6 | Cloud Run and stage rehearsal | Pending | Deploy Mock first, open the public URL and prove the UI, REST API and reconnecting WebSocket. Then attach Secret Manager values, qualify the stage model once, rehearse the visible click path, and set `--min=0` after the event. |

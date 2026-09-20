@@ -252,12 +252,12 @@ disagree.
 |---|---|---|
 | D1 | Is this the right scope for milestone 4? | Yes: the README's deferred items, with new tests excluded by the hard rule. |
 | D2 | What does reverting a diversion do to vehicles already diverted? | They keep their new route; only future departures stop diverting. |
-| D3 | When does auto-revert fire? | When **every** incident an applied plan covers is cleared. Plans covering a still-active incident stay, and are re-applied after the revert. `AUTO_REVERT=true`. |
+| D3 | When does auto-revert fire? | When **every** incident an applied plan covers is cleared. Plans covering a still-active incident stay, and are re-applied after the revert. |
 | D4 | May the twin make emergency vehicles a "blue light" (SUMO's `bluelight` device, so surrounding traffic yields)? | **No** unless you say so. It changes the baseline physics, every recorded number and the demo fixture. The handoff documents it as the last lever. |
 | D5 | The mock gets a ninth plan (`corridor-plus-divert`). | Raise the `SCENARIO_MAX_CANDIDATES` default from 8 to 9 and fix every "8" (CLAUDE.md lists them). |
 | D6 | Should real (VSS) incidents start an episode with no demo script? | **No.** An operator runs Analyze Response on a mirrored incident. `POST /api/demo/start` is refused with the VSS provider. |
-| D7 | Slow the live simulation while an analysis runs, to cut staleness? | **Opt-in**: `ANALYSIS_LIVE_SPEED` unset means no change. |
-| D8 | Which NIM model ids? | Still open. The chat model is `NEMOTRON_MODEL` (unset), and the embedding model is the new `EMBEDDING_MODEL` (unset, recall stays structured). Neither is chosen for you. |
+| D7 | Slow the live simulation while an analysis runs, to cut staleness? | **Automatic**: hold at 1× during analysis; the operator's runtime speed change wins. |
+| D8 | Which NIM model ids? | The stage default is `nvidia/nemotron-3-super-120b-a12b`; embedding recall remains off and structured recall stays primary. |
 
 ## Integration (after all three branches land)
 

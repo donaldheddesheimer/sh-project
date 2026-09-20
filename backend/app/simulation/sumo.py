@@ -402,7 +402,14 @@ class SumoSimulation(TrafficSimulation):
         sim = c.simulation.getSubscriptionResults()
         self._time = sim[tc.VAR_TIME]
         self._pending = tuple(sim.get(tc.VAR_PENDING_VEHICLES, ()))
-        self._veh = c.vehicle.getAllSubscriptionResults()
+        # TraCI keeps a just-arrived vehicle's subscription result for one frame and fills
+        # its numeric fields with INVALID_DOUBLE_VALUE. Treat it as gone here so the sentinel
+        # cannot become a map coordinate or drag an otherwise valid mean speed below zero.
+        self._veh = {
+            vid: result
+            for vid, result in c.vehicle.getAllSubscriptionResults().items()
+            if result.get(tc.VAR_SPEED, tc.INVALID_DOUBLE_VALUE) != tc.INVALID_DOUBLE_VALUE
+        }
         self._edges = c.edge.getAllSubscriptionResults()
         self._tls = c.trafficlight.getAllSubscriptionResults()
         return sim
@@ -415,7 +422,11 @@ class SumoSimulation(TrafficSimulation):
         for vid in departed:
             c.vehicle.subscribe(vid, VEHICLE_VARS)
         if departed:
-            self._veh = c.vehicle.getAllSubscriptionResults()
+            self._veh = {
+                vid: result
+                for vid, result in c.vehicle.getAllSubscriptionResults().items()
+                if result.get(tc.VAR_SPEED, tc.INVALID_DOUBLE_VALUE) != tc.INVALID_DOUBLE_VALUE
+            }
         if self._diversion is not None:
             self._diversion.on_departed(departed)
 

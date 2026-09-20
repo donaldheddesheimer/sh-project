@@ -4,6 +4,7 @@ import type {
   CityState,
   Episode,
   MetricSample,
+  NetworkGeometry,
   OpsEvent,
   ScenarioRun,
   ScenarioStatus,
@@ -42,6 +43,7 @@ function newerEpisode(next: Episode, prev: Episode | null): boolean {
 
 export interface CityStream {
   state: CityState | null
+  network: NetworkGeometry | null
   status: StatusInfo | null
   events: OpsEvent[]
   history: MetricSample[]
@@ -55,6 +57,7 @@ export interface CityStream {
 /** Live city state over /ws/state, with automatic reconnect. */
 export function useCityStream(): CityStream {
   const [state, setState] = useState<CityState | null>(null)
+  const [network, setNetwork] = useState<NetworkGeometry | null>(null)
   const [status, setStatus] = useState<StatusInfo | null>(null)
   const [events, setEvents] = useState<OpsEvent[]>([])
   const [history, setHistory] = useState<MetricSample[]>([])
@@ -119,15 +122,19 @@ export function useCityStream(): CityStream {
         switch (msg.type) {
           case 'hello':
             setStatus(msg.data.status)
+            setNetwork(msg.data.network)
             setEvents(msg.data.events)
             setHistory(msg.data.history)
-            if (msg.data.scenario) acceptScenario(msg.data.scenario)
+            setScenario(msg.data.scenario ?? null)
             setEpisode(msg.data.episode ?? null)
+            setPhaseLabels({})
             lastSample.current = msg.data.history.at(-1)?.t ?? -Infinity
             if (msg.data.state) {
               setState(msg.data.state)
               record(msg.data.state)
               learnPhases(msg.data.state)
+            } else {
+              setState(null)
             }
             break
           case 'state':
@@ -166,5 +173,5 @@ export function useCityStream(): CityStream {
     }
   }, [acceptScenario])
 
-  return { state, status, events, history, connected, scenario, episode, phaseLabels, acceptScenario }
+  return { state, network, status, events, history, connected, scenario, episode, phaseLabels, acceptScenario }
 }

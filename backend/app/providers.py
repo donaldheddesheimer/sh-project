@@ -150,17 +150,22 @@ def build_episode_teams(
     return teams, selected
 
 
+# traci registers labelled connections in process-global state, so these counters outlive any one service
+# graph. A map switch overlaps the old and new live simulations, and a reused label is rejected outright
+# ("Connection 'live-1' already active"), which would make every runtime switch fail.
+_live_labels = count(1)
+_branch_labels = count(1)
+
+
 def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer) -> Services:
     scenario = load_scenario(settings.scenario_dir)
     network = RoadNetwork(scenario)
-    instance = count(1)
-    branch = count(1)
 
     def live_simulation() -> SumoSimulation:
         return SumoSimulation(
             scenario,
             network,
-            label=f"live-{next(instance)}",
+            label=f"live-{next(_live_labels)}",
             snapshot_dir=settings.snapshot_dir,
             sumo_binary=settings.sumo_binary,
             gui=settings.sumo_gui,
@@ -173,7 +178,7 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
         return SumoSimulation(
             scenario,
             network,
-            label=f"branch-{next(branch)}",
+            label=f"branch-{next(_branch_labels)}",
             snapshot_dir=settings.snapshot_dir,
             sumo_binary=settings.sumo_binary,
         )

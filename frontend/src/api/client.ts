@@ -52,6 +52,7 @@ export const api = {
   pause: () => request('POST', '/api/simulation/pause'),
   reset: () => request('POST', '/api/simulation/reset'),
   speed: (multiplier: number) => request('POST', '/api/simulation/speed', { multiplier }),
+  selectMap: (mapId: string) => request<NetworkGeometry>('POST', '/api/simulation/map', { map_id: mapId }),
   injectCollision: () => request('POST', '/api/incidents/inject', { type: 'collision' }),
   clearIncident: (id: string) => request('POST', `/api/incidents/${encodeURIComponent(id)}/clear`),
   dispatchEmergency: () => request('POST', '/api/emergency/dispatch', {}),

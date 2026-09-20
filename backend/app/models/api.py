@@ -98,6 +98,10 @@ class SpeedRequest(BaseModel):
     multiplier: float = Field(gt=0, le=64)
 
 
+class MapSelectionRequest(BaseModel):
+    map_id: str = Field(description="Bundled scenario id: downtown_grid or pittsburgh_oakland")
+
+
 class DemoStartRequest(BaseModel):
     script: str = Field(description="A demo script id from simulation/scenarios/<scenario>/demos/*.json")
     memory_mode: MemoryMode = Field("use", description="use recalled lessons, or ignore them for a control run")

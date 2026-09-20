@@ -1,4 +1,4 @@
-.PHONY: setup backend backend-oakland frontend dev test build network network-oakland
+.PHONY: setup backend frontend dev test build network network-oakland
 
 VENV := backend/.venv
 PY := $(VENV)/bin/python
@@ -16,9 +16,6 @@ setup: ## Create the backend venv (bundles SUMO) if missing, sync its packages, 
 
 backend: ## FastAPI + live SUMO simulation on :8000
 	cd backend && .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
-
-backend-oakland: ## The same backend on :8000, simulating Oakland, Pittsburgh instead of the grid
-	cd backend && SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 frontend: ## Vite dev server on :5173 (proxies /api and /ws to :8000)
 	npm --prefix frontend run dev

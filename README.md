@@ -42,7 +42,8 @@ cp .env.demo.example .env
 The copied `.env` is git-ignored. Put local API keys only in that file, never in
 `.env.demo.example`; see [Model API keys](#model-api-keys).
 
-Open http://localhost:5173. Or run the two halves in separate terminals:
+Open http://localhost:5173; [Using the console](#using-the-console) is the tour of the
+workspace. Or run the two halves in separate terminals:
 
 ```bash
 make backend    # cd backend && .venv/bin/uvicorn app.main:app --port 8000
@@ -83,10 +84,8 @@ Other commands:
 | `make build` | type-check and production-build the UI |
 | http://localhost:5173/?fixture=scenario | Analyze Response replays a recorded run (synthetic numbers) instead of calling `POST /api/scenarios/run`; `?fixture=scenario-failed` replays the failure path. Only the analysis call is replaced: the backend must still be running and a collision active, because the map and the button's prerequisites come from the live stream |
 | `make network` | regenerate the SUMO network and demand from their build scripts |
-| `make backend-oakland` | the backend simulating [Oakland, Pittsburgh](#second-city-oakland-pittsburgh) instead of the grid (same port, so `make frontend` works as is) |
+| **Map** selector | switch the running twin between the grid and [Oakland, Pittsburgh](#second-city-oakland-pittsburgh) |
 | `make network-oakland` | rebuild the Oakland network, demand and signal timing from the OSM extract |
-| `SUMO_GUI=true make backend` | watch the live simulation in sumo-gui as well |
-| `DEMO_SCRIPT=crash-ahead make backend` | arm an autonomous-episode script at startup |
 | http://127.0.0.1:8000/docs | interactive API docs |
 
 ## Tests
@@ -111,8 +110,8 @@ ranking discount its fixture now earns (a diversion lesson with no response evid
 | `test_demo_smoke.py::test_analyze_response_recommends_and_rejects_the_unsafe_plan` | yes, whole app | inject, then Analyze Response over REST: the run completes, `aggressive-flush` is rejected, the recommendation is a completed plan |
 | `test_demo_smoke.py::test_autonomous_episode_runs_end_to_end_with_the_mock` | yes, whole app | `crash-ahead` runs to a completed episode: plan applied, lesson stored in memory |
 
-The two smoke tests each boot their own city and their own memory, and pin every setting a `.env`
-could change. Measured on that first run: the two no-SUMO tests 0.2 s together, the snapshot test
+The two smoke tests each boot their own city and their own memory, and pin their operational
+settings programmatically. Measured on that first run: the two no-SUMO tests 0.2 s together, the snapshot test
 4 s, the Analyze Response smoke test 23 s and the episode smoke test 54 s. They wait up to 5–7
 minutes before failing, so a slow machine is not a failure. When one times out, its message shows
 the last run or episode state. Run one with
@@ -142,29 +141,23 @@ demo template:
 cp .env.demo.example .env
 ```
 
-Keep `EPISODE_ANALYST=mock` as the credit-free startup selection and configure either or
-both credential sets. The **Analyst** selector in the Autonomous agent panel switches the
-analyst and reviewer between runs without editing `.env` or restarting the backend:
+Only model credentials belong in this file, and they are the only names the app reads from
+the environment at all. The app starts on the credit-free Mock team; model ids, safe analysis
+behavior and every other default live in code ([Settings](#settings)). The **Analyst**
+selector switches the analyst and reviewer between runs without editing `.env` or restarting
+the backend:
 
 ```dotenv
 ANTHROPIC_API_KEY=your-anthropic-api-key
 ANTHROPIC_WORKSPACE_ID=your-anthropic-workspace-id
-CLAUDE_MODEL=claude-haiku-4-5-20251001
-
 NVIDIA_API_KEY=your-nvidia-api-key
-NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b
-NEMOTRON_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
 
-`ANTHROPIC_WORKSPACE_ID` is required for an organization-level Anthropic key. Omit it only
-when the key is already scoped to a workspace. The selector lists only providers whose key
-and model are configured. It is locked while an episode is armed or running so one episode
-cannot change models halfway through.
-
-For a provider qualification run, set `EPISODE_FALLBACK_TO_MOCK=false`; otherwise a failed
-analyst or reviewer call intentionally falls back to the deterministic mock. With fallback
-disabled, either failure marks the episode failed. `AGENT_PROVIDER` should stay `mock`: it
-belongs to the separate one-click Analyze Response path.
+`ANTHROPIC_WORKSPACE_ID` is required for an organization-level Anthropic key; omit it when
+the key is already scoped to a workspace. The selector lists only providers whose key is
+configured. It is locked while an episode is armed or running so one episode cannot change
+models halfway through. Model-backed runs do not silently fall back to Mock: an analyst or
+reviewer error marks the episode failed.
 
 Never place either key in a tracked file, a Docker build argument, the frontend, or a
 `VITE_*` variable. A Claude web subscription and Claude API billing are separate.
@@ -219,28 +212,25 @@ gcloud run deploy traffic-ops-demo \
   --concurrency=80 \
   --timeout=3600 \
   --session-affinity \
-  --no-cpu-throttling \
-  --set-env-vars=SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland,SMART_CITY_PROVIDER=mock,AGENT_PROVIDER=mock,EPISODE_ANALYST=mock,SIM_SPEED=16,ANALYSIS_LIVE_SPEED=1,SCENARIO_WORKERS=2,MEMORY_DIR=/tmp/traffic-memory
+  --no-cpu-throttling
 ```
 
-After the mock deployment works, attach both keys without rebuilding. Add
-`ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID` to `--update-env-vars` when the Anthropic key is
-organization-level:
+After the mock deployment works, attach both API keys without rebuilding:
 
 ```bash
 gcloud run services update traffic-ops-demo \
   --region us-central1 \
-  --update-env-vars=EPISODE_ANALYST=mock,CLAUDE_MODEL=claude-haiku-4-5-20251001,ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID,NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b \
   --update-secrets=ANTHROPIC_API_KEY=anthropic-api-key:latest,NVIDIA_API_KEY=nvidia-api-key:latest
 ```
 
-Reload the console and select Mock, Claude or Nemotron from the panel. Keep
-`EPISODE_FALLBACK_TO_MOCK=false` for a qualification run if a failed paid-provider call must
-be impossible to mistake for success.
+Add `--update-env-vars=ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID` when the Anthropic key is
+organization-level. It is the only environment name besides the two keys that the app reads;
+`--set-env-vars` would replace the whole list, so use `--update-env-vars`.
 
-`MEMORY_DIR=/tmp/traffic-memory` is deliberately temporary: lessons survive repeated runs
-on the warm demo instance, but not a replacement or restart. Keep `--max=1`; multiple
-instances would create different live cities. Because the service is public, anyone with
+Reload the console and select Mock, Claude or Nemotron from the panel. Lessons live on the
+container's ephemeral filesystem, so they survive repeated runs on the warm instance but
+not a replacement or restart. Keep `--max=1`; multiple instances would create different
+live cities. Because the service is public, anyone with
 the URL can operate the simulation. After the event, avoid paying for an always-warm
 instance:
 
@@ -252,78 +242,106 @@ Google references: [source deployment](https://docs.cloud.google.com/run/docs/de
 [WebSockets](https://docs.cloud.google.com/run/docs/triggering/websockets), and
 [Secret Manager integration](https://docs.cloud.google.com/run/docs/configuring/services/secrets).
 
+## Using the console
+
+The console is one map-first workspace. Five regions, named the same way everywhere in this
+README:
+
+| Region | Where | What it holds |
+|---|---|---|
+| **Command bar** | Across the top, available in every view | The **Map** selector (**3×3 Grid**, **Pittsburgh**), network state and the simulated clock, the time scale (1×–16×), play/pause and reset, and the three response commands: **Inject collision**, **Dispatch EMS**, **Analyze Response** |
+| **Workspace rail** | Narrow left column | The three views — **Live**, **Analysis**, **Agent** — each with a count: active incidents, candidate plans, and a working episode |
+| **Map** | The center, always the live twin and never a branch | Roads colored by cycle-averaged congestion, signal heads on the live phase, vehicles, incident markers, the EMS responder, cameras on the VSS path, and the legend. The caption under it names the network, its signalized intersections, the tracked vehicle count and the three providers in use |
+| **Workspace drawer** | Right column, titled by the selected view | **Live**: Active incident, Network performance, Inspector. **Analysis**: Response plans, then the incident. **Agent**: Autonomous agent, then the plans and the incident |
+| **Performance dock** | Strip along the bottom | **Live trends** (delay, max queue, throughput and mean speed against simulated time, one marker per incident, above the city overview and the ops log), **Scenario comparison** (the KPI table and the horizon chart, enabled once a run exists) and **Activity** (that overview and ops log on their own, with more room) |
+
+How the regions drive each other:
+
+- Selecting a view in the rail switches the drawer to it, and opens the drawer when it is an
+  overlay. The dock follows the view — **Live trends** for Live, **Scenario comparison** for
+  Analysis and Agent once a run exists — and any tab can still be chosen by hand.
+- **Analyze Response** switches to Analysis before it starts the run, so the plans appear
+  where you are already looking.
+- Clicking an incident marker, a road or a signal on the map switches to Live and selects
+  that object in Active incident or the Inspector.
+- Hovering or clicking a plan, in either the drawer or the dock, paints it on the map and
+  pins a summary card there; clicking the same plan again clears it.
+- **Dispatch EMS** targets the newest active incident. With several incidents open, the
+  drawer gets a **Selected incident** picker, and dispatch is disabled while an older one is
+  selected.
+- **Analyze Response** is disabled whenever it cannot run, and its tooltip says why: not
+  connected, the simulation is not ready, no active incident, or an autonomous agent already
+  owns the response (the button then reads **Agent responding**).
+- Switching maps starts a fresh live simulation. Map-local incidents, analysis runs,
+  episodes, trends and selections are cleared; durable agent memory is not.
+
+The drawer is a permanent column on a wide desktop. Below 1050 px it overlays the map
+instead: open it from the rail and close it with the × in its header, and the command bar
+scrolls horizontally so every command stays reachable. The palette uses slate surfaces, a
+restrained blue interaction accent and state-only alert colors; it uses no proprietary design
+assets. `frontend/src/styles.css` holds the base component styles and
+`frontend/src/console.css` the workspace presentation and responsive layout. The Oakland
+desktop view was visually inspected with a live collision and a dispatched EMS responder; see
+the [demo screenshot](docs/screenshots/map-first-demo-oakland.png). Automated checks were not
+run for this change.
+
 ## Demo walkthrough: Analyze Response
 
-1. The network warms up (5 simulated minutes, about 1 s) and runs at 4× real time. Roads
-   are colored by cycle-averaged congestion, signal heads show the live phase, and
-   vehicles move.
-2. **Inject Collision**: two crashed vehicles block the right lane of Main St
+The operator pipeline: inject a crash, test every response in parallel branches, read the
+recommendation. Written for the **3×3 Grid**; the clicks are identical on **Pittsburgh**, but
+the streets and the numbers differ (see [Second city](#second-city-oakland-pittsburgh)).
+Allow about three minutes.
+
+1. **Open the console** at http://localhost:5173 and select **Live** in the rail. The network
+   warms up (5 simulated minutes, about 1 s) and then runs at 4× real time: roads colored by
+   congestion, signal heads on the live phase, vehicles moving.
+2. **Inject collision** (command bar). Two crashed vehicles block the right lane of Main St
    eastbound between Central Ave and Pine Ave. Traffic squeezes past at walking pace.
-3. About 4 simulated seconds later the (mock) Smart City provider reports **INC-0001**
-   from cameras CAM-C2/CAM-B2. The incident card, map marker and ops log light up.
-4. Within 2–3 simulated minutes the link goes **severe**, the queue spills back past
-   Central Ave onto Main St toward Oak Ave, and Central Ave starts to back up. Network
-   delay roughly doubles (KPI tiles show the delta against pre-incident values).
-5. **Analyze Response** (top bar, once the incident is detected). The backend snapshots
-   the live network, then simulates the baseline and each candidate plan for 10 minutes
-   in its own fresh SUMO process, 4 at a time. It dispatches an EMS probe from Fire
-   Station 3 in every branch. The run takes about 25 s, and the live simulation keeps
-   running meanwhile. The panel shows the following:
-   - Plan cards appear as each branch finishes. Each shows delay, max queue, throughput
-     and EMS response time, with the change against the baseline.
-   - `aggressive-flush` comes back **rejected by the safety validator** (an 8 s green is
-     below the 12 s pedestrian minimum) and is never simulated.
-   - A recommendation with its rationale. In the measured run below it was the
-     diversion advisory: mean delay down 15% and EMS response down 17% (4:52 → 4:03).
-   - The comparison dock, horizon chart and map overlays show what each plan changes.
-6. **Dispatch EMS**: EMS-1 leaves Fire Station 3 and the live ETA tracks it. It
-   typically loses a couple of minutes in the incident queue.
-7. **Clear scene** reopens the lane; **Reset** restores a clean network.
+3. About 4 simulated seconds later the (mock) Smart City provider reports **INC-0001** from
+   cameras CAM-C2/CAM-B2. The Active incident card fills in, the map marker appears, and the
+   detection is written to the ops log (dock → **Activity**).
+4. **Let the queue build** for 2–3 simulated minutes — 30–45 s at 4×, less if you raise the
+   time scale. The link goes **severe**, the queue spills back past Central Ave onto Main St
+   toward Oak Ave, and Central Ave starts to back up. Network performance shows each KPI
+   against its pre-incident value, and network delay roughly doubles.
+5. **Analyze Response** (command bar). The rail switches to Analysis and the run starts: the
+   backend snapshots the live network, then simulates the baseline and each candidate plan
+   for 10 minutes in its own fresh SUMO process, 4 at a time, dispatching an EMS probe from
+   Fire Station 3 in every branch. It takes about 25 s, and the live simulation keeps running
+   throughout. While it works:
+   - The button becomes its own progress bar and counts the branches (`Analyzing 5/9…`).
+   - Response plans lists each plan as its branch finishes, with delay, max queue, throughput
+     and EMS response time, each against the baseline.
+   - `aggressive-flush` comes back **rejected by the safety validator** — an 8 s green is
+     below the 12 s pedestrian minimum — and is never simulated.
+   - The dock's **Scenario comparison** ranks every plan and charts the 10-minute horizon.
+   - **Recommended plan** appears at the top of the drawer with the agent's rationale. In the
+     measured grid run it was the diversion advisory: mean delay down 15% and EMS response
+     down 17% (4:52 → 4:03).
+6. **Apply to live signals**, under the recommendation, when the plan should take effect.
+   Until then the footer reads "Advisory until applied": nothing in an analysis touches the
+   live signals. Applying re-checks the plan against the live signal programs and installs it
+   through the same gated implementor an autonomous agent uses (see
+   [How the pieces work](#how-the-pieces-work)); the footer then names who applied it, when,
+   and how stale the snapshot was.
+7. **Dispatch EMS** (command bar or the incident card): EMS-1 leaves Fire Station 3 and the
+   live ETA tracks it. It typically loses a couple of minutes in the incident queue.
+8. **Clear scene** (incident card) reopens the lane. **Reset** (command bar) restores a clean
+   network; it also fails any analysis still open, whose snapshot now describes a city that
+   is gone.
 
-Nothing in the analysis changes the live signals: a recommendation is advisory until it is
-applied. **Apply to live signals**, under the recommendation, is the operator's way to apply
-it. It uses the same gated implementor as an autonomous agent (see
-[How the pieces work](#how-the-pieces-work)).
-
-Use the speed control (1×–16×) to fast-forward. Click an intersection or road to inspect
-its phase, queues and speed.
-
-### Console layout
-
-The map-first command workspace has three working rail views: **Live** (active incident,
-network KPIs and the road/signal inspector), **Analysis** (candidate plans, the safety
-rejection and advisory/apply state), and **Agent** (demo script controls, episode progress,
-lesson and scorecard, with the plans alongside). The command bar switches between the
-**3×3 Grid** and **Pittsburgh** and keeps simulation state, clock, speed, Inject Collision,
-Dispatch EMS and Analyze Response available in every view. Switching maps starts a fresh
-live simulation: map-local incidents, analysis runs, episodes, trends and selections are
-cleared, while durable agent memory remains available.
-Analyze Response opens Analysis before starting a run. Clicking an incident marker opens it
-in Live; with multiple active incidents the drawer has an explicit incident selector. The
-dispatch shortcut still targets the newest active incident, so dispatch is disabled while
-an older one is selected. Clicking a road or signal opens its inspector in Live.
-
-The lower dock offers live trends, scenario comparison and a separate Activity view of the
-event log and city overview. The right drawer stays visible on a wide desktop; below 1050 px
-it overlays the map and can be opened from the rail and closed from its header. The top bar
-scrolls horizontally at that size to keep every command reachable. The palette uses slate
-surfaces, a restrained blue interaction accent and state-only alert colors; it does not use
-proprietary design assets. `frontend/src/styles.css` holds base component styles and
-`frontend/src/console.css` holds the workspace presentation and responsive layout. The
-Oakland desktop view was visually inspected with a live collision and dispatched EMS;
-see the [demo screenshot](docs/screenshots/map-first-demo-oakland.png). Automated checks
-were not run for this change.
+Click any road or signal for its phase, queues and speed in the Inspector, and use the time
+scale to fast-forward between beats.
 
 ## Second city: Oakland, Pittsburgh
 
 A second scenario, `pittsburgh_oakland`, runs the same console and pipeline on a real street
 layout: central Oakland around Fifth and Forbes Avenues, with 332 road links and 33 signals.
-The downtown grid stays the default, and the tests always use it. Use the **Map** selector in
-the running console to switch cities without restarting either server. `SCENARIO_DIR` and the
-commands below only choose which map is active at startup.
+The downtown grid stays the startup default, and the tests always use it. The **Map** selector
+in the command bar switches cities without restarting either server.
 
 ```bash
-make backend-oakland   # or SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland in .env
+make backend
 make frontend
 ```
 
@@ -361,53 +379,93 @@ make frontend
 
 ## Demo walkthrough: autonomous episode
 
-Only a smoke test at different settings has run it (see [Tests](#tests)), so the timings below are still estimates. Use the
-**Agent** rail view (the Autonomous agent panel), or the API.
+The same pipeline with no operator in it: the agent detects the incident, tests the plans,
+applies its choice to the live city, watches what happens and writes down what it learned.
+Everything below is the **Agent** view; the API can do the same. Only a smoke test at
+different settings has run the loop (see [Tests](#tests)), so the timings are estimates.
 
-1. For a cold run, clear the memory: the panel's **clear**, or `DELETE /api/memory`.
-2. Pick **Operator collision** and click **Arm**
+1. **Open Agent** in the rail. The Autonomous agent panel's top rows are the whole control
+   set: the demo script, the memory mode, **Arm**/**Run**, **Stop**, the **Analyst** selector
+   with the exact model id beside it, and how many lessons are stored.
+2. **Start cold.** Click **clear** next to the stored-episode count (or `DELETE /api/memory`)
+   so the agent begins with no lessons. Leave the mode on **Use memory**; **Ignore memory**
+   is the no-recall control (see [Terms](#terms)).
+3. **Arm the script.** Pick **Operator collision** and click **Arm**
    (`POST /api/demo/start {"script": "operator-collision"}`). The city resets, switches to
-   16×, and waits without scheduling a crash.
-3. When the audience is ready, click **Inject collision** in the top bar. About 4 simulated
-   seconds later, INC-0001 is detected and the episode goes `detected → analyzing`. The
-   analysis streams into Response plans as in the walkthrough above.
-4. The agent applies its recommendation. The ops log lists the new signal programs and the
-   EMS probe it dispatched, and the recommendation footer reads "Applied to live signals".
-   The episode goes `monitoring`, with an accessible progress bar over 600 simulated seconds.
-5. `reviewing → completed`: the panel shows the lesson (verdict, summary, next time) and
-   the scorecard's delay numbers, `memory/episodes/EP-0001.md` is written, and the live sim
-   pauses.
-6. Reset, arm **Operator collision**, and inject again. The analysis lists `EP-0001` under
-   lessons used and, if that lesson was `effective`, simulates 4 plans instead of 9.
-7. **Different crash** (`varied-crash`) resembles the first crash but is not the same, so the
-   lesson only reorders the plans. **Second crash mid-response** (`double-crash`) shows the
-   two-crash rule: one episode `superseded`, one `completed` over both incidents.
+   16×, and waits without scheduling a crash. The panel reads `armed` and names the next
+   action.
+4. **Inject collision** (command bar) when the audience is ready. About 4 simulated seconds
+   later INC-0001 is detected, the episode goes `detected → analyzing`, and Analyze Response
+   changes to **Agent responding** for the rest of it.
+5. **Watch it decide.** The step strip walks Armed → Detect → Analyze → Monitor → Review →
+   Learn. The analysis streams into Response plans below the panel exactly as in the
+   walkthrough above, and the dock's Scenario comparison ranks the branches. The panel's
+   **Analysis** row counts the plans, the rounds and the wall time the analyst took.
+6. **Watch it act.** The agent applies its own recommendation. The ops log (dock →
+   **Activity**) lists the signal programs it installed and the EMS probe it dispatched, and
+   the recommendation footer changes to "Applied to live signals". The episode goes
+   `monitoring` with a progress bar over 600 simulated seconds, and the **Watching** row
+   counts them off.
+7. **Watch it learn.** `reviewing → completed`: the reviewer's **Lesson** appears with a
+   verdict (`effective`, `ineffective` or `inconclusive`), a one-line summary and what to do
+   next time; `memory/episodes/EP-0001.md` is written; the live sim pauses. The scorecard
+   arrives with it: **Mean delay** and **Vs nothing** compare what really happened with what
+   the twin predicted and with doing nothing. The collapsed **Learning** list at the
+   bottom of the panel now includes the episode.
+8. **Prove the memory.** Arm **Operator collision** again — arming resets the city — and
+   inject a second time. The panel's **Lessons used** row now names `EP-0001`, and if that
+   lesson was `effective` the agent simulates 4 plans instead of 9: remembering, made visible.
+9. **Optional.** **Different crash** (`varied-crash`) resembles the first crash without
+   repeating it, so the lesson only reorders the plans. **Second crash mid-response**
+   (`double-crash`) shows the [two-crash rule](#the-two-crash-rule): one episode
+   `superseded`, one `completed` over both incidents.
 
 An episode takes about 4–6 minutes of wall time at 4× (an estimate from today's timings:
 analysis rounds of 10–16 s each plus the 600 s window, about 150 s), so use 8–16× on stage.
 
+Once **Operator collision** is armed, inject exactly one collision to start the episode. **Do
+not inject a second one while the episode is working** unless the two-crash behavior is the
+point: that rule supersedes the working episode and stores no lesson for it. Scheduled
+scripts such as `crash-ahead` fire their own collision and need no manual injection.
+
+### Stage checklist
+
+Ten minutes before presenting:
+
+| | Check | Where |
+|---|---|---|
+| 1 | The twin is streaming | The map caption shows the network, its signalized intersections and a non-zero vehicle count; the dock reads `network running` |
+| 2 | The city you will present is loaded | Command bar → **Map**. A switch restarts the simulation, so do it now and not on stage |
+| 3 | The analyst is the one you will talk about | **Agent** → **Analyst**, and read the model id printed beside it |
+| 4 | Memory is in the state your story needs | **Agent** → **clear** for a cold first episode; leave the lessons in place to demonstrate recall |
+| 5 | Credentials are loaded, unless you present Mock | [Model API keys](#model-api-keys) |
+| 6 | The time scale is high enough | 8× or 16× in the command bar; the wall-time estimate above is for 4× |
+
+If something goes wrong:
+
+| Symptom | What it means |
+|---|---|
+| **Analyze Response** is greyed out | Hover it. The tooltip names the missing prerequisite, and **Agent responding** means an episode already owns this incident |
+| The analysis ends `failed` | The Response plans callout carries the backend's reason. Clear the scene or reset, inject again, and re-run |
+| The episode ends `failed` | The panel shows the error in a red callout. A model run never falls back to Mock, so clear the scene, select **Mock** in the **Analyst** selector and re-arm to finish the demo |
+| You are unsure which team ran | The panel's **Analyst** row records what actually ran, beside the exact model id |
+| The console reads **OFFLINE** | The backend is unreachable. The console reconnects on its own once it is back, and backfills the trends |
+
 ### Running the stage demo on Oakland with Claude or Nemotron
 
-The safe [demo environment template](#model-api-keys) already selects Oakland, 16× speed
-and a credit-free Mock startup. It slows the live city to 1× while branches run, then restores
-16× for monitoring, so the live city stays inside the branches' prediction horizon. Once
-either or both provider credentials are present, use
-the **Analyst** selector to switch the analyst and reviewer together between Mock, Claude
-and Nemotron without editing `.env` or restarting. The exact model id beside the selector
-is the model that will receive the next episode. For Cloud Run, add the credentials through
-Secret Manager as described in [Google Cloud Run demo](#google-cloud-run-demo).
+Start on the credit-free Mock team, select Oakland in the command bar's **Map** selector, then
+arm the demo; the script selects 16×. Analysis automatically holds the live city at 1× while
+branches run, then restores the operator's speed for monitoring, keeping the city inside the
+prediction horizon. Once either or both API keys are present, use the **Analyst** selector to
+switch the analyst and reviewer together between Mock, Claude and Nemotron without editing
+`.env` or restarting. The exact model id beside the selector is the model that will receive the
+next episode. For Cloud Run, add the credentials through Secret Manager as described in
+[Google Cloud Run demo](#google-cloud-run-demo).
 
-For a real provider qualification, use `EPISODE_FALLBACK_TO_MOCK=false`: an analyst or
-reviewer failure then fails the episode instead of silently completing through Mock. Prove
-the operator-controlled path with Mock, then Claude, and spend Nemotron credits only on the
-final qualification run; the ordered gates are in the
+Model-backed runs never silently fall back to Mock: an analyst or reviewer failure fails the
+episode. Prove the operator-controlled path with Mock, then Claude, and spend Nemotron credits
+only on the final qualification run; the ordered gates are in the
 [demo-readiness roadmap](#demo-readiness-gate).
-
-After **Operator collision** is armed, inject exactly one collision to start it. **Do not
-inject another collision while the episode is working** unless the two-crash behavior is
-the point of the demonstration: the [two-crash rule](#the-two-crash-rule) supersedes the
-working episode and stores no lesson for it. Scheduled scripts such as `crash-ahead` fire
-their own collision and need no manual injection.
 
 ## The autonomous, self-learning episode
 
@@ -489,8 +547,8 @@ fires scheduled crashes at their simulation times. A script with no crashes wait
 operator's **Inject collision** click. A crash before the end of warm-up (300 s) has
 **already happened** when the console opens, so a queue is forming. A later crash **will
 happen** while the demo runs. Scripts live in each scenario's `demos/*.json` and are
-loaded by `simulation/scenario.py`. `POST /api/demo/start` resets the city and arms one;
-`DEMO_SCRIPT` arms one at startup. They are available for both the grid and Oakland with the
+loaded by `simulation/scenario.py`. `POST /api/demo/start` resets the city and arms one,
+and the `demo_script` default (unset) can arm one at startup. They are available for both the grid and Oakland with the
 same ids; Oakland uses Forbes Avenue eastbound and Fifth Avenue westbound instead of the grid roads.
 
 | Script | Crashes | What it shows |
@@ -536,7 +594,7 @@ live programs. A `baseline` recommendation applies nothing but still dispatches 
 and is monitored and reviewed: doing nothing can be the right answer.
 
 - **Who applies it.** The mock analyst applies its own recommendation. If a model submits
-  without applying, the episode service does (`coordinator`). With `AGENT_MAY_IMPLEMENT=false`
+  without applying, the episode service does (`coordinator`). With `agent_may_implement` false
   neither does: the episode waits in `analyzing` until an operator clicks **Apply to live
   signals**.
 - **After it is applied.** The plan joins the standing responses until a reset. Apply and
@@ -553,7 +611,7 @@ with the plan and responders that were already en route at the snapshot. It uses
 timing origin as the branches and reports the last arrival, unknown while any timed responder
 has not arrived.
 
-The window lasts `EPISODE_MONITOR_S`, else the script's `monitor_s`, else the run's horizon
+The window lasts `episode_monitor_s`, else the script's `monitor_s`, else the run's horizon
 (600 s in every shipped script, so predicted and realised windows match). It counts
 **simulated** seconds, so pausing the sim pauses it. A reset or a cleared scene aborts it.
 
@@ -601,9 +659,8 @@ below these a difference is noise. The outcome:
 **Reviewer** (`learning/reviewer.py`). It writes a `Lesson`: verdict, summary, what worked,
 what did not, what to try next time, and a confidence. It is given only the scorecard and
 the condensed episode (the situation, one line per plan tried, the plan applied). The mock
-reviewer uses templates. Claude or Nemotron writes the prose as JSON. When
-`EPISODE_FALLBACK_TO_MOCK=true`, a failed review call falls back to the mock; when false, the
-episode fails. Either way the verdict is the scorecard's outcome: the reviewer explains it
+reviewer uses templates. Claude or Nemotron writes the prose as JSON. A failed model review
+fails the episode rather than changing providers. The verdict is the scorecard's outcome: the reviewer explains it
 and cannot overrule it. A provisional lesson's confidence is capped at 0.4 after either
 reviewer returns. The raw samples are condensed into the scorecard and discarded.
 
@@ -703,9 +760,9 @@ the nearest `ignore` control of the same script. A cross-script comparison is `u
 finds at least one configured signal: an effective recalled family moved earlier; an ineffective
 one moved later or was omitted; fewer candidates or rounds; an ineffective control verdict
 improved; or realised delay materially improved without a material queue or EMS regression.
-The collapsed **Learning** panel renders the same report.
+The collapsed **Learning** list in the Autonomous agent panel renders the same report.
 
-**Finish.** The monitor stops, the live sim is paused (`EPISODE_PAUSE_ON_FINISH`, unless
+**Finish.** The monitor stops, the live sim is paused (`episode_pause_on_finish`, unless
 another episode is working), the lesson is written, and the episode is `completed`.
 Episode statuses: `armed → detected → analyzing → monitoring → reviewing → completed`, plus
 `superseded`, `aborted` (reset, **Clear scene** or `POST /api/demo/stop` before the window
@@ -714,33 +771,44 @@ analysis, because its snapshot describes a city that no longer exists.
 
 ### Settings
 
-Endpoints are in the [API](#api) table. Every setting is in `backend/app/config.py` **and**
-`.env.example`.
+Endpoints are in the [API](#api) table. Operational behavior is not configured through
+environment variables. It uses reviewed defaults in `backend/app/config.py` plus runtime
+controls in the console and API:
 
-| Setting | Default | Meaning |
+| Runtime control | Where |
+|---|---|
+| Active map | the command bar's **Map** selector or `POST /api/simulation/map` |
+| Simulation running state and time scale | the command bar or `/api/simulation/*` |
+| Demo script and memory mode | the Autonomous agent panel or `POST /api/demo/start` |
+| Mock, Claude or Nemotron team | the **Analyst** selector or `POST /api/demo/analyst` |
+| Clear learned lessons | the Autonomous agent panel or `DELETE /api/memory` |
+
+The environment accepts only `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID` (the scope an
+organization-level Anthropic key needs) and `NVIDIA_API_KEY`. Anything else in a `.env` or in
+the process environment is ignored by design, including on a container host.
+
+The defaults a demo run depends on, all in `backend/app/config.py`:
+
+| Default | Value | Meaning |
 |---|---|---|
-| `DEMO_SCRIPT` | unset | Arm a script at startup |
-| `EPISODE_ANALYST` | `auto` | Startup selection only: `auto` prefers configured Claude, then Nemotron, then mock; or set `mock`, `claude`, `nemotron`. The panel can switch configured teams later. The demo template pins Mock so startup never spends credits. |
-| `EPISODE_MONITOR_S` | unset | Overrides the monitor window (see Monitor above) |
-| `EPISODE_AGENT_TIMEOUT_S` | 300 | Wall-clock limit for one Claude or Nemotron analysis (plus a cap of 16 model turns) |
-| `EPISODE_FALLBACK_TO_MOCK` | true | Use the mock analyst or reviewer when the selected model fails; false makes either failure fail the episode |
-| `EPISODE_PAUSE_ON_FINISH` | true | Pause the live sim when an episode completes |
-| `AGENT_MAY_IMPLEMENT` | true | Let the agent apply its recommendation (the operator path works either way) |
-| `MEMORY_ENABLED`, `MEMORY_DIR` | true, `<repo>/memory` | Memory on/off and where it lives |
-| `SCENARIO_MAX_CANDIDATES` | 9 | Most plans an analysis simulates, the baseline included. The mock proposes exactly 9 on the grid when an EMS origin or responder exists |
-| `ANALYSIS_LIVE_SPEED` | unset | A speed multiplier above 0 and up to 64 (the console's limit). While an analysis is open the live sim runs at it, so the branches get more of the machine, and the previous speed comes back when the analysis ends. Any speed change by the operator, or a demo start, ends the hold and nothing is restored. Built, not measured |
-| `EMBEDDING_MODEL` | unset | Enables optional semantic recall through an OpenAI-compatible embedding NIM; unset preserves structured-only recall |
-| `EMBEDDING_BASE_URL` | `NEMOTRON_BASE_URL` | OpenAI-compatible `/embeddings` endpoint for `EMBEDDING_MODEL` |
-| `AGENT_FALLBACK_TO_MOCK` | true | REST Analyze Response changes `agent` to `nemotron→mock` and continues with the mock after the first NIM failure |
-| `MCP_URL` | unset | Where a model analyst reaches the MCP tools; unset = this app's server, in-process |
-| `NEMOTRON_MODEL`, `NVIDIA_API_KEY`, `NEMOTRON_BASE_URL` | unset, unset, NIM | The model id has to be supplied (see [open questions](#decisions-and-open-questions)) |
-| `CLAUDE_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID`, `CLAUDE_BASE_URL` | unset, unset, unset, Anthropic | Claude model and credentials. Organization-level keys require a workspace id; workspace-scoped keys do not. |
-| `NVIDIA_VA_MCP_URL` | unset | Streamable-HTTP VSS Video Analytics MCP endpoint; required for live VSS unless replay is set |
-| `VSS_REPLAY_FILE` | unset | Development-only VSS-shaped timeline; with `SMART_CITY_PROVIDER=nvidia`, takes precedence over the live URL |
-| `VSS_POLL_S` | 5 | Base wall-clock polling interval; failures back off to 60 s |
-| `VSS_MATCH_MAX_DIST_M` | 40 | Maximum geometry match distance |
-| `VSS_REQUIRE_VLM_CONFIRMATION` | true | Filter collisions unless VSS reports the VLM verdict `confirmed` |
-| `VSS_DEFAULT_SEVERITY` | `major` | Twin modelling fallback because VSS does not define the twin's severity |
+| `scenario_dir` | `downtown_grid` | The city at startup; the **Map** selector switches it |
+| `sim_speed` | 4 | Time scale at startup. An armed script sets its own; `operator-collision` asks for 16× |
+| `episode_analyst` | `mock` | Startup team, so a restart never spends model credits |
+| `episode_agent_timeout_s` | 420 | Wall-clock limit for one Claude or Nemotron analysis, plus a cap of 16 model turns |
+| `episode_fallback_to_mock`, `agent_fallback_to_mock` | false | A model failure fails the run instead of silently completing through Mock |
+| `episode_monitor_s` | unset | The script's `monitor_s`, else the analysis horizon (see [Monitor](#the-autonomous-self-learning-episode)) |
+| `episode_pause_on_finish` | true | Pause the live sim when an episode completes |
+| `agent_may_implement` | true | Let the agent apply its own recommendation; the operator path works either way |
+| `memory_enabled`, `memory_dir` | true, `<repo>/memory` | Memory on/off and where lessons are written |
+| `scenario_max_candidates` | 9 | Most plans an analysis simulates, the baseline included |
+| `embedding_model` | unset | Optional semantic recall through an OpenAI-compatible embedding NIM; unset keeps recall structured-only |
+| `claude_model`, `nemotron_model` | `claude-haiku-4-5-20251001`, `nvidia/nemotron-3-super-120b-a12b` | The model each selectable team calls |
+| `mcp_url` | unset | Where a model analyst reaches the MCP tools; unset = this app's server, in-process |
+| `smart_city_provider`, `nvidia_va_mcp_url`, `vss_*` | mock, unset, defaults | The NVIDIA VSS input path, off unless the code selects it |
+
+An analysis automatically holds the live city at 1× so its snapshot stays inside the branch
+horizon; an operator time-scale change during a run overrides the hold and becomes the
+active choice. Built, not measured.
 
 ### Task list
 
@@ -767,7 +835,7 @@ to be seen (see [Review notes](#review-notes-the-episode-pass)). Every step work
   completed episode leaves a readable `memory/episodes/EP-….md`.
 - [x] **6. Finish step.** Stop the monitor, pause the live sim, store the lesson.
 - [x] **7. Nemotron analyst** (`learning/analysts.py`, `agent/nemotron.py`). *Done when:*
-  the same script runs with `EPISODE_ANALYST=nemotron`.
+  the same script runs after selecting Nemotron in the console.
 - [x] **7a. Claude and runtime selection.** Claude Messages API adapter plus an operator
   selector for configured mock, Claude and Nemotron teams. *Done when:* each model completes
   the same operator-controlled episode without a restart. Not run yet.
@@ -800,12 +868,8 @@ and again with `{"script":"varied-crash","memory_mode":"ignore"}`. Inspect
 rounds, candidates, wall time, selected plan/verdict, recall provenance and reported deltas.
 Do not label a result measured until those user-run numbers are recorded.
 
-Repeat the varied pair with a valid `EMBEDDING_MODEL` and key, then with an invalid embedding
-configuration: the valid path should add semantic scores and sidecars; the invalid path should
-continue with structured scores and one outage warning. Finally exercise REST Analyze Response
-with `AGENT_PROVIDER=nemotron`: once with valid model output, once with invalid model output
-(the mock should take over and the run should say `nemotron→mock`), and once with
-`AGENT_FALLBACK_TO_MOCK=false` (the run should fail rather than silently changing providers).
+Optional embedding recall and the separate REST Nemotron provider remain internal integration
+paths; they need runtime controls before they belong in the stage workflow.
 
 ### Decisions and open questions
 
@@ -820,7 +884,7 @@ with `AGENT_PROVIDER=nemotron`: once with valid model output, once with invalid 
 - The two-crash rule.
 - No lesson is stored for a superseded episode.
 - A standing plan stays on the signals after its agent is superseded.
-- The mock analyst takes over if NIM fails.
+- Model failures stay visible instead of silently changing to Mock.
 - A scene cleared mid-window aborts the episode.
 - The mock analyst acts on lessons.
 
@@ -828,10 +892,8 @@ with `AGENT_PROVIDER=nemotron`: once with valid model output, once with invalid 
 weights and the mock's pruning rules above; comparing predicted and realised on absolute
 simulation time.
 
-**Open:** which NIM model id to use (`nvidia/nemotron-3-super-120b-a12b` is built for agentic
-tool calling; `nvidia/nemotron-3-nano-30b-a3b` is faster); whether to turn on
-`ANALYSIS_LIVE_SPEED` (built and off by default, not yet measured) to slow the live sim during
-analysis and reduce staleness.
+**Open:** whether `nvidia/nemotron-3-super-120b-a12b` remains the right default as newer
+agentic Nemotron models become available.
 
 ### Risks and known gaps
 
@@ -868,7 +930,7 @@ analysis and reduce staleness.
 
 ```
 ┌───────────────── frontend/ (React + TS + MapLibre) ─────────────────┐
-│ map · episode panel · incident · KPIs · trends · ops log · plans    │
+│ command bar · rail · map · workspace drawer · performance dock      │
 └────────── REST /api/* ─────────┬──────────── WS /ws/state ──────────┘
                                  │                    agents (MCP) ──► /mcp
 ┌───────────────────────── backend/ (FastAPI) ─────────┼──────────────────┐
@@ -898,8 +960,7 @@ analysis and reduce staleness.
 Rules the code keeps:
 
 - **The rest of the app never knows where data came from.** `CityService` sees only the
-  `SmartCityProvider` and `AgentProvider` interfaces, and a factory picks the
-  implementation from `SMART_CITY_PROVIDER` / `AGENT_PROVIDER`.
+  `SmartCityProvider` and `AgentProvider` interfaces; the service factory owns the choice.
 - **The simulation has no decision logic.** `TrafficSimulation` executes and measures;
   callers decide what to try.
 - **Agents never set signal states; one gated implementor applies recommendations.** Agents
@@ -920,7 +981,7 @@ Details, design decisions and the NVIDIA integration plan are in
 ```
 backend/app/
   main.py               FastAPI app + lifespan
-  config.py             env settings (SMART_CITY_PROVIDER, AGENT_PROVIDER, SIM_*, SCENARIO_*, ANALYSIS_LIVE_SPEED, EPISODE_*, MEMORY_*)
+  config.py             reviewed application defaults + API-key-only environment boundary
   providers.py          provider and analyst factories + service assembly
   api/routes.py         REST + /ws/state
   api/mcp_tools.py      the scenario engine as MCP tools at /mcp
@@ -964,7 +1025,7 @@ frontend/src/
   components/plans/     response plans: candidate cards, KPI comparison, horizon chart, dock,
                         Apply to live signals
   components/EpisodePanel.tsx  autonomous agent: scripts, step strip, lesson, memory
-  components/           working view rail, top bar, incident card, KPI tiles, inspector,
+  components/           workspace rail, command bar, incident card, KPI tiles, inspector,
                         trends, ops log
   lib/plans.ts          analysis state, deltas, plan overlays
   dev/                  ?fixture=scenario replay of a recorded run
@@ -1055,8 +1116,8 @@ docs/
   rubbernecking, responder and diagnostics bookkeeping no longer makes a TraCI round trip
   per vehicle (lane and lane position ride on the existing subscription), and starting a branch no longer pays SUMO's fixed ~1 s
   connect wait. **Neither speed-up has been timed**: the wall-clock figures above are the
-  ones measured before the change. The opt-in `ANALYSIS_LIVE_SPEED` setting (see
-  [Settings](#settings)) is a further, equally unmeasured lever.
+  ones measured before the change. The automatic 1× analysis hold is what kept the qualified
+  live snapshot inside the branch horizon; the operator can override it with the speed control.
 - **Known deviations in the twin-engine speed-up, deliberately left as they are** (read from
   the code, not run):
   - *Rubbernecking with two crashes on one segment.* The old code tested a vehicle against
@@ -1082,9 +1143,8 @@ docs/
   but neither the live client nor replay fixtures have been run. A real server may expose
   field variants that need an update in the intentionally isolated `vss_mapping.py`.
 - REST `NemotronAgentProvider` now validates JSON plans and recommendations but has not been
-  exercised against a NIM model.
-  On its first failure a run becomes `nemotron→mock` when `AGENT_FALLBACK_TO_MOCK=true`; with
-  it false the run fails. Nemotron still runs as an episode analyst and reviewer too.
+  exercised against a NIM model. Model failures remain failures rather than silently changing
+  providers. Nemotron still runs as an episode analyst and reviewer too.
 - Mirrored crash size, spacing, blocked-lane effects and pass speed are twin assumptions,
   not quantities observed by VSS. Lane 0 is assumed because VSS has no lane-grade position.
 - Synthetic network (the grid) and synthetic demand (both cities). The crash physics
@@ -1113,7 +1173,7 @@ calling or prove billing. Use this order to protect the Nemotron credit balance:
 |---|---|---|---|
 | 1 | Operator-controlled flow, runtime Mock / Claude / Nemotron selector, exact model label and single-container Cloud Run packaging | Local UI passed | The UI changed Oakland → 3×3 grid → Oakland and the selector exposed all three configured teams. Container deployment is still covered by gate 6. |
 | 2 | Local mock episode | **Passed 2026-09-20** | Cold `EP-0001` completed with 8 candidates, applied `corridor-plus-divert`, compared 562.5 s, recorded 7.22 m/s mean speed, received an `effective` verdict and wrote a readable lesson. Fallback was disabled. |
-| 3 | Local Claude qualification | Awaiting explicit data-sharing approval | Run with `EPISODE_FALLBACK_TO_MOCK=false`; the local qualification is prepared, but no incident briefing has been sent to Anthropic yet. |
+| 3 | Local Claude qualification | Awaiting explicit data-sharing approval | The local qualification is prepared and model failures cannot fall back to Mock, but no incident briefing has been sent to Anthropic yet. |
 | 4 | Recall and failure drills | **Passed 2026-09-20** | Warm `EP-0002` recalled `EP-0001` and pruned 8 candidates to 4. `varied-crash` `EP-0003` recalled both lessons at 0.35 similarity and evaluated 9 candidates. Reset aborted `EP-0005` after 71.5 s of monitoring; Clear scene aborted `EP-0006` after 66 s. |
 | 5 | Local Nemotron qualification | Pending | Only after gates 2–4 pass, keep fallback off, select **Nemotron** and run one operator-controlled episode. Stop after the first successful analysis/review cycle to conserve credits. |
 | 6 | Cloud Run and stage rehearsal | Pending | Deploy Mock first, open the public URL and prove the UI, REST API and reconnecting WebSocket. Then attach Secret Manager values, qualify the stage model once, rehearse the visible click path, and set `--min=0` after the event. |

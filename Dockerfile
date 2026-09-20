@@ -1,8 +1,8 @@
 # Single-container Traffic Operations Center: React console, FastAPI and Eclipse SUMO.
 # Built for Google Cloud Run, but it runs on any container host.
 #
-# The build context is the REPO ROOT: app.config.REPO_ROOT resolves SCENARIO_DIR and
-# MEMORY_DIR relative to the directory that holds backend/, so simulation/ must sit
+# The build context is the REPO ROOT: app.config.REPO_ROOT resolves scenario and
+# memory paths relative to the directory that holds backend/, so simulation/ must sit
 # alongside backend/ in the image.
 FROM node:24-bookworm-slim AS frontend-build
 
@@ -55,9 +55,6 @@ WORKDIR /srv/backend
 # Cloud Run injects $PORT (8080); 8000 keeps a bare `docker run` matching local dev.
 ENV PORT=8000
 EXPOSE 8000
-
-# Never try to open sumo-gui in a container.
-ENV SUMO_GUI=false
 
 # Exactly one uvicorn worker, always. The service is stateful: one thread owns the live
 # TraCI connection and the city state lives in that process. A second worker would be a

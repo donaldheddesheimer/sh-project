@@ -335,8 +335,9 @@ class ScenarioService:
         self.city.publish_scenario(run)
         if idle_timeout_s:
             self._spawn(self._watch_idle(analysis))
-        if self.settings.analysis_live_speed is not None:
-            await self.city.hold_speed(self.settings.analysis_live_speed, run.id)
+        # Branches and the live city share the machine. Keep the live snapshot inside the
+        # branch horizon by default; an operator speed change in the console still wins.
+        await self.city.hold_speed(1.0, run.id)
         return analysis
 
     async def capture(self, a: Analysis) -> None:

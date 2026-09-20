@@ -12,7 +12,7 @@ OpenAI-compatible NIM endpoint as ``tools`` and runs each tool call the model ma
     -> submit_recommendation (a completed candidate and a rationale that quotes numbers)
     -> implement_recommendation (the gated implementor applies it to the live city)
 
-The one-shot REST pipeline (``AGENT_PROVIDER=nemotron``) uses the same NIM client through
+The optional one-shot REST pipeline uses the same NIM client through
 ``NemotronAgentProvider``. It returns plans as data only; ScenarioService keeps validation,
 branch simulation, completed-candidate checks and its explicit mock fallback.
 """

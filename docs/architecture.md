@@ -19,7 +19,7 @@
 ## Live data flow
 
 ```
-SUMO ──TraCI──► SumoSimulation.step()          (runner thread, paced to SIM_SPEED)
+SUMO ──TraCI──► SumoSimulation.step()          (runner thread, paced to the time scale)
                    │ subscriptions: vehicles, edges, signals, departures/arrivals
                    ▼
         LiveSimulationRunner._publish()  ≤ BROADCAST_HZ ── LiveFrame(NetworkState)
@@ -61,7 +61,7 @@ live twin ─► detect ─► trigger ─► capture ─► propose ─► vali
 |---|---|---|---|---|
 | 0 | Live twin | `simulation/sumo.py`, `simulation/runner.py` | network, demand, operator commands (inject, dispatch, speed) | `NetworkState` frames (≤ 8 Hz) → `CityState` on `/ws/state` |
 | 1 | Detect | `smart_city/mock.py` | the disruptions in each frame (ground truth) | `Incident` (`INC-0001`: segment, lanes, position, severity, cameras) after a 4 s detection delay |
-| 2 | Trigger | `POST /api/scenarios/run` → `ScenarioService.open`, or MCP `start_analysis` | `ScenarioRunRequest {incident_id?, horizon_s=600, ems_probe=true}` | `ScenarioRun` `SCN-0001`, status `queued` (HTTP 202). 409 without an active, map-matched incident or while a run is open; 404 for an unknown incident; 503 before the simulation is ready. With `ANALYSIS_LIVE_SPEED` set, the live speed is held at that multiplier while the run is open and restored when it ends (finish, fail or abandon); a speed change by the operator wins and ends the hold |
+| 2 | Trigger | `POST /api/scenarios/run` → `ScenarioService.open`, or MCP `start_analysis` | `ScenarioRunRequest {incident_id?, horizon_s=600, ems_probe=true}` | `ScenarioRun` `SCN-0001`, status `queued` (HTTP 202). 409 without an active, map-matched incident or while a run is open; 404 for an unknown incident; 503 before the simulation is ready. The live speed is held at 1× while the run is open and restored when it ends (finish, fail or abandon); a speed change by the operator wins and ends the hold |
 | 3 | Capture | `ScenarioService.capture`, on the live thread | the live simulation at one instant | `SimulationSnapshot` (SUMO state + RNG, disruptions, dispatches), every `SignalProgram`, the agent's `IncidentContext`, and an EMS `ProbeSpec` (Fire Station 3 → 20 m behind the crash) unless a live responder is already en route. Status `proposing` |
 | 4 | Propose | `AgentProvider.propose_candidates` (`agent/mock.py`) | `IncidentContext {incident, segments, intersections, signal_programs, emergency_vehicles, ems_origin_segment}` | `CandidatePlan[]`, each any mix of `SignalPolicy` timing changes, one `EmergencyCorridor` and `RerouteAction`s. Baseline forced first; at most 9 (`SCENARIO_MAX_CANDIDATES`, baseline included) |
 | 5 | Validate | `validation_findings` → `RuleBasedSafetyValidator` | each plan and the captured programs | `violations[]`; a plan with any is `rejected` and never simulated |
@@ -203,8 +203,8 @@ With lessons in the context (see [Autonomous episode](#autonomous-episode-applea
 the mock prunes or reorders these proposals. `NemotronAgentProvider` drives REST Analyze
 Response through one NIM proposal call and one recommendation call. It validates JSON into
 `CandidatePlan` / `Recommendation` data only; ScenarioService still validates plans, simulates
-them and accepts only a completed candidate. Its first provider failure switches that run to
-the mock (`nemotron→mock`) when `AGENT_FALLBACK_TO_MOCK=true`, or fails it when false. A proposal
+them and accepts only a completed candidate. A provider failure fails the run visibly rather
+than silently changing providers. A proposal
 that returns nothing valid is retried once with the validation errors appended to the conversation,
 because re-sending the identical prompt only resamples it. Nemotron also drives the
 [MCP tools](#mcp-tools-for-agents) in episodes (`learning/analysts.py`).
@@ -265,7 +265,7 @@ while an episode is armed or active. This table is the code path.
 | 4 | Implement | `Implementor.implement(run_id, by)` in one `run_on_live` command | re-validation on live programs, EMS probes, `apply_plan`; `Implementation` on the run and the episode; the plan joins the standing responses; episode `monitoring` |
 | 5 | Monitor | `LiveMonitor` (a frame observer) | `LiveSample` every 5 simulated seconds; a `LiveRecord` after the window |
 | 6 | Score | live `response_notes()` → `build_scorecard` | `Scorecard` (code only): predicted vs realised on absolute simulation time, typed corridor/diversion checks, provisional state, outcome |
-| 7 | Review | `MockReviewer` / selected Claude or Nemotron `ModelReviewer` | `Lesson` (verdict = the scorecard's outcome); model errors use Mock only when `EPISODE_FALLBACK_TO_MOCK=true`, otherwise the episode fails; episode `reviewing` |
+| 7 | Review | `MockReviewer` / selected Claude or Nemotron `ModelReviewer` | `Lesson` (verdict = the scorecard's outcome); model errors fail the episode rather than changing providers; episode `reviewing` |
 | 8 | Remember | `ExperienceStore.save` | `memory/episodes/EP-NNNN.md` + `playbook.md`; episode `completed`; live sim paused |
 | 9 | Recall | `ScenarioService.lessons_source` → `ExperienceStore.recall` | structured/semantic/combined/ranking scores and query-scoped trust in `IncidentContext.lessons`, `ScenarioRun.recalled`, MCP `experience` |
 

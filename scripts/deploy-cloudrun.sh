@@ -16,8 +16,6 @@ set -euo pipefail
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID to your GCP project id}"
 SERVICE="${SERVICE:-traffic-ops-demo}"
 REGION="${REGION:-us-central1}"
-# Optional comma-separated origins for a separately hosted frontend. The bundled console is same-origin.
-CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:5173}"
 
 gcloud services enable \
   run.googleapis.com \
@@ -43,8 +41,8 @@ gcloud services enable \
 #                         reconnects after a second, so a drop is invisible.
 #   --session-affinity    Belt and braces behind max-instances 1.
 #
-# The alternate delimiter lets CORS_ORIGINS itself contain commas. Startup remains Mock so
-# deployment does not spend model credits; attach provider secrets after this path works.
+# Startup remains Mock so deployment does not spend model credits; attach API-key secrets
+# after this path works. Operational behavior uses code defaults and runtime controls.
 gcloud run deploy "$SERVICE" \
   --project "$PROJECT_ID" \
   --region "$REGION" \
@@ -58,8 +56,7 @@ gcloud run deploy "$SERVICE" \
   --max-instances 1 \
   --concurrency 80 \
   --timeout 3600 \
-  --session-affinity \
-  --set-env-vars "^@^CORS_ORIGINS=${CORS_ORIGINS}@SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland@SMART_CITY_PROVIDER=mock@AGENT_PROVIDER=mock@EPISODE_ANALYST=mock@SIM_SPEED=16@SCENARIO_WORKERS=4@MEMORY_DIR=/tmp/traffic-memory"
+  --session-affinity
 
 URL="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
 cat <<MSG

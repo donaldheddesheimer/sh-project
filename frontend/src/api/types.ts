@@ -14,6 +14,26 @@ export interface GeoPoint {
   lon: number
 }
 
+// --- Smart City input (feature/vss-input) ---
+
+export interface Camera {
+  id: string
+  name: string
+  location: GeoPoint | null
+  intersection_id: string | null
+  status: string
+}
+
+export interface IncidentMatch {
+  method: 'geometry' | 'place' | 'sensor' | null
+  distance_m: number | null
+  confidence: number
+  notes: string[]
+  lane_assumed: boolean
+  mirrored: boolean
+  reason: string | null
+}
+
 export interface IntersectionState {
   id: string
   name: string
@@ -104,8 +124,9 @@ export interface Incident {
     segment_id: string | null
     intersection_id: string | null
     position_m: number | null
-    point: GeoPoint
+    point: GeoPoint | null
     description: string
+    match: IncidentMatch | null
   }
   timestamp: string
   sim_time: number | null
@@ -113,9 +134,13 @@ export interface Incident {
   total_lanes: number | null
   description: string
   source: string
+  external_id: string | null
+  external_category: string | null
+  type_mapping_note: string | null
   sensor_ids: string[]
   object_ids: string[]
   confidence: number | null
+  vlm_confirmed: boolean | null
   cleared_at: string | null
 }
 

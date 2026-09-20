@@ -1,0 +1,9 @@
+{
+  "id": "varied-crash",
+  "name": "Different crash (generalization)",
+  "description": "A left-lane collision on Fifth Avenue westbound (-625851681#3, two lanes); lane 1 exists and differs in street, direction and blocked lane from the Forbes Avenue training case.",
+  "crashes": [
+    { "at_sim_s": 420, "segment_id": "-625851681#3", "lanes": [1], "position_fraction": 0.45, "severity": "major" }
+  ],
+  "monitor_s": 600
+}

@@ -3,7 +3,7 @@ import { CONGESTION_COLOR, CONGESTION_LABEL, SIGNAL_COLOR } from '../lib/format'
 
 const LEVELS: CongestionLevel[] = ['free', 'moderate', 'heavy', 'severe']
 
-export function MapLegend() {
+export function MapLegend({ hasCameras = false }: { hasCameras?: boolean }) {
   return (
     <div className="legend overlay-card">
       <div className="overlay-head">Legend</div>
@@ -32,6 +32,11 @@ export function MapLegend() {
           <span className="legend-veh" style={{ background: '#ff3b3b' }} /> EMS
           <span className="legend-veh" style={{ background: '#ff8a3d' }} /> Disabled
         </div>
+        {hasCameras && (
+          <div className="legend-row">
+            <span className="legend-camera" /> Camera
+          </div>
+        )}
       </div>
     </div>
   )

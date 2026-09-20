@@ -31,6 +31,7 @@ from app.models.domain import (
     EmergencyDispatch,
     EmergencyStatus,
     Incident,
+    IncidentStatus,
     IncidentType,
     NetworkGeometry,
     NetworkState,
@@ -55,6 +56,7 @@ IncidentListener = Callable[[SmartCityEvent], Awaitable[None]]
 ResetListener = Callable[[], Awaitable[None]]
 T = TypeVar("T")
 
+MIRROR_MOVE_TOLERANCE_M = 5.0  # a mirrored crash is re-placed only when the report moves further than this
 TREND_SAMPLE_S = 5.0  # simulated seconds between trend samples
 TREND_SAMPLES = 180  # 15 simulated minutes
 
@@ -128,6 +130,8 @@ class CityService:
         self._trend: deque[MetricSample] = deque(maxlen=TREND_SAMPLES)
         self.latest_scenario: ScenarioRun | None = None
         self.latest_episode: Episode | None = None
+        self._mirrored_disruptions: dict[str, str] = {}
+        self._unmirrorable: set[str] = set()  # reports already warned about, so the warning is logged once
         # Hooks for the learning services: called after an incident is logged, and before the simulation reboots.
         self.incident_listeners: list[IncidentListener] = []
         self.reset_listeners: list[ResetListener] = []
@@ -288,6 +292,8 @@ class CityService:
                 except Exception:  # noqa: BLE001 - a broken listener must not block the reset
                     log.exception("reset listener failed")
             await self._runner.reset()
+            if not self.smart_city.simulation_is_source:
+                await self._reconcile_external_incidents(after_reset=True)
 
     def _collision_args(
         self, segment_id: str | None, lanes: list[int] | None, position_fraction: float | None, severity: Severity | None
@@ -452,13 +458,118 @@ class CityService:
                 incident.sim_time,
                 incident.id,
             )
+        elif event.kind is SmartCityEventKind.INCIDENT_UPDATED:
+            self.events.add(EventLevel.INFO, f"{incident.id} report updated", incident.sim_time, incident.id)
         elif event.kind is SmartCityEventKind.INCIDENT_CLEARED:
             self.events.add(EventLevel.INFO, f"{incident.id} closed", self._sim_time(), incident.id)
+        if not self.smart_city.simulation_is_source:
+            self._warn_unmirrorable(incident)
+            async with self.live_change_lock:
+                await self._reconcile_external_incidents()
+            refreshed = await self.smart_city.get_incident(incident.id)
+            if refreshed is not None:
+                event.incident = incident = refreshed
         for listener in self.incident_listeners:
             try:
                 await listener(event)
             except Exception:  # noqa: BLE001 - keep the frame pipeline going
                 log.exception("incident listener failed")
+
+    def _warn_unmirrorable(self, incident: Incident) -> None:
+        """Warn once when a report cannot be staged; VSS re-reports the same incident on every poll."""
+        match = incident.location.match
+        reason: str | None = None
+        if incident.status is IncidentStatus.ACTIVE:
+            if incident.type is not IncidentType.COLLISION:
+                reason = f"{incident.type.value.replace('_', ' ')} reported; only collisions can be staged"
+            elif not match or not incident.location.segment_id:
+                reason = match.reason if match and match.reason else "no road segment matched"
+        if reason is None:
+            self._unmirrorable.discard(incident.id)
+            return
+        if incident.id in self._unmirrorable:
+            return
+        self._unmirrorable.add(incident.id)
+        self.events.add(EventLevel.WARNING, f"{incident.id} not mirrored: {reason}", self._sim_time(), incident.id)
+
+    async def _reconcile_external_incidents(self, after_reset: bool = False) -> None:
+        """Make externally reported, matched collisions and live disruptions agree exactly."""
+        active = {incident.id: incident for incident in await self.smart_city.list_incidents()}
+
+        def reconcile(sim: TrafficSimulation) -> list[tuple[str, str, str]]:
+            changes: list[tuple[str, str, str]] = []
+            disruptions = {item.id: item for item in sim.list_disruptions()}
+            for incident_id, disruption_id in list(self._mirrored_disruptions.items()):
+                incident = active.get(incident_id)
+                valid = (
+                    incident is not None
+                    and incident.type is IncidentType.COLLISION
+                    and incident.location.segment_id is not None
+                )
+                disruption = disruptions.get(disruption_id)
+                if not valid:
+                    if disruption is not None:
+                        sim.clear_disruption(disruption_id)
+                        changes.append((incident_id, disruption_id, "cleared"))
+                    self._mirrored_disruptions.pop(incident_id, None)
+                    continue
+                if disruption is None:
+                    self._mirrored_disruptions.pop(incident_id, None)
+                    continue
+                lanes = incident.affected_lanes or [0]
+                position = incident.location.position_m
+                # Re-matching every poll jitters the position slightly, so only a real move re-places the
+                # crash; re-injecting on jitter would restage the scene and reset its queue each time.
+                moved = position is None or abs(disruption.position_m - position) > MIRROR_MOVE_TOLERANCE_M
+                if disruption.segment_id != incident.location.segment_id or disruption.lanes != lanes or moved:
+                    sim.clear_disruption(disruption_id)
+                    self._mirrored_disruptions.pop(incident_id, None)
+
+            disruptions = {item.id: item for item in sim.list_disruptions()}
+            for incident_id, incident in active.items():
+                location = incident.location
+                if (
+                    incident.type is not IncidentType.COLLISION
+                    or location.segment_id is None
+                    or location.position_m is None
+                    or location.segment_id not in self.network.segments
+                ):
+                    continue
+                disruption_id = self._mirrored_disruptions.get(incident_id)
+                if disruption_id and disruption_id in disruptions:
+                    continue
+                disruption = sim.inject_collision(
+                    location.segment_id,
+                    incident.affected_lanes or [0],
+                    location.position_m,
+                    incident.severity,
+                )
+                self._mirrored_disruptions[incident_id] = disruption.id
+                changes.append((incident_id, disruption.id, "mirrored"))
+            return changes
+
+        changes = await self.run_on_live(reconcile)
+        for incident_id, disruption_id, action in changes:
+            self.smart_city.set_mirrored(incident_id, action == "mirrored")
+            if action != "mirrored":
+                continue
+            incident = active[incident_id]
+            segment = self.network.segments[incident.location.segment_id or ""]
+            match = incident.location.match
+            method = match.method if match and match.method else "unknown"
+            distance = f", {match.distance_m:.0f} m" if match and match.distance_m is not None else ""
+            lane = "; lane assumed" if not match or match.lane_assumed else ""
+            reset_note = " after reset warm-up" if after_reset else ""
+            self.events.add(
+                EventLevel.WARNING,
+                f"{incident_id} mirrored in the twin as {disruption_id} on {segment.name} {segment.direction} "
+                f"(matched by {method}{distance}{lane}){reset_note}",
+                self._sim_time(),
+                incident_id,
+            )
+        for incident_id in active:
+            if incident_id not in self._mirrored_disruptions:
+                self.smart_city.set_mirrored(incident_id, False)
 
     def _broadcast_event(self, event: OpsEvent) -> None:
         self.hub.broadcast(envelope("event", event.model_dump_json()))

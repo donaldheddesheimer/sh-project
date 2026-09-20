@@ -69,11 +69,13 @@ Six tasks. Sizes are S = 1, M = 2, L = 3 points, 13 in total.
   - **Frames.** Unlike the mock's, this provider needs the simulation clock: to stamp
     `Incident.sim_time` and to drive the replay. Register an `observe(state)` through the
     existing observers list in `build_smart_city_provider`, as the mock does.
-  - **Failure is not a crash.** A dead endpoint, a timeout or a malformed document degrades to
-    "no new incidents", with backoff. Log once when it goes down and once when it recovers. The
-    frame pipeline and the live twin never stop because VSS is down. Expose
-    `status()` (ok, last success, last error) and serve it from a new
-    `GET /api/smart-city/status`.
+  - **Failure is not a crash.** A dead endpoint or a timeout degrades to "no new incidents", with
+    backoff. Log once when it goes down and once when it recovers. A malformed *document* is
+    narrower: skip that one and keep the rest of the batch, because the bad document stays in the
+    upstream feed and failing the poll over it would stop incident input for good. The frame
+    pipeline and the live twin never stop because VSS is down. Expose `status()` (ok, last success,
+    last error, and how many documents the latest poll filtered or could not read) and serve it from
+    a new `GET /api/smart-city/status`.
   - **Two attributes on the base class:** `simulation_is_source: bool = True` (the mock
     keeps it; this provider sets `False`), used by task 4.
 
@@ -113,9 +115,11 @@ the piece the stub's docstring calls "a dedicated matcher, not the UI".
   - **Geometry:** nearest segment within `VSS_MATCH_MAX_DIST_M` (default 40 m); the position is
     the projection along the centerline, clamped like `inject_collision` does (20 m from either end).
   - **Two directions of one street** have nearly identical centerlines, and camera or GPS error is
-    larger than the gap between them. Use a heading when the document has one (compare it with the
-    segment's bearing, corrected by `heading_offset_deg`; `heading_direction` in `network.py` does
-    the compass conversion). Without one, pick the nearer, **lower the confidence and say so in
+    larger than the gap between them. Use a heading when the document has one, comparing it with the
+    segment's **true** bearing. Do not apply `heading_offset_deg`: that offset exists only to rotate a
+    displacement into an NB/SB/EB/WB display label (`heading_direction` in `network.py`), so applying
+    it here would measure a reported true bearing against a label-frame one and be 45° out on Oakland.
+    Without a heading, pick the nearer, **lower the confidence and say so in
     `notes`**; do not pretend to know.
   - **Lanes.** VSS does not say which lane. Default to lane 0 (the rightmost), or `[0]` on a
     one-lane road, and mark it `assumed`. Infer from the lateral offset only if you can justify
@@ -150,13 +154,15 @@ a provider whose `simulation_is_source` is `False`, add the reflection:
   the end of `CityService.reset`, after `runner.reset()`. The warm-up has already run without the
   crash, so the queue builds from that moment; say so in the ops line.
 - **Other types are not mirrored** (`inject_incident` only stages collisions). Log
-  `INC-0003 stalled vehicle reported; not mirrored (only collisions can be staged)`. Such an
+  `INC-0003 not mirrored: stalled vehicle reported; only collisions can be staged`, in that one
+  shape for every reason (an unmatched report says why the same way) and **once** per incident,
+  since VSS re-reports the same one on every poll. Such an
   incident must **not be analyzable**, because a branch would run with no crash in it: add an
   optional `IncidentLocation.match` block (method, distance, confidence, notes, `mirrored`) and
   make `ScenarioService._resolve_incidents` (you own only this guard) return the existing 409 for
   an incident that is not mirrored when its provider is not the simulation.
 - **Ops log:** `INC-0001 mirrored in the twin as C-ab12cd on Forbes Ave EB (matched by geometry,
-  12 m; lane assumed)`. An unmatched report says why.
+  12 m; lane assumed)`.
 - **Demo scripts and the real provider do not mix** (decision D6). A script injects crashes the
   provider never reports. `POST /api/demo/start` returns 409 with a clear message when
   `simulation_is_source` is false, and `build_smart_city_provider` refuses `DEMO_SCRIPT` with the
@@ -291,22 +297,74 @@ committed on `feature/vss-input`.
 
 ## Result
 
-_To be filled in by whoever implements this branch._
+**Built.** `McpVssClient` (streamable HTTP, optional bearer token) and the development-only
+simulation-clock `ReplayVssClient`; the polling/cache/status `NvidiaSmartCityProvider`; isolated
+VSS mapping and VLM filtering; geometry/place/sensor map matching; inverse geo projection and
+deterministic nearest-road queries; external-incident reconciliation into the live twin; reset,
+analysis and demo guards; camera and match UI; provider status API; both replay timelines; four
+Oakland demo scripts; settings and documentation.
 
-**Built.**
+**How it hooks in.** `build_smart_city_provider` chooses MCP or replay when
+`SMART_CITY_PROVIDER=nvidia`, registers the provider's frame observer for simulation time, and
+leaves the mock branch unchanged. A poll maps an external id to stable `INC-NNNN`, emits a Smart
+City event, and `CityService` reconciles the provider's active matched collisions on the live
+runner thread while holding `live_change_lock`. The provider cache backs incident/camera routes;
+`GET /api/smart-city/status` is read-only. Reconciliation clears ended reports and restores active
+ones once after reset warm-up. The twin's crash vehicle count, spacing and pass speed remain model
+assumptions, never observations attributed to VSS.
 
-**How it hooks in.**
+**Schema source.** Checked against NVIDIA's published VSS 3.2 Video Analytics MCP reference:
+[`vss-query-analytics`](https://github.com/nvidia/skills/blob/main/skills/vss-query-analytics/SKILL.md)
+and the [VSS alert-verification documentation](https://docs.nvidia.com/vss/3.1.0/alert-verification-service.html).
+They establish the `video_analytics__*` tool names, `timestamp`/`end`, `category`, `sensorId`,
+`place.name`, `objectIds`, and `info.verdict`. The compatibility mapper also accepts the older
+docstring's `start` and nested analytics-module fields. No running Blueprint server was available.
 
-**Schema source** (the Blueprint's docs, or the docstring).
+**Verified by reading.** Traced the confirmed fixtures through release → mapping → geometry match
+→ event → one mirrored disruption → cached incident → analyzable scenario. The second confirmed
+collision becomes a separate internal incident/disruption. An unconfirmed collision stops in the
+mapper and increments the status count. An off-network report remains listed with the reason, is
+not mirrored, and reaches the existing 409 path. At `clear_at_sim_s`, replay adds `end`, the provider
+emits clear, and reconciliation removes only its linked disruption. After reset, stale disruption
+ids are checked against `list_disruptions()` and each still-active report is injected once after
+warm-up. Non-collisions remain visible but unmirrored and fail the same analysis guard. Confirmed
+all reflection/analysis/demo changes are gated by `simulation_is_source=False`; the mock provider's
+construction, detection and cache paths are unchanged. Read both `GeoProjector` branches: the
+synthetic inverse is algebraically paired with `to_lonlat`, and projected networks use SUMO's paired
+`convertLonLat2XY`/`convertXY2LonLat` calls. Read every owned shared-file edit against MASTER.
 
-**Verified by reading.**
-
-**Not run / not verified.**
+**Not run / not verified.** No tests, backend, SUMO, replay, demo, MCP endpoint or real VSS endpoint
+was run, as required by the repository hard rule. Neither VSS client was exercised. Fixture
+coordinates and lane choices were read from XML/OSM and remain runtime-unverified. Frontend lint
+and build were attempted but did not run: this checkout has no `node_modules`, so `oxlint` and
+`tsc` were not found. No dependencies were added.
 
 **Checks for the user to run** (commands, and what to look for).
 
-**Measured** (only numbers the user reported).
+1. Grid replay: `SMART_CITY_PROVIDER=nvidia VSS_REPLAY_FILE=simulation/scenarios/downtown_grid/vss/incidents.json make backend`, then `npm --prefix frontend run dev -- --port 5176`. At sim 320,
+   confirm source `vss-replay`, a geometry match, one crash marker/queue, then run Analyze Response.
+2. Filters: after sim 560, run `curl -s http://127.0.0.1:8000/api/smart-city/status` and
+   `curl -s http://127.0.0.1:8000/api/incidents`. Confirm one filtered unconfirmed report and an
+   unmatched off-network incident. POST it to `/api/scenarios/run`; expect 409.
+3. Clear/reset: let sim 740 pass and confirm the clearing fixture reopens its lane. Reset between
+   release and clear with `curl -X POST http://127.0.0.1:8000/api/simulation/reset`; confirm every
+   still-active mirrored crash returns exactly once after warm-up.
+4. Oakland replay: `SCENARIO_DIR=simulation/scenarios/pittsburgh_oakland SMART_CITY_PROVIDER=nvidia VSS_REPLAY_FILE=simulation/scenarios/pittsburgh_oakland/vss/incidents.json make backend`; repeat the
+   match/mirror/analyze checks. For scripts, restart with `SMART_CITY_PROVIDER=mock` and POST each of
+   `crash-ahead`, `crash-already`, `double-crash`, `varied-crash` to `/api/demo/start`. With VSS,
+   the same POST must return 409.
+5. Failure: `SMART_CITY_PROVIDER=nvidia NVIDIA_VA_MCP_URL=http://127.0.0.1:9/mcp make backend`.
+   Confirm the app stays up, one warning is logged until recovery, and `/api/smart-city/status`
+   reports the connection error while simulation frames continue.
+6. Real endpoint, if one exists: set `NVIDIA_VA_MCP_URL` (and `NVIDIA_API_KEY` if required), leave
+   `VSS_REPLAY_FILE` unset, compare returned documents with `vss_mapping.py`, and record any field
+   correction. After `npm install`, run `npm --prefix frontend run lint` and
+   `npm --prefix frontend run build`.
 
-**Contract change requests.**
+**Measured.** None; no user-reported runs or numbers were available.
 
-**Deviations.**
+**Contract change requests.** None.
+
+**Deviations.** No lateral lane inference was attempted: every VSS match explicitly assumes lane
+0 because the published contract supplies no lane-grade accuracy. The published VSS 3.2 reference,
+not an available `va_mcp_server_config.yml` or live response, was the schema authority.

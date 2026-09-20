@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 from app.models.domain import GeoPoint, Incident
@@ -19,7 +21,7 @@ from app.models.domain import GeoPoint, Incident
 class Camera(BaseModel):
     id: str
     name: str
-    location: GeoPoint
+    location: GeoPoint | None = None
     intersection_id: str | None = None
     status: str = "online"
 
@@ -40,6 +42,8 @@ EventSink = Callable[[SmartCityEvent], Awaitable[None]]
 
 class SmartCityProvider(ABC):
     name: str
+    # A mock reports the twin's own disruptions. External providers set this false so CityService mirrors them.
+    simulation_is_source: bool = True
 
     @abstractmethod
     async def start(self, emit: EventSink) -> None:
@@ -56,3 +60,18 @@ class SmartCityProvider(ABC):
 
     @abstractmethod
     async def list_cameras(self) -> list[Camera]: ...
+
+    def status(self) -> SmartCityStatus:
+        return SmartCityStatus(ok=True)
+
+    def set_mirrored(self, incident_id: str, mirrored: bool) -> None:
+        """Record whether an external incident currently has a disruption in the twin."""
+        return None
+
+
+class SmartCityStatus(BaseModel):
+    ok: bool
+    last_success: datetime | None = None
+    last_error: str | None = None
+    filtered_unconfirmed: int = 0
+    malformed_documents: int = 0

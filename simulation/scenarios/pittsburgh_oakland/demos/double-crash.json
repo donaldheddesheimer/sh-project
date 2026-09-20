@@ -1,0 +1,10 @@
+{
+  "id": "double-crash",
+  "name": "Second crash mid-response",
+  "description": "Forbes Avenue eastbound is followed by a second crash on Fifth Avenue westbound (-625851681#3, two lanes); lane 0 exists on both links and the second report arrives while the first response is under way.",
+  "crashes": [
+    { "at_sim_s": 400 },
+    { "at_sim_s": 460, "segment_id": "-625851681#3", "lanes": [0], "position_fraction": 0.55, "severity": "major" }
+  ],
+  "monitor_s": 600
+}

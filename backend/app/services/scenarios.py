@@ -420,6 +420,11 @@ class ScenarioService:
         for incident in found:
             if incident.location.segment_id not in self.city.network.segments:
                 raise Conflict(f"{incident.id} is not matched to a road segment")
+            if (
+                not self.city.smart_city.simulation_is_source
+                and (incident.location.match is None or not incident.location.match.mirrored)
+            ):
+                raise Conflict(f"{incident.id} is not mirrored in the digital twin")
         return sorted(found, key=lambda i: i.timestamp)
 
     def _capture(self, sim: TrafficSimulation) -> tuple[SimulationSnapshot, dict[str, SignalProgram], NetworkState]:

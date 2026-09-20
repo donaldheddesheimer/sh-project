@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client'
-import type { NetworkGeometry } from './api/types'
+import type { Camera, NetworkGeometry } from './api/types'
 import { EpisodePanel } from './components/EpisodePanel'
 import { IncidentPanel } from './components/IncidentPanel'
 import { CityMap, type Selection } from './components/map/CityMap'
@@ -28,6 +28,7 @@ const ACTIONS: Record<Action, () => Promise<unknown>> = {
 export default function App() {
   const { state, status, events, history, connected, scenario, episode, phaseLabels, acceptScenario } = useCityStream()
   const [network, setNetwork] = useState<NetworkGeometry | null>(null)
+  const [cameras, setCameras] = useState<Camera[]>([])
   const [selection, setSelection] = useState<Selection | null>(null)
   const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
@@ -46,6 +47,39 @@ export default function App() {
           if (!cancelled) timer = setTimeout(load, 1500)
         })
     load()
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // Cameras exist only on the VSS path and appear once its first poll succeeds, so an empty
+    // list is normal at first. Back off to a minute so a mock backend, or a VSS endpoint that
+    // stays down, is not polled every 5 s for the life of the page.
+    let delay = 5000
+    const retry = () => {
+      timer = setTimeout(load, delay)
+      delay = Math.min(delay * 2, 60000)
+    }
+    const load = () =>
+      api
+        .cameras()
+        .then((items) => {
+          if (cancelled) return
+          // Not calling setCameras on an empty payload keeps the array identity stable while waiting.
+          if (items.length === 0) {
+            retry()
+            return
+          }
+          setCameras(items)
+        })
+        .catch(() => {
+          if (!cancelled) retry()
+        })
+    void load()
     return () => {
       cancelled = true
       clearTimeout(timer)
@@ -153,7 +187,14 @@ onAction={(action) => {
 
       <main className="map-area">
         {network ? (
-          <CityMap network={network} state={state} selection={selection} planOverlay={overlay} onSelect={setSelection} />
+          <CityMap
+            network={network}
+            state={state}
+            cameras={cameras}
+            selection={selection}
+            planOverlay={overlay}
+            onSelect={setSelection}
+          />
         ) : (
           <div className="map-loading">Connecting to traffic simulation…</div>
         )}
@@ -167,7 +208,7 @@ onAction={(action) => {
             </span>
           )}
         </div>
-        <MapLegend />
+        <MapLegend hasCameras={cameras.some((camera) => camera.location != null)} />
         {network?.attribution && <div className="map-attribution">{network.attribution}</div>}
         {activeCandidate && overlay && <MapPlanCard candidate={activeCandidate} overlay={overlay} />}
         {status?.status === 'starting' && <div className="map-banner">Warming up simulation…</div>}
@@ -180,6 +221,7 @@ onAction={(action) => {
           incidents={incidents}
           segments={state?.segments ?? []}
           responders={state?.emergency_vehicles ?? []}
+          cameraCount={cameras.length}
           busy={busy}
           onDispatch={() => run('dispatch', api.dispatchEmergency)}
           onClear={(id) => run('clear', () => api.clearIncident(id))}

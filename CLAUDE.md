@@ -112,8 +112,9 @@ venv directly (this is what works in PowerShell or Git Bash):
   matched collisions into the twin. `NemotronAgentProvider` powers REST Analyze Response with
   schema-validated plan data; the safety validator and completed-candidate gate still decide
   what can run. Model failures remain visible rather than silently changing providers.
-  Nemotron also runs as an episode analyst. Claude and Nemotron are runtime-selectable
-  episode analyst/reviewer teams; startup stays on Mock.
+  Nemotron also runs as the episode analyst and reviewer of every episode (`episode_analyst`
+  defaults to it; the console has no selector). With no `NVIDIA_API_KEY` its calls fail
+  visibly; the backend never falls back to Mock. The Claude team is still built.
 - **One thread owns the live TraCI connection.** TraCI is blocking and not thread-safe.
   Touch the live simulation only through `CityService.run_on_live(fn)`; scripted crashes are
   fired by the runner thread itself (`set_scripted_events`).

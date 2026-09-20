@@ -50,6 +50,7 @@ from app.services.city import CityService, Conflict, NotReady
 from app.simulation.branching import ProbeSpec, candidate_from_plan, probe_for_incident, run_branch
 from app.simulation.interface import TrafficSimulation
 from app.simulation.network import RoadNetwork
+from app.simulation.routes import plan_routes
 
 log = logging.getLogger(__name__)
 
@@ -379,6 +380,11 @@ class ScenarioService:
 
         start = len(a.run.candidates)
         a.run.candidates.extend(candidate_from_plan(p) for p in plans)
+        stations = self.city.scenario.ems_stations
+        for plan in plans:  # where each plan acts, for the mini map
+            a.run.routes[plan.id] = plan_routes(
+                self.city.network, plan, a.incidents, stations[0].edge if stations else None
+            )
         for candidate, plan in zip(a.run.candidates[start:], plans):
             if findings := self.check_plan(a, plan):
                 candidate.status = CandidateStatus.REJECTED

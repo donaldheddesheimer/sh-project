@@ -62,8 +62,8 @@ class Settings(BaseSettings):
 
     # --- autonomous demo episode (app/learning/) ----------------------------
     demo_script: str | None = None  # arm this demos/*.json script at startup
-    # Startup default only; the operator can switch among configured providers from the demo panel.
-    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "mock"
+    # Nemotron drives every episode; the mock team runs only when this is set to "mock" here in code.
+    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "nemotron"
     episode_monitor_s: float | None = None  # sim seconds a plan is watched (default: script monitor_s, else horizon)
     episode_agent_timeout_s: float = 420.0  # wall-clock limit for one model-backed analyst run
     episode_fallback_to_mock: bool = False  # selected model failures stay visible; choose Mock explicitly if desired

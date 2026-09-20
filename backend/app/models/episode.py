@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 class EpisodeStatus(StrEnum):
     ARMED = "armed"  # script loaded, waiting for the crash to be detected
+    AWAITING = "awaiting"  # collision detected, the simulation is paused, waiting for the operator to press Analyze
     DETECTED = "detected"  # incident(s) reported; the agent has been handed the state
     ANALYZING = "analyzing"  # agent is testing alternatives in parallel branches
     MONITORING = "monitoring"  # the chosen plan is applied to the live sim; live data is being cached
@@ -26,13 +27,19 @@ class EpisodeStatus(StrEnum):
 
 
 ACTIVE_STATUSES = (
+    EpisodeStatus.AWAITING,
     EpisodeStatus.DETECTED,
     EpisodeStatus.ANALYZING,
     EpisodeStatus.MONITORING,
     EpisodeStatus.REVIEWING,
 )
 # the statuses in which the agent or the implementor is still working (a new crash supersedes these)
-WORKING_STATUSES = (EpisodeStatus.DETECTED, EpisodeStatus.ANALYZING, EpisodeStatus.MONITORING)
+WORKING_STATUSES = (
+    EpisodeStatus.AWAITING,
+    EpisodeStatus.DETECTED,
+    EpisodeStatus.ANALYZING,
+    EpisodeStatus.MONITORING,
+)
 
 
 class LiveSample(BaseModel):
@@ -308,8 +315,7 @@ class Episode(BaseModel):
 class DemoInfo(BaseModel):
     scripts: list[dict] = Field(description="Every demos/*.json script: id, name, description, crash times, monitor_s")
     armed: str | None = Field(None, description="Script currently armed (autonomous response is on while one is)")
-    analyst: str = Field("", description="Analyst new episodes use: mock, claude or nemotron")
+    analyst: str = Field("", description="Analyst new episodes use: nemotron by default (mock only when set in code)")
     analyst_model: str | None = Field(None, description="Exact model id, or null for the deterministic mock")
-    analysts: list[dict] = Field(default_factory=list, description="Configured analysts available for runtime selection")
     current: Episode | None = None
     memory: dict

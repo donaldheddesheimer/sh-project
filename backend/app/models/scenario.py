@@ -13,7 +13,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from app.models.domain import Recommendation, SimulationCandidate
+from app.models.domain import PlanRoutes, Recommendation, SimulationCandidate
 from app.models.episode import Implementation, MemoryMode, RecalledExperience
 
 
@@ -48,6 +48,7 @@ class ScenarioRun(BaseModel):
     candidates: list[SimulationCandidate] = Field(
         default_factory=list, description='Agent order; always includes id "baseline"'
     )
+    routes: dict[str, PlanRoutes] = Field(default_factory=dict, description="Candidate id -> paths it acts on")
     recommendation: Recommendation | None = None
     error: str | None = None
     rounds: int = Field(0, description="Simulation rounds run (the mock runs one; an MCP agent may run several)")

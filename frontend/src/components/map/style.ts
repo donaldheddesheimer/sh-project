@@ -1,5 +1,6 @@
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl'
 import { CONGESTION_COLOR, SIGNAL_COLOR } from '../../lib/format'
+import { SERIES } from '../../lib/plans'
 
 // Road half-width (one travel direction) in px per lane, by zoom. Exaggerated at
 // overview zooms the way web maps do, approaching true lane width when zoomed in.
@@ -69,7 +70,75 @@ export const contextLayers: LayerSpecification[] = [
   },
 ]
 
-export const layers: LayerSpecification[] = [
+// ---- "thinking" overlay ------------------------------------------------------------------
+// A cosmetic loading effect: routes fanning out from a crash while the agent decides. It is
+// decoration, so the colors are a fixed subset of the shared series palette in a deliberately
+// non-candidate order — a route's color must never read as a rank.
+
+/** Routes are drawn one per slot, because `line-gradient` is per layer and cannot be data-driven. */
+export const THINKING_SLOTS = 5
+export const THINKING_COLORS = [SERIES[0], SERIES[2], SERIES[6], SERIES[3], SERIES[4]]
+
+const CLEAR_GRADIENT: ExpressionSpecification = [
+  'interpolate',
+  ['linear'],
+  ['line-progress'],
+  0,
+  'rgba(0,0,0,0)',
+  1,
+  'rgba(0,0,0,0)',
+]
+
+function thinkingLayers(): LayerSpecification[] {
+  const out: LayerSpecification[] = []
+  for (let slot = 0; slot < THINKING_SLOTS; slot++) {
+    const only: ExpressionSpecification = ['==', ['get', 'slot'], slot]
+    out.push({
+      id: `thinking-glow-${slot}`,
+      type: 'line',
+      source: 'thinking-routes',
+      filter: only,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      // Opacity and gradient are driven per frame by CityMap; they start invisible. The opacity
+      // transition is what fades the overlay out when the decision lands and the real plan
+      // overlay takes over.
+      paint: {
+        'line-color': THINKING_COLORS[slot],
+        'line-width': ['interpolate', ['exponential', 1.6], ['zoom'], 13, 5, 16, 13, 18, 24],
+        'line-blur': ['interpolate', ['linear'], ['zoom'], 13, 3, 18, 10],
+        'line-opacity': 0,
+        'line-opacity-transition': { duration: 320, delay: 0 },
+      },
+    })
+    out.push({
+      id: `thinking-line-${slot}`,
+      type: 'line',
+      source: 'thinking-routes',
+      filter: only,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-width': ['interpolate', ['exponential', 1.6], ['zoom'], 13, 1.8, 16, 3.6, 18, 6.5],
+        'line-gradient': CLEAR_GRADIENT,
+        'line-opacity': 0,
+        'line-opacity-transition': { duration: 320, delay: 0 },
+      },
+    })
+  }
+  out.push({
+    id: 'thinking-particles',
+    type: 'circle',
+    source: 'thinking-particles',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 13, 1.6, 16, 3, 18, 5],
+      'circle-color': ['get', 'color'],
+      'circle-opacity': ['get', 'opacity'],
+      'circle-blur': 0.35,
+    },
+  })
+  return out
+}
+
+const cityLayers: LayerSpecification[] = [
   {
     id: 'road-casing',
     type: 'line',
@@ -217,3 +286,11 @@ export const layers: LayerSpecification[] = [
     },
   },
 ]
+
+/**
+ * Draw order. The thinking overlay sits directly under `vehicles`, so it reads as an overlay
+ * on the city while real traffic and the EMS responder stay on top of it.
+ */
+export const layers: LayerSpecification[] = cityLayers.flatMap((layer) =>
+  layer.id === 'vehicles' ? [...thinkingLayers(), layer] : [layer],
+)

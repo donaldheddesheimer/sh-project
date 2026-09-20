@@ -257,7 +257,7 @@ README:
 |---|---|---|
 | **Command bar** | Across the top, available in every view | The **Map** selector (**3×3 Grid**, **Pittsburgh**), network state and the simulated clock, the time scale (1×–16×), play/pause and reset, and the three response commands: **Inject collision**, **Dispatch EMS**, **Analyze Response** |
 | **Workspace rail** | Narrow left column | The three views — **Live**, **Analysis**, **Agent** — each with a count: active incidents, candidate plans, and a working episode |
-| **Map** | The center, always the live twin and never a branch | Roads colored by cycle-averaged congestion, signal heads on the live phase, vehicles, incident markers, the EMS responder, cameras on the VSS path, and the legend. The caption under it names the network, its signalized intersections, the tracked vehicle count and the three providers in use |
+| **Map** | The center, always the live twin and never a branch | Roads colored by cycle-averaged congestion, signal heads on the live phase, vehicles, incident markers, the EMS responder, cameras on the VSS path, the cosmetic thinking overlay while a decision is being made, and the legend. The caption under it names the network, its signalized intersections, the tracked vehicle count and the three providers in use |
 | **Workspace drawer** | Right column, titled by the selected view | **Live**: Active incident, Network performance, Inspector. **Analysis**: Response plans, then the incident. **Agent**: Autonomous agent, then the plans and the incident |
 | **Performance dock** | Strip along the bottom | **Live trends** (delay, max queue, throughput and mean speed against simulated time, one marker per incident, above the city overview and the ops log), **Scenario comparison** (the KPI table and the horizon chart, enabled once a run exists) and **Activity** (that overview and ops log on their own, with more room) |
 
@@ -272,6 +272,16 @@ How the regions drive each other:
   that object in Active incident or the Inspector.
 - Hovering or clicking a plan, in either the drawer or the dock, paints it on the map and
   pins a summary card there; clicking the same plan again clears it.
+- While a decision is being made — an Analyze Response run is open, or an episode is at
+  `detected` or `analyzing` — a **thinking overlay** fans a few plausible detours out of the
+  crash, pulses light along each one and captions the map *Evaluating detours…*. It is
+  **decoration only**: the frontend traces the routes through the map's own geometry, and
+  reads no candidate, agent message or MCP tool, so the colors carry no ranking and the
+  caption says *illustration · not the agent's plan*. It stands aside as soon as a real plan
+  is hovered or clicked, and fades out when the decision lands. Under
+  `prefers-reduced-motion` the routes are drawn once and nothing animates. It type-checks,
+  lints and builds clean; **nobody has watched it run**, so how the fan-out reads on either
+  map is still unverified.
 - **Dispatch EMS** targets the newest active incident. With several incidents open, the
   drawer gets a **Selected incident** picker, and dispatch is disabled while an older one is
   selected.
@@ -1028,13 +1038,14 @@ backend/tests/          network, simulation, runner, safety/agent, mock provider
 frontend/src/
   App.tsx               map-first workspace layout, view and incident selection, actions
   hooks/useCityStream.ts   WebSocket client (reconnect, trend backfill, scenario runs, episodes)
-  components/map/       MapLibre map, layer styles, vehicle glyphs, plan overlays
+  components/map/       MapLibre map, layer styles, vehicle glyphs, plan and thinking overlays
   components/plans/     response plans: candidate cards, KPI comparison, horizon chart, dock,
                         Apply to live signals
   components/EpisodePanel.tsx  autonomous agent: scripts, step strip, lesson, memory
   components/           workspace rail, command bar, incident card, KPI tiles, inspector,
                         trends, ops log
-  lib/plans.ts          analysis state, deltas, plan overlays
+  lib/plans.ts          analysis state, deltas, plan overlays, "the agent is deciding"
+  lib/thinkingRoutes.ts cosmetic detours traced from map geometry for the thinking overlay
   dev/                  ?fixture=scenario replay of a recorded run
 frontend/public/        static Oakland OSM building, park and water context GeoJSON
 frontend/scripts/       reproducible Overpass download for the Oakland context asset

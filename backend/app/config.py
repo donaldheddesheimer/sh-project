@@ -92,7 +92,9 @@ class Settings(BaseSettings):
     vss_require_vlm_confirmation: bool = True
     vss_default_severity: Literal["minor", "major", "critical"] = "major"
     nemotron_base_url: str = "https://integrate.api.nvidia.com/v1"  # NIM, OpenAI-compatible
-    nemotron_model: str | None = "nvidia/nemotron-3-super-120b-a12b"
+    # Ultra owns the high-judgment plan/recommend steps; the small reviewer only explains a verdict code computed.
+    nemotron_model: str | None = "nvidia/nemotron-3-ultra-550b-a55b"
+    nemotron_reviewer_model: str | None = "nvidia/nemotron-3.5-lightning-30b-a3b"
 
     # --- Anthropic integration (unused unless Claude is configured) --------
     anthropic_api_key: SecretStr | None = None

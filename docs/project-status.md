@@ -28,9 +28,12 @@ the root README focused on the product while making implementation status explic
   It proposed a valid plan after one correction retry, completed the baseline and candidate
   branches in 16.7 seconds, applied the recommendation, monitored 600 simulated seconds, and
   stored an `effective` Nemotron-reviewed lesson. All four NIM inference calls returned 200.
+  That qualification used Nemotron 3 Super. The role split to Ultra for analysis and Lightning
+  for review is catalog-verified but intentionally awaits one controlled paid qualification run.
 - On 2026-09-19, authenticated catalog requests returned HTTP 200 for the configured
-  Anthropic and NVIDIA credentials and included both configured model IDs. Those requests
-  did not invoke a model or prove the inference/tool-calling path.
+  Anthropic and NVIDIA credentials and included the then-configured Claude and Nemotron 3
+  Super IDs. On 2026-09-20, another read-only catalog check confirmed the new Ultra analyst
+  and Lightning reviewer IDs. Those catalog requests did not invoke a model.
 - The Oakland desktop view in the root README was visually inspected with a live collision
   and dispatched EMS responder.
 

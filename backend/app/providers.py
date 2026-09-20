@@ -74,17 +74,19 @@ def build_smart_city_provider(settings: Settings, network: RoadNetwork) -> tuple
 
 
 def check_keyed_deployment(settings: Settings) -> None:
-    """A deployment holding an NVIDIA key must name a model.
+    """A deployment holding an NVIDIA key must name its analyst and reviewer models.
 
     Both the REST agent and the episode teams depend on this, and whichever is built first
     would otherwise report its own narrower complaint: `build_agent_provider` raises about a
     missing model id, which reads like a typo rather than a deployment that cannot serve what
     its key promises. Checked once, up front, so the message is the accurate one.
     """
-    if settings.nvidia_api_key and settings.nvidia_api_key.get_secret_value() and not settings.nemotron_model:
+    if settings.nvidia_api_key and settings.nvidia_api_key.get_secret_value() and (
+        not settings.nemotron_model or not settings.nemotron_reviewer_model
+    ):
         raise RuntimeError(
-            "NVIDIA_API_KEY is set but NEMOTRON_MODEL is empty. A deployment holding a key is not "
-            "served by the deterministic local team; set a model id, or drop the key to run locally."
+            "NVIDIA_API_KEY is set but a Nemotron analyst or reviewer model is empty. A deployment holding "
+            "a key must configure both model roles, or drop the key to run locally."
         )
 
 
@@ -127,7 +129,7 @@ def build_episode_teams(
     if not nvidia_key:
         deterministic = MockAnalyst(scenarios, implementor, settings.agent_may_implement)
         deterministic_reviewer = MockReviewer()
-        teams["mock"] = AgentTeam(deterministic, None, deterministic_reviewer)
+        teams["mock"] = AgentTeam(analyst=deterministic, fallback=None, reviewer=deterministic_reviewer)
         if settings.episode_fallback_to_mock:
             fallback_analyst = deterministic
             fallback_reviewer = deterministic_reviewer
@@ -140,20 +142,26 @@ def build_episode_teams(
             settings.anthropic_workspace_id,
         )
         teams["claude"] = AgentTeam(
-            ModelAnalyst(
+            analyst=ModelAnalyst(
                 "claude",
                 claude,
                 settings.mcp_url or mcp_server,
                 settings.episode_agent_timeout_s,
                 settings.agent_may_implement,
             ),
-            fallback_analyst,
-            ModelReviewer("claude", claude, fallback_reviewer),
-            settings.claude_model,
+            fallback=fallback_analyst,
+            reviewer=ModelReviewer("claude", claude, fallback_reviewer),
+            analyst_model=settings.claude_model,
+            reviewer_model=settings.claude_model,
         )
 
-    if nvidia_key and settings.nemotron_model:
-        nim = NimClient(settings.nemotron_base_url, settings.nemotron_model, nvidia_key)
+    if nvidia_key and settings.nemotron_model and settings.nemotron_reviewer_model:
+        reviewer = NimClient(
+            settings.nemotron_base_url,
+            settings.nemotron_reviewer_model,
+            nvidia_key,
+            json_mode=True,
+        )
         provider = NemotronAgentProvider(
             settings.nemotron_base_url,
             settings.nemotron_model,
@@ -161,7 +169,7 @@ def build_episode_teams(
             settings.scenario_max_candidates,
         )
         teams["nemotron"] = AgentTeam(
-            PipelineAnalyst(
+            analyst=PipelineAnalyst(
                 "nemotron",
                 provider,
                 scenarios,
@@ -169,9 +177,10 @@ def build_episode_teams(
                 settings.episode_agent_timeout_s,
                 settings.agent_may_implement,
             ),
-            fallback_analyst,
-            ModelReviewer("nemotron", nim, fallback_reviewer),
-            settings.nemotron_model,
+            fallback=fallback_analyst,
+            reviewer=ModelReviewer("nemotron", reviewer, fallback_reviewer),
+            analyst_model=settings.nemotron_model,
+            reviewer_model=settings.nemotron_reviewer_model,
         )
 
     wanted = settings.episode_analyst

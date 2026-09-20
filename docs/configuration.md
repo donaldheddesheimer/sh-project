@@ -29,18 +29,20 @@ from Anthropic API billing.
 
 ## Runtime analyst selection
 
-The backend always starts with the credit-free Mock team. Open **Agent** and change the
-**Analyst** selector between episodes:
+With no NVIDIA key, the backend starts with the credit-free Mock team. An NVIDIA key makes
+Nemotron the startup team; an Anthropic key adds Claude. Open **Agent** and change the
+**Analyst** selector between episodes when more than one configured team is available:
 
-| Selection | Credential | Default model |
+| Selection | Credential | Analyst / reviewer models |
 |---|---|---|
 | Mock | None | Local rule-based analyst and reviewer |
 | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
-| Nemotron | `NVIDIA_API_KEY` | `nvidia/nemotron-3-super-120b-a12b` |
+| Nemotron | `NVIDIA_API_KEY` | Analyst: `nvidia/nemotron-3-ultra-550b-a55b`; reviewer: `nvidia/nemotron-3.5-lightning-30b-a3b` |
 
-Only configured providers appear. The exact active model is shown beside the selector.
-Changing the selector does not require editing `.env` or restarting the backend, but it is
-disabled while an episode is armed or working.
+Only configured providers appear. A keyed NVIDIA deployment deliberately withholds Mock, so
+it cannot silently present a deterministic run as model-backed. The exact analyst and reviewer
+models are shown beside the selector. Changing the selector does not require editing `.env` or
+restarting the backend, but it is disabled while an episode is armed or working.
 
 The selector confirms that a credential was loaded; it does not prove that the key is valid,
 funded, or authorized for an inference request. Run Mock first, then one controlled Claude

@@ -88,7 +88,8 @@ class AgentTeam:
     analyst: Analyst
     fallback: Analyst | None
     reviewer: Reviewer
-    model: str | None = None
+    analyst_model: str | None = None
+    reviewer_model: str | None = None
 
 
 class EpisodeService:
@@ -155,9 +156,10 @@ class EpisodeService:
             ],
             armed=self._script.id if self._script else None,
             analyst=self._analyst.name,
-            analyst_model=self._team.model,
+            analyst_model=self._team.analyst_model,
+            reviewer_model=self._team.reviewer_model,
             analysts=[
-                {"id": name, "model": team.model}
+                {"id": name, "model": team.analyst_model, "reviewer_model": team.reviewer_model}
                 for name, team in self._teams.items()
             ],
             current=self._episodes[-1] if self._episodes else None,

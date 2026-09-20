@@ -32,15 +32,24 @@ class NimError(RuntimeError):
 class NimClient:
     """Minimal OpenAI-compatible chat-completions client for NIM (hosted at integrate.api.nvidia.com, or self-hosted)."""
 
-    def __init__(self, base_url: str, model: str, api_key: str | None, timeout_s: float = 120.0):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str | None,
+        timeout_s: float = 120.0,
+        *,
+        json_mode: bool = False,
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self._api_key = api_key
         self._timeout_s = timeout_s
+        self._json_mode = json_mode
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 4096) -> dict:
         """One completion; returns the assistant message (``content``, and ``tool_calls`` when it calls tools)."""
-        # Nemotron 3 model cards recommend temperature 1.0 / top_p 0.95 for every task, tool calling included.
+        # Nemotron 3 defaults; JSON mode below follows NVIDIA's deterministic structured-output example.
         body: dict = {
             "model": self.model,
             # ``is_error`` is an internal hint used by the Claude adapter; OpenAI-compatible tool messages
@@ -50,12 +59,16 @@ class NimClient:
             "top_p": 0.95,
             "max_tokens": max_tokens,
         }
-        if "nemotron-3-super" in self.model.lower():
-            # NVIDIA's model card requires non-thinking mode for reliable tool calling and
-            # force_nonempty_content for agent loops that feed tool results back to the model.
-            # Without it the first tool call succeeds, but the hosted endpoint can return 500
-            # while rendering the follow-up assistant + tool history.
-            body["chat_template_kwargs"] = {"enable_thinking": False, "force_nonempty_content": True}
+        if "nemotron-3" in self.model.lower():
+            # Structured output does not benefit from a visible reasoning trace. Keeping it off
+            # also prevents reasoning text from competing with the schema-constrained payload.
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        if tools and "nemotron-3-super" in self.model.lower():
+            body["chat_template_kwargs"]["force_nonempty_content"] = True
+        if self._json_mode and not tools:
+            body["response_format"] = {"type": "json_object"}
+            body["temperature"] = 0.0
+            body.pop("top_p", None)
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -78,7 +91,7 @@ class NemotronAgentProvider(AgentProvider):
     name = "nemotron"
 
     def __init__(self, base_url: str, model: str, api_key: str | None, candidate_limit: int):
-        self._nim = NimClient(base_url, model, api_key)
+        self._nim = NimClient(base_url, model, api_key, json_mode=True)
         self._candidate_limit = candidate_limit
         self._diagnostics: list[str] = []
 
@@ -88,14 +101,18 @@ class NemotronAgentProvider(AgentProvider):
         prompt = {
             "candidate_budget": budget,
             "context": _proposal_context(context),
-            "response_schema": {"type": "array", "items": CandidatePlan.model_json_schema()},
+            "response_schema": {
+                "type": "object",
+                "properties": {"plans": {"type": "array", "items": CandidatePlan.model_json_schema()}},
+                "required": ["plans"],
+            },
         }
         messages = [
             {
                 "role": "system",
                 "content": (
                     PLAN_DESIGN
-                    + "\nReturn only a JSON array of CandidatePlan objects. "
+                    + '\nReturn only one JSON object shaped as {"plans":[CandidatePlan,...]}. '
                     "Plans are data, never commands: choose safe timing, corridor or reroute ideas for later validation "
                     "and branch simulation. Respect candidate_budget, do not include the baseline, and use lessons only "
                     "as advice."
@@ -120,7 +137,7 @@ class NemotronAgentProvider(AgentProvider):
                         "role": "user",
                         "content": (
                             f"That reply was rejected: {'; '.join(faults[:4])}. "
-                            "Return only a JSON array of valid CandidatePlan objects."
+                            'Return only one JSON object shaped as {"plans":[CandidatePlan,...]}.'
                         ),
                     },
                 ]
@@ -154,8 +171,10 @@ class NemotronAgentProvider(AgentProvider):
 
     def _validated_plans(self, raw: object, budget: int) -> list[CandidatePlan]:
         parsed = _json_value(raw)
+        if isinstance(parsed, dict):
+            parsed = parsed.get("plans")
         if not isinstance(parsed, list):
-            self._diagnostics.append("Nemotron proposal was not a JSON array")
+            self._diagnostics.append("Nemotron proposal did not contain a plans array")
             return []
         plans: list[CandidatePlan] = []
         ids: set[str] = set()

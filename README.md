@@ -196,8 +196,10 @@ gcloud secrets add-iam-policy-binding nvidia-api-key \
   --role="roles/secretmanager.secretAccessor"
 ```
 
-First deploy the credit-free mock to prove that the container, Oakland network, UI and
-WebSocket work. Run this from the repository root:
+First deploy without the secrets to prove that the container, Oakland network, UI and
+WebSocket work. The twin, the console and the WebSocket need no key; only the analyst does, and
+without one every Nemotron call fails with HTTP 401 (set `episode_analyst = "mock"` in
+`config.py` first for a credit-free episode). Run this from the repository root:
 
 ```bash
 gcloud run deploy traffic-ops-demo \
@@ -226,6 +228,13 @@ gcloud run services update traffic-ops-demo \
 Add `--update-env-vars=ANTHROPIC_WORKSPACE_ID=YOUR_WORKSPACE_ID` when the Anthropic key is
 organization-level. It is the only environment name besides the two keys that the app reads;
 `--set-env-vars` would replace the whole list, so use `--update-env-vars`.
+
+**Logs.** The app writes one JSON object per line, locally and on Cloud Run
+(`app/logging_setup.py`), so Cloud Logging records real severities. Open Logs Explorer for the service, or run
+`gcloud run services logs read traffic-ops-demo --region us-central1`. Filter with
+`severity>=WARNING`, or `jsonPayload.logger="app.learning.episode"` for the episode. At startup
+one line names the analyst team in use, and an `ERROR` says so when `NVIDIA_API_KEY` is missing
+or empty. *Built, not run.*
 
 Reload the console and select Mock, Claude or Nemotron from the panel. Lessons live on the
 container's ephemeral filesystem, so they survive repeated runs on the warm instance but
@@ -1218,9 +1227,9 @@ the previous pass, plus five fixes found while reading the code. The single-cras
 
 | Area | Files | Change |
 |---|---|---|
-| Demo qualification | `agent/claude.py`, `agent/chat.py`, `learning/{analysts,reviewer,episode}.py`, `providers.py`, `api/routes.py`, `components/EpisodePanel.tsx` | Claude Messages API support, runtime Mock / Claude / Nemotron selection between episodes, exact model visibility and a credit-free Mock startup. |
+| Demo qualification | `agent/claude.py`, `agent/chat.py`, `learning/{analysts,reviewer,episode}.py`, `providers.py`, `api/routes.py`, `components/EpisodePanel.tsx` | Claude Messages API support, runtime Mock / Claude / Nemotron selection between episodes, exact model visibility and a credit-free Mock startup. The selector and that startup default were later removed: Nemotron is chosen in code. |
 | | `simulation/scenarios/*/demos/operator-collision.json`, `simulation/scenario.py` | An operator-controlled script that arms autonomous response and waits for the presenter to click **Inject collision**. |
-| | `Dockerfile`, `.dockerignore`, `.env.demo.example`, `main.py`, `scripts/deploy-cloudrun.sh` | One Cloud Run image serves the console, API, MCP and WebSocket; the safe demo template keeps secrets local and starts on Mock. |
+| | `Dockerfile`, `.dockerignore`, `.env.demo.example`, `main.py`, `scripts/deploy-cloudrun.sh` | One Cloud Run image serves the console, API, MCP and WebSocket; the safe demo template keeps secrets local. |
 | Fixes | `simulation/sumo.py`, `models/domain.py` | Programs installed at runtime are recorded, carried in the snapshot (`custom_programs`) and re-created before `loadState`. Without this, every branch after a live timing change fails with `Unknown program` (SUMO's `MSStateHandler`). |
 | | `api/mcp_tools.py` | `start_analysis` read `a.probe`, which does not exist (`Analysis.probes`). Every call raised after the snapshot and left the run locked until the idle timeout. |
 | | `services/scenarios.py` | `finish` and `evaluate` refuse an analysis that is already closed, so a pipeline still running after `abandon` can no longer complete the failed run. `run_pipeline` is public (the mock analyst awaits it); new `ScenarioRun.rounds` and `.recalled`. |

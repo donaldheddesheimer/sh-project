@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from itertools import count
 
@@ -33,6 +34,8 @@ from app.smart_city.matching import RoadMatcher
 from app.smart_city.nvidia import NvidiaSmartCityProvider
 from app.smart_city.vss_client import McpVssClient, ReplayVssClient
 from app.websocket.hub import ConnectionHub
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -89,7 +92,8 @@ def build_episode_teams(
 ) -> tuple[dict[str, AgentTeam], str]:
     """Configured analyst/reviewer teams and the startup selection.
 
-    The startup default is Mock; the operator may switch teams between episodes.
+    The console has no analyst selector: Nemotron runs every episode, and the mock team is used only when
+    ``episode_analyst`` is set to ``mock`` in code.
     """
     mock = MockAnalyst(scenarios, implementor, settings.agent_may_implement)
     mock_reviewer = MockReviewer()
@@ -118,8 +122,12 @@ def build_episode_teams(
             settings.claude_model,
         )
 
+    # The Nemotron team never depends on the key being present: without one every call fails visibly (NIM answers
+    # 401 and the episode reports the error) instead of the console quietly running the mock.
     nvidia_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
-    if nvidia_key and settings.nemotron_model:
+    if not nvidia_key:
+        log.error("NVIDIA_API_KEY is missing or empty: Nemotron calls will fail with 401 until it is set")
+    if settings.nemotron_model:
         nim = NimClient(settings.nemotron_base_url, settings.nemotron_model, nvidia_key)
         teams["nemotron"] = AgentTeam(
             ModelAnalyst(
@@ -142,6 +150,7 @@ def build_episode_teams(
     if selected not in teams:
         needed = "an Anthropic API key" if selected == "claude" else "an NVIDIA API key"
         raise RuntimeError(f"analyst {selected} requires {needed}")
+    log.info("episode analyst/reviewer team: %s (available: %s)", selected, ", ".join(sorted(teams)))
     return teams, selected
 
 

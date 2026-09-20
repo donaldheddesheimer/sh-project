@@ -77,14 +77,12 @@ NETCONVERT_OPTIONS = [
 
 
 def sumo_home() -> Path:
-    if os.environ.get("SUMO_HOME"):
-        return Path(os.environ["SUMO_HOME"])
     try:
         import sumo  # type: ignore  # provided by `pip install eclipse-sumo`
 
         return Path(sumo.SUMO_HOME)
     except ImportError:
-        sys.exit("SUMO not found: `pip install eclipse-sumo` or set SUMO_HOME")
+        sys.exit("SUMO not found: `pip install eclipse-sumo`")
 
 
 def find_tool(name: str) -> str:

@@ -9,8 +9,8 @@ interface Props {
   colors: Record<string, string>
 }
 
-// mock is only ever the startup fallback when no NVIDIA key is configured (providers.build_episode_teams)
-const analystName = (name: string) => (name === 'mock' ? 'Mock (no NVIDIA key)' : name === 'claude' ? 'Claude' : 'Nemotron')
+// mock is used only when episode_analyst is set to it in code (providers.build_episode_teams)
+const analystName = (name: string) => (name === 'mock' ? 'Mock' : name === 'claude' ? 'Claude' : 'Nemotron')
 
 /** What the agent decided, in words and numbers: the recommendation, why, and what it costs or saves. */
 export function DecisionCard({ run, episode, colors }: Props) {

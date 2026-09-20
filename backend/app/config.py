@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # --- traffic simulation -------------------------------------------------
     # downtown_grid (the tests and startup use it) or pittsburgh_oakland; runtime UI/API switching is primary
     scenario_dir: Path = REPO_ROOT / "simulation" / "scenarios" / "downtown_grid"
-    sumo_binary: str | None = None  # default: bundled eclipse-sumo, then $SUMO_HOME, then PATH
+    sumo_binary: str | None = None  # default: bundled eclipse-sumo, then PATH
     sumo_gui: bool = False  # open sumo-gui for the live simulation (debugging)
     sim_speed: float = 4.0  # live simulation speed as a multiple of wall-clock time
     sim_warmup_s: float = 300.0  # simulated seconds run at startup/reset so roads are populated

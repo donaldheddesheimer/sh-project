@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     # --- provider selection -------------------------------------------------
     smart_city_provider: Literal["mock", "nvidia"] = "mock"
-    agent_provider: Literal["mock", "nemotron"] = "mock"
+    agent_provider: Literal["mock", "nemotron"] = "nemotron"
 
     # --- traffic simulation -------------------------------------------------
     # downtown_grid (the tests and startup use it) or pittsburgh_oakland; runtime UI/API switching is primary

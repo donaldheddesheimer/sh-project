@@ -69,6 +69,15 @@ export interface EmergencyVehicleState {
   eta_s: number | null
 }
 
+// --- twin engine: per-responder EMS response (backend EmergencyResponse) ---
+export interface EmergencyResponse {
+  vehicle_id: string
+  destination_segment: string
+  dispatched_at: number
+  arrived_at: number | null
+  response_s: number | null // arrived_at - max(window start, dispatched_at); null until it arrives
+}
+
 export interface TrafficMetrics {
   sim_time: number
   window_s: number | null
@@ -77,7 +86,8 @@ export interface TrafficMetrics {
   max_queue_segment: string | null
   throughput: number
   mean_speed: number
-  emergency_vehicle_eta: number | null
+  emergency_vehicle_eta: number | null // the aggregate: the last responder to arrive
+  emergency_responses: EmergencyResponse[] // per-responder breakdown; empty on live metrics
   vehicles_in_network: number
   vehicles_waiting_to_enter: number
 }

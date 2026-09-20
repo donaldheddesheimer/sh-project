@@ -118,6 +118,23 @@ class MetricSample(BaseModel):
     vehicles: int
 
 
+class EmergencyResponse(BaseModel):
+    """One responder's realised response time within a measured window.
+
+    Produced per candidate branch by the twin alongside the aggregate ``TrafficMetrics.emergency_vehicle_eta``,
+    so a plan that helps one responder and hurts another is visible instead of averaged away.
+    """
+
+    vehicle_id: str
+    # the scene it was sent to: identifies the incident (responder ids differ between a branch and the live city)
+    destination_segment: str
+    dispatched_at: float
+    arrived_at: float | None = None
+    response_s: float | None = Field(
+        None, description="arrived_at - max(window start, dispatched_at); None until it arrives"
+    )
+
+
 class TrafficMetrics(BaseModel):
     """Network performance indicators.
 
@@ -136,6 +153,9 @@ class TrafficMetrics(BaseModel):
     throughput: float = Field(description="Completed trips per hour")
     mean_speed: float = Field(description="m/s")
     emergency_vehicle_eta: float | None = Field(None, description="Seconds until the responder reaches the scene")
+    # per-responder breakdown of the same window and the same responder set as emergency_vehicle_eta, which stays
+    # the aggregate (the last to arrive, None while any has not). Empty on live metrics.
+    emergency_responses: list[EmergencyResponse] = Field(default_factory=list)
     vehicles_in_network: int = 0
     vehicles_waiting_to_enter: int = 0
 

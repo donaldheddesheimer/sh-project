@@ -158,6 +158,7 @@ class EpisodeService:
             armed=self._script.id if self._script else None,
             analyst=self._analyst.name,
             analyst_model=self._team.model,
+            analysts=[{"id": name, "model": team.model} for name, team in self._teams.items()],
             current=self._episodes[-1] if self._episodes else None,
             memory=self._store.stats(),
         )
@@ -226,6 +227,16 @@ class EpisodeService:
         self._step(ep, EpisodeStatus.DETECTED, f"the operator requested a response; the {self._analyst.name} analyst responds")
         self._agent = self._spawn(self._drive(ep))
         return ep
+
+    def select_analyst(self, name: str) -> DemoInfo:
+        """Select the analyst/reviewer for future episodes without changing a live episode."""
+        if name not in self._teams:
+            raise KeyError(name)
+        if self._working is not None or any(ep.status in ACTIVE_STATUSES for ep in self._episodes):
+            raise RuntimeError("stop or finish the current episode before changing the analyst")
+        self._select_team(name)
+        self._city.events.add(EventLevel.INFO, f"Autonomous analyst changed to {name}", self._city.sim_time)
+        return self.info()
 
     def _load(self, script_id: str) -> DemoScript:
         script = self._city.scenario.demos.get(script_id)
@@ -474,6 +485,14 @@ class EpisodeService:
         self._step(ep, EpisodeStatus.ABORTED, f"aborted: {reason}", EventLevel.WARNING)
 
     def _fail(self, ep: Episode, error: str) -> None:
+        if self._script is not None and not self._script.crashes and ep.status in (
+            EpisodeStatus.AWAITING,
+            EpisodeStatus.DETECTED,
+            EpisodeStatus.ANALYZING,
+        ):
+            # An operator-script episode paused the city while awaiting approval. Its state is
+            # already DETECTED/ANALYZING by the time an analyst exception reaches here.
+            self._spawn(self._city.set_running(True))
         if ep is self._working:
             self._working = None
         if ep.status in (EpisodeStatus.DETECTED, EpisodeStatus.ANALYZING):

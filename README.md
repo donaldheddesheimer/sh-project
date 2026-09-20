@@ -142,11 +142,10 @@ cp .env.demo.example .env
 ```
 
 Only model credentials belong in this file, and they are the only names the app reads from
-the environment at all. Nemotron is the analyst and reviewer of every episode, chosen in code,
-not by anything in `.env`. With no `NVIDIA_API_KEY` the app does not switch to Mock: it logs an
-`ERROR` at startup and every Nemotron call fails visibly (HTTP 401). Model ids, safe analysis
-behavior and every other default live in code ([Settings](#settings)). The console has no
-analyst selector:
+the environment at all. The console selects from configured analyst/reviewer teams: Mock is
+always available locally, while Claude and Nemotron appear when their credentials are configured.
+The automatic default prefers a configured model and otherwise uses Mock. Model ids, safe analysis
+behavior and every other default live in code ([Settings](#settings)).
 
 ```dotenv
 ANTHROPIC_API_KEY=your-anthropic-api-key
@@ -473,7 +472,7 @@ If something goes wrong:
 |---|---|
 | No **Analyze** button after **Inject collision** | No script is armed (the Agent panel says `off`), or the episode was aborted. Click **Arm** and inject again |
 | The analysis ends `failed` | The Response plans callout carries the backend's reason. Clear the scene or reset, inject again, and re-run |
-| The episode ends `failed` | The panel shows the error in a red callout. A model run never falls back to Mock, and the console cannot switch analyst, so clear the scene, re-arm and inject again. A missing `NVIDIA_API_KEY` fails every Nemotron call with HTTP 401; the credit-free Mock team needs `episode_analyst = "mock"` in `config.py` and a restart |
+| The episode ends `failed` | The panel shows the error in a red callout. Clear the scene, re-arm and inject again; before starting a new episode, select Mock or another configured analyst in the Autonomous agent panel. |
 | You are unsure which team ran | The panel's **Analyst** row records what actually ran, beside the exact model id |
 | The console reads **OFFLINE** | The backend is unreachable. The console reconnects on its own once it is back, and backfills the trends |
 
@@ -507,7 +506,7 @@ Claude, Nemotron, `crash-already` and `double-crash` still have not been run end
 | Scripted and operator-controlled crash scenarios | Operator collision and `varied-crash` qualified locally; the other scripts remain unrun | `simulation/scenarios/*/demos/`, `simulation/runner.py` |
 | One analysis over several incidents; branches that replay standing responses; abandoning an analysis | Single-incident branches and Reset/Clear aborts qualified; multi-incident analysis remains unrun | `services/scenarios.py`, `simulation/branching.py` |
 | Episode service, implementor, monitor, scorecard, reviewer, memory, recall, the mock acting on lessons | Qualified locally with Mock | `backend/app/learning/`, `agent/mock.py` |
-| Mock, Claude and Nemotron analyst/reviewer teams; Nemotron is the default and the console has no selector | Built, not run: model teams need their API key and model id | `learning/analysts.py`, `agent/claude.py`, `agent/nemotron.py` |
+| Mock, Claude and Nemotron analyst/reviewer teams; the console selects configured teams and auto defaults safely to Mock | Built, not run: model teams need their API key and model id | `learning/analysts.py`, `agent/claude.py`, `agent/nemotron.py` |
 | Autonomous agent panel, **Apply to live signals** | Mock episode state visible locally; manual Apply remains unrun |
 | Collision-gated **Analyze** (`awaiting` status, pause, `POST /api/demo/analyze`), **Agent decision** card, **Response routes** mini map (`PlanRoutes`), merged Live trends, draggable panels | Built by reading the code only. Nothing was run, type-checked or viewed: no backend start, no `lint` or `build`, and the route paths, the pause timing and the splitters are unseen. `test_demo_smoke.py` still names `demo_script=None` and was not re-read against the always-armed startup | `frontend/src/components/EpisodePanel.tsx`, `plans/ResponsePlans.tsx` |
 

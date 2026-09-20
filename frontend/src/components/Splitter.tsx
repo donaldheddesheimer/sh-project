@@ -37,6 +37,7 @@ export function Splitter({ axis, label, className, current, onResize, onReset, m
       className={`splitter splitter-${axis}${className ? ` ${className}` : ''}`}
       data-active={drag != null}
       role="separator"
+      tabIndex={0}
       aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
       aria-label={label}
       aria-valuenow={clamp(current())}

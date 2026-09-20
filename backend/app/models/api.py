@@ -111,6 +111,10 @@ class DemoAnalyzeRequest(BaseModel):
     memory_mode: MemoryMode | None = Field(None, description="Override the episode's memory mode; omitted keeps it")
 
 
+class AnalystSelectionRequest(BaseModel):
+    analyst: str = Field(description="A configured episode analyst id returned by GET /api/demo")
+
+
 class ControlResponse(BaseModel):
     status: RunStatus
     speed: float

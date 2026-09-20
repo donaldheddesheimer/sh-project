@@ -253,8 +253,8 @@ An episode is one agent answering one set of active incidents, from detection to
 lesson. `EpisodeService` is the only thing that starts an agent, and only while a demo
 script is armed. The README's
 [autonomous episode section](../README.md#the-autonomous-self-learning-episode) has the
-rules (two-crash rule, decisions, thresholds). Nemotron is the team every episode uses; there is
-no runtime selection, and no fallback to mock when `NVIDIA_API_KEY` is absent (its calls fail). `operator-collision` is armed at
+rules (two-crash rule, decisions, thresholds). The console can select any configured episode team;
+auto uses Mock when no model credential is available. `operator-collision` is armed at
 startup, so a collision pauses the city and the episode waits (`awaiting`) for
 `POST /api/demo/analyze`. This table is the code path.
 

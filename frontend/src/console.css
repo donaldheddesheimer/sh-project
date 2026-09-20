@@ -756,7 +756,7 @@ body {
 @media (max-width: 1050px) {
   .app {
     grid-template-columns: 60px minmax(0, 1fr);
-    grid-template-rows: 64px minmax(280px, 1fr) 246px;
+    grid-template-rows: 64px minmax(280px, 1fr) var(--dock-h, 246px);
     grid-template-areas:
       'top top'
       'rail map'
@@ -815,7 +815,7 @@ body {
 
 @media (max-width: 700px) {
   .app {
-    grid-template-rows: 64px minmax(240px, 1fr) 205px;
+    grid-template-rows: 64px minmax(240px, 1fr) var(--dock-h, 205px);
   }
 
   .map-caption {

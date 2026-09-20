@@ -12,6 +12,21 @@ export interface PanelSizes {
 
 const DEFAULT: PanelSizes = { sideW: null, dockH: null, miniH: null, activityW: null }
 
+function clamp(key: keyof PanelSizes, value: number): number {
+  const limits: Record<keyof PanelSizes, [number, number]> = {
+    sideW: [300, Math.min(680, window.innerWidth - 396)],
+    dockH: [150, window.innerHeight * 0.6],
+    miniH: [120, window.innerHeight * 0.6],
+    activityW: [200, window.innerWidth * 0.5],
+  }
+  const [min, max] = limits[key]
+  return Math.round(Math.min(Math.max(value, min), Math.max(min, max)))
+}
+
+function bounded(sizes: PanelSizes): PanelSizes {
+  return Object.fromEntries(Object.entries(sizes).map(([key, value]) => [key, value == null ? null : clamp(key as keyof PanelSizes, value)])) as PanelSizes
+}
+
 function load(): PanelSizes {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Partial<PanelSizes> | null
@@ -25,7 +40,13 @@ function load(): PanelSizes {
 
 /** Drag-resized panel sizes, remembered in this browser and exposed as CSS variables on the app grid. */
 export function usePanelSizes() {
-  const [sizes, setSizes] = useState<PanelSizes>(load)
+  const [sizes, setSizes] = useState<PanelSizes>(() => bounded(load()))
+
+  useEffect(() => {
+    const onResize = () => setSizes((previous) => bounded(previous))
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   useEffect(() => {
     try {
@@ -35,7 +56,7 @@ export function usePanelSizes() {
     }
   }, [sizes])
 
-  const set = useCallback((key: keyof PanelSizes, px: number) => setSizes((prev) => ({ ...prev, [key]: Math.round(px) })), [])
+  const set = useCallback((key: keyof PanelSizes, px: number) => setSizes((prev) => ({ ...prev, [key]: clamp(key, px) })), [])
   const clear = useCallback((key: keyof PanelSizes) => setSizes((prev) => ({ ...prev, [key]: null })), [])
   const reset = useCallback(() => setSizes(DEFAULT), [])
   const custom = Object.values(sizes).some((v) => v != null)

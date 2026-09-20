@@ -317,5 +317,6 @@ class DemoInfo(BaseModel):
     armed: str | None = Field(None, description="Script currently armed (autonomous response is on while one is)")
     analyst: str = Field("", description="Analyst new episodes use: nemotron by default (mock only when set in code)")
     analyst_model: str | None = Field(None, description="Exact model id, or null for the deterministic mock")
+    analysts: list[dict] = Field(default_factory=list, description="Configured analyst teams available for the next episode")
     current: Episode | None = None
     memory: dict

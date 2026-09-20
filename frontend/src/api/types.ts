@@ -466,6 +466,7 @@ export interface DemoInfo {
   armed: string | null // autonomous response is on while a script is armed
   analyst: string
   analyst_model: string | null
+  analysts: { id: string; model: string | null }[]
   current: Episode | null
   memory: MemoryStats
 }

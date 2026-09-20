@@ -10,6 +10,7 @@ from app.learning.episode import EpisodeService
 from app.learning.implementor import Implementor
 from app.learning.store import ExperienceStore
 from app.models.api import (
+    AnalystSelectionRequest,
     DemoAnalyzeRequest,
     CityState,
     ControlResponse,
@@ -233,6 +234,16 @@ async def demo_start(episodes: Episodes, city: City, request: DemoStartRequest) 
 @router.post("/demo/stop", response_model=DemoInfo)
 async def demo_stop(episodes: Episodes) -> DemoInfo:
     return await episodes.stop_demo()
+
+
+@router.post("/demo/analyst", response_model=DemoInfo)
+async def demo_analyst(episodes: Episodes, request: AnalystSelectionRequest) -> DemoInfo:
+    try:
+        return episodes.select_analyst(request.analyst)
+    except KeyError as exc:
+        raise HTTPException(404, f"analyst {exc.args[0]} is not configured") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post("/demo/analyze", response_model=Episode, status_code=202)

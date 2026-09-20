@@ -32,3 +32,9 @@ def configure_logging() -> None:
     handler.setFormatter(CloudJsonFormatter())
     # force=True replaces uvicorn's pre-installed root handlers so every line goes through one formatter.
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+    # Uvicorn installs its own named handlers before importing the app. Remove them so access
+    # and server records propagate to the JSON root handler instead of bypassing it as text.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logger = logging.getLogger(name)
+        logger.handlers.clear()
+        logger.propagate = True

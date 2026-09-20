@@ -312,9 +312,21 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
         </button>
       </div>
       <div className="episode-meta">
-        <span className="episode-provider">
-          Analyst {info?.analyst === 'mock' ? 'Mock' : (info?.analyst ?? '—')}
-        </span>
+        <label className="episode-provider">
+          Analyst
+          <select
+            value={info?.analyst ?? ''}
+            disabled={!!busy || analystLocked}
+            title={analystLocked ? 'Stop or finish the current episode before changing the analyst' : 'Analyst and reviewer for the next episode'}
+            onChange={(e) => void act('analyst', () => api.selectAnalyst(e.target.value))}
+          >
+            {info?.analysts.map((analyst) => (
+              <option key={analyst.id} value={analyst.id}>
+                {analyst.id === 'mock' ? 'Mock' : analyst.id === 'claude' ? 'Claude' : 'Nemotron'}
+              </option>
+            ))}
+          </select>
+        </label>
         {info?.analyst_model && (
           <span className="episode-model mono" title={info.analyst_model}>
             {info.analyst_model}

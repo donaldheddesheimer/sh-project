@@ -10,8 +10,12 @@ import type {
   ScenarioRunRequest,
 } from './types'
 
-/** The backend is always same-origin: Vite's dev proxy locally, the FastAPI app itself on Cloud Run. */
-const API_BASE_URL = ''
+/**
+ * Absolute origin of the backend, e.g. 'https://traffic-ops-backend-xxxx.run.app'. Set
+ * VITE_API_BASE_URL when the frontend is hosted apart from the backend (Vercel + Cloud Run).
+ * Empty means same-origin: Vite's dev proxy locally, a reverse proxy in production.
+ */
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
 /** A non-2xx response; `message` is the server's `detail` when it sent one. */
 export class ApiError extends Error {
@@ -62,12 +66,16 @@ export const api = {
   demoStop: () => request<DemoInfo>('POST', '/api/demo/stop'),
   demoAnalyze: (memoryMode?: MemoryMode) =>
     request<Episode>('POST', '/api/demo/analyze', memoryMode ? { memory_mode: memoryMode } : {}),
+  selectAnalyst: (analyst: string) => request<DemoInfo>('POST', '/api/demo/analyst', { analyst }),
   clearMemory: () => request<{ removed: number }>('DELETE', '/api/memory'),
   learningReport: () => request<LearningReport>('GET', '/api/learning/report'),
 }
 
-/** Absolute WebSocket origin of the backend: this page's origin (the dev proxy, or Cloud Run). */
+/** VITE_WS_BASE_URL wins; otherwise derive a WebSocket origin from the configured API origin. */
 function wsBaseUrl(): string {
+  const explicit = import.meta.env.VITE_WS_BASE_URL as string | undefined
+  if (explicit) return explicit.replace(/\/$/, '')
+  if (API_BASE_URL) return API_BASE_URL.replace(/^http/, 'ws')
   const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
   return `${scheme}://${window.location.host}`
 }

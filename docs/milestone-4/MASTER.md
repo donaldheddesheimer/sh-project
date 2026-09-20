@@ -50,9 +50,11 @@ same part.
 
 ## Out of scope for all three
 
-- **Tests.** The hard rule stands: none are written or run. The README's "Later" mentions
-  tests for `ScenarioService`, the MCP tools and the learning package; that item stays
-  deferred until the user changes the rule.
+- **New tests.** Milestone-4 agents write none and run none. Five demo-readiness tests already
+  exist (written at the user's request and never run; see the README's
+  [Tests](../../README.md#tests)). The README's "Later" mentions more tests for
+  `ScenarioService`, the MCP tools and the learning package; that item stays deferred until
+  the user asks for them.
 - Running or installing the full VSS Blueprint. Part 3 builds and checks the adapter against
   recorded VSS-shaped documents; a live endpoint is a bonus, not a requirement.
 - Autonomous episodes on real incidents without a demo script (decision D6).
@@ -77,14 +79,14 @@ To hand a branch to an agent, a prompt like this is enough:
 
 > You own `feature/twin-engine`. Read `docs/milestone-4/MASTER.md` and
 > `docs/milestone-4/feature-twin-engine.md`, then implement it. Follow the hard rules in
-> `CLAUDE.md`: no tests, nothing run, report what was not verified.
+> `CLAUDE.md`: no new tests, nothing run, report what was not verified.
 
 ## Rules for every agent
 
 - **The repo's hard rules apply, and they override anything in a handoff.** From
   [CLAUDE.md](../../CLAUDE.md):
-  - **Never make tests and never run tests.** No test files, no `pytest`, no scratch scripts
-    or other automated checks whose purpose is to verify behaviour. Verify by **reading** the
+  - **Never run tests, and write none unless the user asks.** No new test files, no `pytest`,
+    no scratch scripts or other automated checks whose purpose is to verify behaviour. Verify by **reading** the
     code, and say plainly in your Result what was **not run**. If a check by running seems
     necessary, do not run it: put it in your handoff's *Checks for the user to run*.
   - **Static checks that are not behaviour tests are fine:** `npm --prefix frontend run lint`
@@ -247,7 +249,7 @@ disagree.
 
 | # | Question | Default assumed |
 |---|---|---|
-| D1 | Is this the right scope for milestone 4? | Yes: the README's deferred items, with tests excluded by the hard rule. |
+| D1 | Is this the right scope for milestone 4? | Yes: the README's deferred items, with new tests excluded by the hard rule. |
 | D2 | What does reverting a diversion do to vehicles already diverted? | They keep their new route; only future departures stop diverting. |
 | D3 | When does auto-revert fire? | When **every** incident an applied plan covers is cleared. Plans covering a still-active incident stay, and are re-applied after the revert. `AUTO_REVERT=true`. |
 | D4 | May the twin make emergency vehicles a "blue light" (SUMO's `bluelight` device, so surrounding traffic yields)? | **No** unless you say so. It changes the baseline physics, every recorded number and the demo fixture. The handoff documents it as the last lever. |

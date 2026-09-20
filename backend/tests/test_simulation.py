@@ -72,3 +72,18 @@ def test_signal_policy_changes_splits(make_sim):
     assert [p.duration for p in program.phases] == [50, 3, 2, 30, 3, 2]
     sim.run_for(180)  # keeps running on the new program
     assert sim.get_intersection_state("B2").program_id == program_id
+
+
+def test_snapshot_after_live_timing_change_restores_the_installed_program(make_sim):
+    live = make_sim(warmup_s=60)
+    program_id = live.apply_signal_policy(SignalPolicy(intersection_id="B2", phase_durations={0: 50, 3: 30}, reason="test"))
+    live.run_for(30)
+    snapshot = live.save_snapshot()
+    assert program_id in {p.program_id for p in snapshot.custom_programs}
+
+    # SUMO refuses to load a state that names a program it does not know, so the branch must re-create it first
+    branch = make_sim()
+    branch.restore_snapshot(snapshot)
+    assert branch.get_signal_program("B2").program_id == program_id
+    branch.run_for(60)
+    assert branch.get_intersection_state("B2").program_id == program_id

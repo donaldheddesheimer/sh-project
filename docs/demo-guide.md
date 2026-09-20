@@ -22,7 +22,8 @@ The desktop console has five stable regions:
 - The **workspace rail** changes between Live, Analysis, and Agent.
 - The **map** always shows the live twin; scenario branches never replace it.
 - The **workspace drawer** contains the controls and details for the selected view.
-- The **performance dock** switches between live trends, scenario comparison, and activity.
+- The **performance dock** switches between live trends, scenario comparison, activity, and model
+  calls (each request to the analyst or reviewer model, with its outcome).
 
 ## Operator path: Analyze Response
 

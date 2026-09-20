@@ -168,7 +168,7 @@ class ModelAnalyst:
                 else:
                     allowed = ["implement_recommendation"]
                 active_tools = [tools_by_name[name] for name in allowed if name in tools_by_name]
-                message = await self._chat.chat(messages, active_tools)
+                message = await self._chat.chat(messages, active_tools, purpose="decide")
                 calls = message.get("tool_calls") or []
                 # keep the history small: no reasoning text, just what the model said and called
                 messages.append({"role": "assistant", "content": message.get("content") or "", **({"tool_calls": calls} if calls else {})})

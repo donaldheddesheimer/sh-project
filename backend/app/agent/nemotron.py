@@ -23,6 +23,7 @@ from pydantic import ValidationError
 from app.agent.base import AgentProvider, CandidatePlan, IncidentContext, Recommendation
 from app.agent.briefing import PLAN_DESIGN, candidate_row, metrics_row
 from app.models.domain import SimulationCandidate
+from app.services.model_log import ModelCallLog
 
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}  # busy or briefly broken; the request itself is fine
@@ -44,14 +45,22 @@ class NimClient:
         timeout_s: float = 120.0,
         *,
         json_mode: bool = False,
+        model_log: ModelCallLog | None = None,
+        role: str = "analyst",
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self._api_key = api_key
         self._timeout_s = timeout_s
         self._json_mode = json_mode
+        # Without a log to publish to (a client built outside the service graph) calls are still recorded,
+        # into this detached buffer, so the request path has no "is anyone watching" branch in it.
+        self._log = model_log or ModelCallLog()
+        self._role = role
 
-    async def chat(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 4096) -> dict:
+    async def chat(
+        self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 4096, *, purpose: str = "chat"
+    ) -> dict:
         """One completion; returns the assistant message (``content``, and ``tool_calls`` when it calls tools)."""
         # Nemotron 3 defaults; JSON mode below follows NVIDIA's deterministic structured-output example.
         body: dict = {
@@ -77,29 +86,58 @@ class NimClient:
             body["tools"] = tools
             body["tool_choice"] = "auto"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-        async with httpx2.AsyncClient(timeout=self._timeout_s) as http:
-            # The hosted endpoint answers 503 "Service temporarily overloaded" under load, and the large analyst
-            # model is the one that gets it. Half a second is not long enough for that queue to drain, so back off.
-            for attempt, pause in enumerate(RETRY_PAUSES_S):
-                response = await http.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
-                if response.status_code not in RETRYABLE_STATUS or attempt == len(RETRY_PAUSES_S) - 1:
-                    break
-                await asyncio.sleep(pause)
-        if response.status_code >= 400:
-            raise NimError(f"NIM returned {response.status_code}: {response.text[:300]}")
-        try:
-            return response.json()["choices"][0]["message"]
-        except (KeyError, IndexError, ValueError) as exc:
-            raise NimError(f"unexpected NIM response: {response.text[:300]}") from exc
+        endpoint = f"{self.base_url}/chat/completions"
+        # Recorded for the console's Model calls tab: the entry is published before the request goes out, so a
+        # long Ultra completion is visible while it runs, and an exception leaving this block records the failure.
+        with self._log.call(
+            provider="nemotron",
+            role=self._role,
+            model=self.model,
+            purpose=purpose,
+            endpoint=endpoint,
+            request_chars=sum(len(str(message.get("content") or "")) for message in body["messages"]),
+        ) as call:
+            async with httpx2.AsyncClient(timeout=self._timeout_s) as http:
+                # The hosted endpoint answers 503 "Service temporarily overloaded" under load, and the large analyst
+                # model is the one that gets it. Half a second is not long enough for that queue to drain, so back off.
+                for attempt, pause in enumerate(RETRY_PAUSES_S):
+                    response = await http.post(endpoint, json=body, headers=headers)
+                    call.responded(response.status_code)
+                    if response.status_code not in RETRYABLE_STATUS or attempt == len(RETRY_PAUSES_S) - 1:
+                        break
+                    call.retrying()
+                    await asyncio.sleep(pause)
+            if response.status_code >= 400:
+                raise NimError(f"NIM returned {response.status_code}: {response.text[:300]}")
+            try:
+                payload = response.json()
+                message = payload["choices"][0]["message"]
+            except (KeyError, IndexError, ValueError) as exc:
+                raise NimError(f"unexpected NIM response: {response.text[:300]}") from exc
+            usage = payload.get("usage") or {}
+            content = message.get("content")
+            call.succeeded(
+                response_chars=len(content) if isinstance(content, str) else None,
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                detail=_reply_detail(message),
+            )
+            return message
 
 
 class NemotronAgentProvider(AgentProvider):
     name = "nemotron"
 
     def __init__(
-        self, base_url: str, model: str, api_key: str | None, candidate_limit: int, timeout_s: float = 120.0
+        self,
+        base_url: str,
+        model: str,
+        api_key: str | None,
+        candidate_limit: int,
+        timeout_s: float = 120.0,
+        model_log: ModelCallLog | None = None,
     ):
-        self._nim = NimClient(base_url, model, api_key, timeout_s, json_mode=True)
+        self._nim = NimClient(base_url, model, api_key, timeout_s, json_mode=True, model_log=model_log)
         self._candidate_limit = candidate_limit
         self._diagnostics: list[str] = []
 
@@ -129,7 +167,7 @@ class NemotronAgentProvider(AgentProvider):
             {"role": "user", "content": json.dumps(prompt, separators=(",", ":"))},
         ]
         for attempt in range(2):
-            message = await self._nim.chat(messages)
+            message = await self._nim.chat(messages, purpose="propose" if attempt == 0 else "propose (retry)")
             reported = len(self._diagnostics)
             plans = self._validated_plans(message.get("content"), budget)
             if plans:
@@ -165,7 +203,7 @@ class NemotronAgentProvider(AgentProvider):
             },
             {"role": "user", "content": json.dumps(prompt, separators=(",", ":"))},
         ]
-        parsed = _json_value((await self._nim.chat(messages)).get("content"))
+        parsed = _json_value((await self._nim.chat(messages, purpose="recommend")).get("content"))
         if not isinstance(parsed, dict):
             raise NimError("Nemotron recommendation was not a JSON object")
         try:
@@ -200,6 +238,15 @@ class NemotronAgentProvider(AgentProvider):
             if len(plans) == budget:
                 break
         return plans
+
+
+def _reply_detail(message: dict) -> str | None:
+    """What the model answered, in one line: the tools it called, else the start of its text."""
+    calls = message.get("tool_calls") or []
+    if calls:
+        return "called " + ", ".join(str(call.get("function", {}).get("name")) for call in calls)
+    content = message.get("content")
+    return content if isinstance(content, str) else None
 
 
 def _json_value(raw: object) -> object | None:

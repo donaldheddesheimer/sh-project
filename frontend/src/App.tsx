@@ -47,7 +47,7 @@ const ACTIONS: Record<Action, () => Promise<unknown>> = {
 }
 
 export default function App() {
-  const { state, network, status, events, history, connected, scenario, episode, phaseLabels, acceptScenario } =
+  const { state, network, status, events, history, modelCalls, connected, scenario, episode, phaseLabels, acceptScenario } =
     useCityStream()
   const [cameras, setCameras] = useState<Camera[]>([])
   const [selection, setSelection] = useState<Selection | null>(null)
@@ -495,6 +495,7 @@ export default function App() {
         preferredTab={view === 'live' ? 'live' : 'comparison'}
         history={history}
         events={events}
+        modelCalls={modelCalls}
         markers={markers}
         metrics={state?.metrics ?? null}
         reference={reference}

@@ -1954,6 +1954,9 @@ button {
 .dock-body.compare-body {
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
 }
+.dock-body.models-body {
+  grid-template-columns: minmax(0, 1fr);
+}
 
 .trends {
   display: grid;
@@ -2121,6 +2124,105 @@ button {
 }
 .level-alert .event-msg {
   color: var(--text);
+}
+
+/* model calls: whether the hosted analyst/reviewer models were reached, and what they answered */
+.model-log {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 0 0;
+}
+.model-log .subhead {
+  padding: 0 12px;
+}
+.model-log-failed {
+  margin-left: 8px;
+  color: var(--danger-text);
+}
+.model-log-empty {
+  max-width: 62ch;
+  margin: 6px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.model-log ol {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-color: var(--panel-4) transparent;
+}
+.model-call {
+  display: grid;
+  grid-template-columns: 58px 14px minmax(0, 1fr);
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.model-call:hover {
+  background: var(--panel-2);
+}
+.model-call-time {
+  padding-top: 2px;
+  color: var(--faint);
+  font-size: 11px;
+}
+.model-call-icon {
+  padding-top: 3px;
+  color: var(--faint);
+}
+.model-call.is-ok .model-call-icon {
+  color: var(--success-text);
+}
+.model-call.is-pending .model-call-icon {
+  color: var(--accent-text);
+}
+.model-call.is-error {
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+.model-call.is-error .model-call-icon {
+  color: var(--danger-text);
+}
+.model-call-body {
+  min-width: 0;
+}
+.model-call-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text);
+}
+.model-call-model {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-call-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.model-call-detail {
+  margin: 3px 0 0;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.model-call.is-error .model-call-detail {
+  color: var(--danger-text);
 }
 
 /* scenario comparison */

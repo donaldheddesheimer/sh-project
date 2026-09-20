@@ -37,10 +37,19 @@ SUMO ──TraCI──► SumoSimulation.step()          (runner thread, paced t
   race-free control.
 - The WebSocket hub gives each client a small drop-oldest buffer, so a slow browser can
   never stall the simulation or other clients.
-- New clients get a `hello` with network geometry, current state, the recent ops log and the
-  metric trend, so a reload mid-incident still shows the pre-incident baseline. Selecting a
-  different bundled map replaces the service graph and sends every connected client a fresh
-  `hello`, clearing the previous map's local state without disconnecting the WebSocket.
+- New clients get a `hello` with network geometry, current state, the recent ops log, the
+  metric trend and the recent model calls, so a reload mid-incident still shows the pre-incident
+  baseline. Selecting a different bundled map replaces the service graph and sends every connected
+  client a fresh `hello`, clearing the previous map's local state without disconnecting the WebSocket.
+- **Model calls** (`services/model_log.py`) are a second log beside the ops log: one entry per HTTP
+  request to an analyst or reviewer model, recorded inside `NimClient.chat` and `ClaudeClient.chat`,
+  so no call site can forget to report one. Each entry is broadcast twice as a `model_call` frame —
+  `pending` when the request goes out, then its outcome (status, duration, attempts, token usage and
+  a truncated reply preview) — and the console renders them in its **Model calls** tab. It answers
+  "was the model reached at all", which the ops log cannot: a decision log shows what the agent
+  concluded, not whether an endpoint answered, refused or was never called. `GET /api/model-calls`
+  serves the same entries. Like the ops log and the trend it is in memory and map-local. Embedding
+  requests are not included; the store reports those into the ops log itself.
 
 ## Analyze Response pipeline
 

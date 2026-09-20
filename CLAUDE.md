@@ -80,6 +80,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | MCP tools | [backend/app/api/mcp_tools.py](backend/app/api/mcp_tools.py) |
 | The analyst prompt and candidate rows both analysts share | [backend/app/agent/briefing.py](backend/app/agent/briefing.py) |
 | Live orchestration, ops log, WebSocket frames | [backend/app/services/city.py](backend/app/services/city.py) |
+| Model-call log (was Nemotron/Claude reached, and what came back) | `backend/app/services/model_log.py`, `frontend/src/components/ModelCallLog.tsx` |
 | Runtime switching between the bundled maps | [backend/app/services/maps.py](backend/app/services/maps.py) |
 | Analyze Response pipeline (`open → capture → evaluate → finish/fail`) | [backend/app/services/scenarios.py](backend/app/services/scenarios.py) |
 | One candidate branch in a fresh SUMO process | [backend/app/simulation/branching.py](backend/app/simulation/branching.py) |
@@ -145,6 +146,8 @@ venv directly (this is what works in PowerShell or Git Bash):
 - `backend/app/models/*.py` (including `episode.py`) ↔
   [frontend/src/api/types.ts](frontend/src/api/types.ts). There is no codegen.
 - `ScenarioStatus` ↔ the `STAGE` map in `useCityStream.ts`.
+- Every model client records its own calls: a new hosted-model client wraps its request in
+  `ModelCallLog.call(...)`, or the console's Model calls tab silently omits it.
 - `EpisodeStatus` ↔ `FLOW` / `STATUS_TAG` in `EpisodePanel.tsx`; `WORKING_STATUSES` ↔
   `WORKING` in `lib/plans.ts`.
 - `TREND_SAMPLE_S` in `services/city.py` ↔ `SAMPLE_EVERY_S` in `useCityStream.ts` ↔

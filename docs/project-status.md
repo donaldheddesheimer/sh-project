@@ -13,6 +13,9 @@ the root README focused on the product while making implementation status explic
 - Streamable HTTP MCP tools for the analysis workflow
 - Autonomous episode: detect, analyze, implement, monitor, review, and store a lesson
 - Runtime Mock, Claude, and Nemotron analyst/reviewer selection
+- Model-call log: every analyst/reviewer request and its outcome, in the console's **Model calls**
+  tab and at `GET /api/model-calls` (built; the instrumented path has not been run against a live
+  NVIDIA or Anthropic endpoint)
 - NVIDIA VSS 3.2 MCP provider boundary and development replay input
 - Single-container packaging for Google Cloud Run
 
@@ -58,6 +61,8 @@ the root README focused on the product while making implementation status explic
 - A pre-emption corridor may not help once a responder is already trapped in the incident
   queue. Combined corridor-and-diversion plans address that case more directly.
 - Model errors stay visible and do not silently switch to Mock.
+- The model-call log covers the analyst and reviewer chat clients only. Embedding requests are not
+  listed there; the experience store reports those into the ops log.
 
 ## Demo-readiness gates
 

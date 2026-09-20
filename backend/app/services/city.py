@@ -108,6 +108,7 @@ class CityService:
         self._status = RunStatus.STARTING
         self._error: str | None = None
         self._ems_status: dict[str, EmergencyStatus] = {}
+        self._speed_hold: tuple[float, float] | None = None  # (speed before the hold, speed we imposed)
         self._trend: deque[MetricSample] = deque(maxlen=TREND_SAMPLES)
         self.latest_scenario: ScenarioRun | None = None
         self.latest_episode: Episode | None = None
@@ -214,6 +215,34 @@ class CityService:
 
     async def set_speed(self, multiplier: float) -> None:
         await self._runner.set_speed(multiplier)
+
+    async def hold_speed(self, multiplier: float) -> None:
+        """Slow the live city while something heavy runs beside it (branch simulations).
+
+        Holds do not stack: the first one owns the restore, so overlapping callers cannot lose the
+        operator's original speed. A no-op once a hold is in force.
+        """
+        if self._speed_hold is not None:
+            return
+        previous = self._runner.speed
+        if previous == multiplier:
+            return
+        self._speed_hold = (previous, multiplier)
+        await self._runner.set_speed(multiplier)
+        self.events.add(EventLevel.INFO, f"Live simulation slowed to {multiplier:g}x while branches run", self._sim_time())
+
+    async def release_speed(self) -> None:
+        """Put the speed back if the hold is still in force. The operator always wins.
+
+        A speed the operator chose while the hold was on is left exactly as they set it: only the value
+        this service imposed is replaced, and the check runs on the simulation thread.
+        """
+        hold, self._speed_hold = self._speed_hold, None
+        if hold is None:
+            return
+        previous, imposed = hold
+        if await self._runner.restore_speed(imposed, previous):
+            self.events.add(EventLevel.INFO, f"Live simulation back to {previous:g}x", self._sim_time())
 
     async def reset(self) -> None:
         async with self.live_change_lock:  # wait for an apply in flight, and keep the next one out until we reboot

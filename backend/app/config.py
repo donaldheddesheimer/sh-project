@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     scenario_history: int = 10  # runs kept in memory for GET /api/scenarios
     scenario_idle_timeout_s: float = 300.0  # an MCP agent's open run fails after this long without a tool call
 
+    # --- twin engine --------------------------------------------------------
+    # Branches are CPU-hungry (scenario_workers SUMO processes at once) and the live simulation shares the
+    # machine with them. Slowing the live city while a run is open trades wall-clock realism for branches
+    # that finish sooner. None leaves the speed alone; the operator's own speed change always wins.
+    analysis_live_speed: float | None = None
+
     # --- autonomous demo episode (app/learning/) ----------------------------
     demo_script: str | None = None  # arm this demos/*.json script at startup
     episode_analyst: Literal["auto", "mock", "nemotron"] = "auto"  # auto: nemotron if NVIDIA_API_KEY + NEMOTRON_MODEL

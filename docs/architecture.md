@@ -254,9 +254,9 @@ recommendation, re-validated on the live programs.
 
 An episode is one agent answering one set of active incidents, from detection to a stored
 lesson. `EpisodeService` is the only thing that starts an agent, and only while a demo
-script is armed. The README's
-[autonomous episode section](../README.md#the-autonomous-self-learning-episode) has the
-rules (two-crash rule, decisions, thresholds). Configured mock, Claude and Nemotron teams
+script is armed. The [demo guide](demo-guide.md#autonomous-path-respond-monitor-learn) covers
+the operator flow and two-crash behavior; this document owns the implementation stages and
+thresholds. Configured mock, Claude and Nemotron teams
 can be selected between episodes through `POST /api/demo/analyst`; selection is refused
 while an episode is armed or active. This table is the code path.
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -60,13 +61,29 @@ class Settings(BaseSettings):
     nemotron_base_url: str = "https://integrate.api.nvidia.com/v1"  # NIM, OpenAI-compatible
     nemotron_model: str | None = None
 
-    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    # NoDecode: pydantic-settings json.loads() a list-typed env var inside the settings source,
+    # before any validator runs, so a comma-separated CORS_ORIGINS would raise there rather than
+    # reach _split_cors_origins. NoDecode hands the raw string to the validator instead.
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     @field_validator("scenario_dir")
     @classmethod
     def _from_repo_root(cls, value: Path) -> Path:
         # `make backend` runs from backend/, so a cwd-relative SCENARIO_DIR would depend on how it was started
         return value if value.is_absolute() else REPO_ROOT / value
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_cors_origins(cls, value: object) -> object:
+        # Because of NoDecode this sees the raw env string, so it accepts both forms: the JSON
+        # list pydantic-settings would otherwise have parsed, and a plain comma-separated list,
+        # which is what a hosting panel or `gcloud run deploy --set-env-vars` can actually carry.
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if text.startswith("["):
+            return json.loads(text)
+        return [origin.strip() for origin in text.split(",") if origin.strip()]
 
 
 @lru_cache

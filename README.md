@@ -23,7 +23,8 @@ NVIDIA Smart City adapter is still a stub.
 ## Quick start
 
 Requirements: Python ≥ 3.11, Node ≥ 22.12. SUMO is installed from PyPI (`eclipse-sumo`), so
-there is no system package, no GPU and no Docker.
+there is no system package and no GPU. Local development needs no Docker; the Dockerfile at
+the repo root is for [hosting](#hosting-the-backend).
 
 ```bash
 make setup   # backend/.venv (FastAPI + SUMO wheels) and frontend/node_modules; safe to re-run
@@ -76,6 +77,56 @@ Other commands:
 | `SUMO_GUI=true make backend` | watch the live simulation in sumo-gui as well |
 | `DEMO_SCRIPT=crash-ahead make backend` | arm an autonomous-episode script at startup |
 | http://127.0.0.1:8000/docs | interactive API docs |
+
+## Hosting the backend
+
+The root `Dockerfile` builds the backend alone (`backend/` plus the `simulation/` data it
+reads); the frontend is a static bundle and is hosted separately. `scripts/deploy-cloudrun.sh`
+deploys that image to **Google Cloud Run**, which suits this service because it terminates
+TLS for free — a browser on an `https://` frontend can only open `wss://`, not `ws://`, so
+`/ws/state` needs a certificate the platform provides.
+
+Once: install the [gcloud CLI](https://cloud.google.com/sdk/docs/install), run
+`gcloud auth login`, and have a project with billing enabled. Then, from the repo root:
+
+```bash
+PROJECT_ID=my-gcp-project CORS_ORIGINS=https://my-app.vercel.app scripts/deploy-cloudrun.sh
+```
+
+It enables the Run, Cloud Build and Artifact Registry APIs, builds the image on Cloud Build
+(so no local Docker, and no arm64/amd64 mismatch from an Apple Silicon Mac), deploys, and
+prints the service URL. `SERVICE` and `REGION` override the defaults
+(`traffic-ops-backend`, `us-central1`).
+
+The twin is stateful and always running, so the service is pinned to exactly one
+always-on instance. The script's comments say what each flag is for and why the Cloud Run
+defaults would break the simulation.
+
+Point the frontend at the printed URL — on Vercel, as project environment variables:
+
+| Variable | Value |
+|---|---|
+| `VITE_API_BASE_URL` | `https://<service>.run.app` |
+| `VITE_WS_BASE_URL` | `wss://<service>.run.app` (optional; derived from the API URL when unset) |
+
+`CORS_ORIGINS` on the backend must list the frontend's origin, or the browser blocks every
+call. Unset, both variables fall back to the page's own origin, which is what local
+`make dev` uses through the Vite proxy.
+
+What to know before relying on it:
+
+- **It bills while idle.** One always-on 4-vCPU instance is not in the free tier. Between
+  demos, `gcloud run services update <service> --region <region> --min-instances 0` stops
+  the charge without deleting the service; the next request then pays a cold start plus the
+  300 s warm-up. Delete the service to stop paying entirely.
+- **Lessons do not survive a restart.** `memory/` is container-local, and Cloud Run
+  instances are replaced at will. Each new instance starts cold, so a "warm run" demo has
+  to happen within one instance's life. A durable store (GCS or a volume mount) is not
+  built.
+- **There is no auth** (see [Current limitations](#current-limitations)), and the script
+  deploys with `--allow-unauthenticated`. That publishes `/mcp`, including
+  `implement_recommendation`, to anyone with the URL. Acceptable for a demo; not for
+  anything left running.
 
 ## Demo walkthrough: Analyze Response
 
@@ -633,6 +684,9 @@ simulation/
   scenarios/pittsburgh_oakland/  the same files for Oakland, except demos/; demand from build_demand.py (synthetic)
   controllers/          how pre-emption plugs in (the code lives in backend/app/simulation/)
 memory/                 written at runtime: episodes/EP-NNNN.md lessons and playbook.md (git-ignored)
+Dockerfile              backend image (backend/ + simulation/); build context is the repo root
+scripts/deploy-cloudrun.sh  deploy that image to Google Cloud Run, with the flags the twin needs
+vercel.json             static build of frontend/ for the separately hosted UI
 docs/
   architecture.md       design notes, both pipelines stage by stage, MCP tools
   milestone-2/          the milestone-2 plan, per-feature specs and results (historical)

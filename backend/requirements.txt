@@ -1,7 +1,8 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.7
-pydantic-settings>=2.3
+# >=2.7 for NoDecode, which lets CORS_ORIGINS be a comma-separated env var (app/config.py)
+pydantic-settings>=2.7
 # MCP server exposing the scenario engine to agents (app/api/mcp_tools.py)
 mcp>=2.2
 # NIM chat client for the Nemotron analyst and reviewer (app/agent/nemotron.py); mcp already depends on it

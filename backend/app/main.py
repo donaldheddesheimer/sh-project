@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.mcp_tools import build_mcp
 from app.api.routes import router, ws_router
 from app.config import Settings, get_settings
+from app.logging_setup import configure_logging
 from app.services.maps import MapManager
 from app.websocket.hub import ConnectionHub
 
@@ -48,5 +48,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+configure_logging()
 app = create_app()

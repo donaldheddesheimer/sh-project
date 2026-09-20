@@ -341,6 +341,16 @@ class SimulationCandidate(BaseModel):
     wall_time_s: float | None = Field(None, description="Wall-clock seconds the branch took to simulate")
 
 
+class PlanRoutes(BaseModel):
+    """Segments one plan acts on, drawn on the mini map. Presentation only: SUMO decides each vehicle's route."""
+
+    ems_segments: list[str] = Field(default_factory=list, description="Responder path; only plans with a corridor")
+    diversion_segments: list[str] = Field(
+        default_factory=list, description="Free-flow detour round the avoided segments (where diverted traffic goes)"
+    )
+    blocked_segments: list[str] = Field(default_factory=list, description="Segments the incident(s) block")
+
+
 class Recommendation(BaseModel):
     candidate_id: str
     summary: str

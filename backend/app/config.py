@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # --- traffic simulation -------------------------------------------------
     # downtown_grid (the tests and startup use it) or pittsburgh_oakland; runtime UI/API switching is primary
     scenario_dir: Path = REPO_ROOT / "simulation" / "scenarios" / "downtown_grid"
-    sumo_binary: str | None = None  # default: bundled eclipse-sumo, then $SUMO_HOME, then PATH
+    sumo_binary: str | None = None  # default: bundled eclipse-sumo, then PATH
     sumo_gui: bool = False  # open sumo-gui for the live simulation (debugging)
     sim_speed: float = 4.0  # live simulation speed as a multiple of wall-clock time
     sim_warmup_s: float = 300.0  # simulated seconds run at startup/reset so roads are populated
@@ -62,8 +62,8 @@ class Settings(BaseSettings):
 
     # --- autonomous demo episode (app/learning/) ----------------------------
     demo_script: str | None = None  # arm this demos/*.json script at startup
-    # Select Nemotron first when its API key is present; otherwise Claude, then the deterministic local team.
-    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "auto"
+    # Nemotron drives every episode; the mock team runs only when this is set to "mock" here in code.
+    episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "nemotron"
     episode_monitor_s: float | None = None  # sim seconds a plan is watched (default: script monitor_s, else horizon)
     episode_agent_timeout_s: float = 420.0  # wall-clock limit for one model-backed analyst run
     episode_fallback_to_mock: bool = False  # selected model failures stay visible; choose Mock explicitly if desired

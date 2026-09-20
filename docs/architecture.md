@@ -253,16 +253,17 @@ An episode is one agent answering one set of active incidents, from detection to
 lesson. `EpisodeService` is the only thing that starts an agent, and only while a demo
 script is armed. The README's
 [autonomous episode section](../README.md#the-autonomous-self-learning-episode) has the
-rules (two-crash rule, decisions, thresholds). Configured mock, Claude and Nemotron teams
-can be selected between episodes through `POST /api/demo/analyst`; selection is refused
-while an episode is armed or active. This table is the code path.
+rules (two-crash rule, decisions, thresholds). Nemotron is the team every episode uses; there is
+no runtime selection, and no fallback to mock when `NVIDIA_API_KEY` is absent (its calls fail). `operator-collision` is armed at
+startup, so a collision pauses the city and the episode waits (`awaiting`) for
+`POST /api/demo/analyze`. This table is the code path.
 
 | # | Stage | Code | Output |
 |---|---|---|---|
 | 1 | Script | `EpisodeService.start_demo` → `CityService.set_scripted_events` → `LiveSimulationRunner` | scheduled crashes fire on the runner thread; an empty script waits for operator injection; episode `armed` |
-| 2 | Detect | `MockSmartCityProvider` → `CityService.incident_listeners` → `EpisodeService._on_incident` | episode `detected` over every active incident, or the working one superseded |
+| 2 | Detect | `MockSmartCityProvider` → `CityService.incident_listeners` → `EpisodeService._on_incident` | episode `detected` over every active incident, or the working one superseded. An operator script instead goes `awaiting`: the city is paused and `EpisodeService.analyze` (`POST /api/demo/analyze`) starts stage 3 |
 | 3 | Analyze | `MockAnalyst` (`ScenarioService.run_pipeline`) or `ModelAnalyst` (MCP client driven by Claude or Nemotron, optional fallback to the mock) | a completed `ScenarioRun`; episode `analyzing` |
-| 4 | Implement | `Implementor.implement(run_id, by)` in one `run_on_live` command | re-validation on live programs, EMS probes, `apply_plan`; `Implementation` on the run and the episode; the plan joins the standing responses; episode `monitoring` |
+| 4 | Implement | `Implementor.implement(run_id, by)` in one `run_on_live` command | re-validation on live programs, EMS probes, `apply_plan`; `Implementation` on the run and the episode; the plan joins the standing responses; episode `monitoring`; the city resumes (`_on_implemented`) |
 | 5 | Monitor | `LiveMonitor` (a frame observer) | `LiveSample` every 5 simulated seconds; a `LiveRecord` after the window |
 | 6 | Score | live `response_notes()` → `build_scorecard` | `Scorecard` (code only): predicted vs realised on absolute simulation time, typed corridor/diversion checks, provisional state, outcome |
 | 7 | Review | `MockReviewer` / selected Claude or Nemotron `ModelReviewer` | `Lesson` (verdict = the scorecard's outcome); model errors fail the episode rather than changing providers; episode `reviewing` |

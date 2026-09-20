@@ -313,7 +313,7 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
       </div>
       <div className="episode-meta">
         <span className="episode-provider">
-          Analyst {info?.analyst === 'mock' ? 'Mock (no NVIDIA key)' : (info?.analyst ?? '—')}
+          Analyst {info?.analyst === 'mock' ? 'Mock' : (info?.analyst ?? '—')}
         </span>
         {info?.analyst_model && (
           <span className="episode-model mono" title={info.analyst_model}>

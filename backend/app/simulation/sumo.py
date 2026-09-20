@@ -11,7 +11,6 @@ from __future__ import annotations
 import itertools
 import logging
 import math
-import os
 import re
 import shutil
 import subprocess
@@ -185,8 +184,6 @@ def resolve_sumo_binary(explicit: str | None = None, gui: bool = False) -> str:
         candidates.append(Path(sumo.SUMO_HOME) / "bin" / name)
     except ImportError:
         pass
-    if os.environ.get("SUMO_HOME"):
-        candidates.append(Path(os.environ["SUMO_HOME"]) / "bin" / name)
     for candidate in candidates:
         for path in (candidate, candidate.with_name(candidate.name + ".exe")):  # ".exe" on Windows
             if path.exists():

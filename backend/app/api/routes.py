@@ -10,7 +10,7 @@ from app.learning.episode import EpisodeService
 from app.learning.implementor import Implementor
 from app.learning.store import ExperienceStore
 from app.models.api import (
-    AnalystSelectionRequest,
+    DemoAnalyzeRequest,
     CityState,
     ControlResponse,
     DemoStartRequest,
@@ -235,13 +235,11 @@ async def demo_stop(episodes: Episodes) -> DemoInfo:
     return await episodes.stop_demo()
 
 
-@router.post("/demo/analyst", response_model=DemoInfo)
-async def demo_analyst(episodes: Episodes, request: AnalystSelectionRequest) -> DemoInfo:
-    """Select the analyst and reviewer for future episodes without restarting the backend."""
+@router.post("/demo/analyze", response_model=Episode, status_code=202)
+async def demo_analyze(episodes: Episodes, request: DemoAnalyzeRequest) -> Episode:
+    """Start the response for the collision the paused city is waiting on (recall, analyze, apply, monitor)."""
     try:
-        return episodes.select_analyst(request.analyst)
-    except KeyError as exc:
-        raise HTTPException(404, f"analyst {request.analyst} is not configured") from exc
+        return await episodes.analyze(request.memory_mode)
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
 

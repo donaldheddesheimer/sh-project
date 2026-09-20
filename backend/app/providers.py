@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from itertools import count
 
@@ -33,6 +34,8 @@ from app.smart_city.matching import RoadMatcher
 from app.smart_city.nvidia import NvidiaSmartCityProvider
 from app.smart_city.vss_client import McpVssClient, ReplayVssClient
 from app.websocket.hub import ConnectionHub
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,21 +76,6 @@ def build_smart_city_provider(settings: Settings, network: RoadNetwork) -> tuple
     return provider, [provider.observe]
 
 
-def check_keyed_deployment(settings: Settings) -> None:
-    """A deployment holding an NVIDIA key must name a model.
-
-    Both the REST agent and the episode teams depend on this, and whichever is built first
-    would otherwise report its own narrower complaint: `build_agent_provider` raises about a
-    missing model id, which reads like a typo rather than a deployment that cannot serve what
-    its key promises. Checked once, up front, so the message is the accurate one.
-    """
-    if settings.nvidia_api_key and settings.nvidia_api_key.get_secret_value() and not settings.nemotron_model:
-        raise RuntimeError(
-            "NVIDIA_API_KEY is set but NEMOTRON_MODEL is empty. A deployment holding a key is not "
-            "served by the deterministic local team; set a model id, or drop the key to run locally."
-        )
-
-
 def build_agent_provider(settings: Settings) -> AgentProvider:
     if settings.agent_provider == "mock":
         return MockAgentProvider()
@@ -104,29 +92,16 @@ def build_episode_teams(
 ) -> tuple[dict[str, AgentTeam], str]:
     """Configured analyst/reviewer teams and the startup selection.
 
-    A configured NVIDIA key makes the backend Nemotron-first and removes the deterministic
-    local team from its advertised choices. This keeps the deployed backend model-backed.
+    The console has no analyst selector: Nemotron runs every episode, and the mock team is used only when
+    ``episode_analyst`` is set to ``mock`` in code.
     """
+    mock = MockAnalyst(scenarios, implementor, settings.agent_may_implement)
+    mock_reviewer = MockReviewer()
+    teams = {"mock": AgentTeam(mock, None, mock_reviewer)}
+    fallback_analyst = mock if settings.episode_fallback_to_mock else None
+    fallback_reviewer = mock_reviewer if settings.episode_fallback_to_mock else None
+
     claude_key = settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None
-    nvidia_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
-    teams: dict[str, AgentTeam] = {}
-    fallback_analyst = None
-    fallback_reviewer = None
-
-    # The key is what suppresses the local team, but the team below is only built when a model id
-    # is set too. Without this check that pair blanks the registry: no deterministic team because a
-    # key is attached, no Nemotron team because it has no model, and a backend that cannot start.
-    # `build_services` has already checked this; repeated here so a direct caller is covered too.
-    check_keyed_deployment(settings)
-
-    if not nvidia_key:
-        deterministic = MockAnalyst(scenarios, implementor, settings.agent_may_implement)
-        deterministic_reviewer = MockReviewer()
-        teams["mock"] = AgentTeam(deterministic, None, deterministic_reviewer)
-        if settings.episode_fallback_to_mock:
-            fallback_analyst = deterministic
-            fallback_reviewer = deterministic_reviewer
-
     if claude_key and settings.claude_model:
         claude = ClaudeClient(
             settings.claude_base_url,
@@ -147,7 +122,12 @@ def build_episode_teams(
             settings.claude_model,
         )
 
-    if nvidia_key and settings.nemotron_model:
+    # The Nemotron team never depends on the key being present: without one every call fails visibly (NIM answers
+    # 401 and the episode reports the error) instead of the console quietly running the mock.
+    nvidia_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
+    if not nvidia_key:
+        log.error("NVIDIA_API_KEY is missing or empty: Nemotron calls will fail with 401 until it is set")
+    if settings.nemotron_model:
         nim = NimClient(settings.nemotron_base_url, settings.nemotron_model, nvidia_key)
         teams["nemotron"] = AgentTeam(
             ModelAnalyst(
@@ -164,18 +144,13 @@ def build_episode_teams(
 
     wanted = settings.episode_analyst
     if wanted == "auto":
-        selected = "nemotron" if "nemotron" in teams else "claude" if "claude" in teams else "mock"
+        selected = "claude" if "claude" in teams else "nemotron" if "nemotron" in teams else "mock"
     else:
         selected = wanted
     if selected not in teams:
-        if selected == "mock":
-            # Not a missing credential: the local team is withheld on purpose while a key is attached.
-            raise RuntimeError(
-                "the deterministic analyst is not offered while NVIDIA_API_KEY is attached; "
-                "select nemotron or claude, or remove the key to run the local team"
-            )
         needed = "an Anthropic API key" if selected == "claude" else "an NVIDIA API key"
         raise RuntimeError(f"analyst {selected} requires {needed}")
+    log.info("episode analyst/reviewer team: %s (available: %s)", selected, ", ".join(sorted(teams)))
     return teams, selected
 
 
@@ -187,7 +162,6 @@ _branch_labels = count(1)
 
 
 def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer) -> Services:
-    check_keyed_deployment(settings)
     scenario = load_scenario(settings.scenario_dir)
     network = RoadNetwork(scenario)
 

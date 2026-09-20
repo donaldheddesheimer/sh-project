@@ -1,4 +1,4 @@
-"""Application defaults plus the two API keys allowed from the environment."""
+"""Application defaults plus the model credentials allowed from the environment."""
 
 from __future__ import annotations
 
@@ -11,6 +11,10 @@ from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# The only names read from the environment or a .env file. The workspace id is part of an
+# Anthropic credential: an organization-level key cannot authenticate without it.
+_CREDENTIAL_KEYS = {"anthropic_api_key", "anthropic_workspace_id", "nvidia_api_key"}
 
 
 class Settings(BaseSettings):
@@ -29,7 +33,7 @@ class Settings(BaseSettings):
 
         def api_keys_only() -> dict[str, object]:
             values = {**dotenv_settings(), **env_settings()}
-            return {key: value for key, value in values.items() if key in {"anthropic_api_key", "nvidia_api_key"}}
+            return {key: value for key, value in values.items() if key in _CREDENTIAL_KEYS}
 
         return init_settings, api_keys_only, file_secret_settings
 
@@ -61,7 +65,7 @@ class Settings(BaseSettings):
     # Startup default only; the operator can switch among configured providers from the demo panel.
     episode_analyst: Literal["auto", "mock", "claude", "nemotron"] = "mock"
     episode_monitor_s: float | None = None  # sim seconds a plan is watched (default: script monitor_s, else horizon)
-    episode_agent_timeout_s: float = 300.0  # wall-clock limit for one model-backed analyst run
+    episode_agent_timeout_s: float = 420.0  # wall-clock limit for one model-backed analyst run
     episode_fallback_to_mock: bool = False  # selected model failures stay visible; choose Mock explicitly if desired
     episode_pause_on_finish: bool = True  # pause the live simulation when an episode completes
     agent_may_implement: bool = True  # allow the MCP implement_recommendation tool (the operator path is separate)

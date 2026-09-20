@@ -19,7 +19,7 @@
 ## Live data flow
 
 ```
-SUMO ──TraCI──► SumoSimulation.step()          (runner thread, paced to SIM_SPEED)
+SUMO ──TraCI──► SumoSimulation.step()          (runner thread, paced to the time scale)
                    │ subscriptions: vehicles, edges, signals, departures/arrivals
                    ▼
         LiveSimulationRunner._publish()  ≤ BROADCAST_HZ ── LiveFrame(NetworkState)

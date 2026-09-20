@@ -66,7 +66,8 @@ venv directly (this is what works in PowerShell or Git Bash):
 - To test the UI against a non-default backend: `BACKEND_URL=http://127.0.0.1:8001` for Vite.
   `?fixture=scenario` replays a recorded run but still needs a running backend and an active incident.
 - Operational defaults live in [backend/app/config.py](backend/app/config.py) and runtime
-  choices live in the console/API. `.env` accepts only the Anthropic and NVIDIA API keys.
+  choices live in the console/API. `.env` accepts only the names in `_CREDENTIAL_KEYS`
+  (`ANTHROPIC_API_KEY`, `ANTHROPIC_WORKSPACE_ID`, `NVIDIA_API_KEY`); everything else is ignored.
 
 ## Where to change what
 
@@ -145,7 +146,8 @@ venv directly (this is what works in PowerShell or Git Bash):
 - `TREND_SAMPLE_S` in `services/city.py` ↔ `SAMPLE_EVERY_S` in `useCityStream.ts` ↔
   `SAMPLE_S` in `learning/monitor.py`.
 - Do not add operational environment variables. Put reviewed defaults in `config.py` and
-  expose operator-facing choices through the console/API; `.env.example` is API keys only.
+  expose operator-facing choices through the console/API; `.env.example` is credentials only.
+  A new default goes in `config.py` **and** the README's Settings table.
 - The mock proposes exactly 9 plans, which equals the default `SCENARIO_MAX_CANDIDATES`. A
   tenth plan silently pushes `divert-advisory` off the end (it is appended last). (A warm run
   with a close lesson proposes 4 on purpose.)

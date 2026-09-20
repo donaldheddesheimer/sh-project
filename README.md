@@ -8,7 +8,8 @@ rule-based mock offline) drives them, applies its choice to the live twin and le
 the result (see [the autonomous episode](#the-autonomous-self-learning-episode)).
 
 This repository has completed **milestone 2** and built **milestone 3** (the autonomous
-episode; it has not been run yet). Milestone 4 is planned (see [Next: milestone 4](#next-milestone-4)). It
+episode; it has not been run yet). Milestone 4 is planned, with part 1 built and unrun (see
+[Next: milestone 4](#next-milestone-4)). It
 has a live SUMO digital twin of a 3×3 downtown grid and a FastAPI backend that streams city
 state over WebSocket. There is a React/MapLibre operations console: inject a collision,
 watch the queue spill back, then click **Analyze Response** to test up to 9 candidate plans
@@ -724,7 +725,8 @@ docs/
 
 ## Next: milestone 4
 
-**Planned. Nothing in milestone 4 is built or run.**
+**Mostly planned. Part 1 is built on `feature/twin-engine` and none of it has been run or
+measured; parts 2 and 3 are not built.**
 
 **First, milestone 3 has to be run.** It is built, not yet run end to end. What remains is to
 run it (the [review notes](#review-notes-the-episode-pass) list what to try, in order), to run

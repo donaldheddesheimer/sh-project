@@ -7,7 +7,8 @@ anything is recommended**. Milestone 2 (Analyze Response + MCP tools) is merged.
 the autonomous, self-learning episode (agent responds, applies its plan to the live twin,
 measures it, stores a lesson), is built but not yet run end to end. Milestone 4 (NVIDIA Smart
 City input, a faster twin, a memory that transfers) is planned in
-[docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md) and not built.
+[docs/milestone-4/MASTER.md](docs/milestone-4/MASTER.md). Its part 1, the twin engine, is built
+on `feature/twin-engine` and has not been run or measured; parts 2 and 3 are not built.
 Read [README.md](README.md) for the demos and the episode (its "The autonomous, self-learning
 episode" section), and [docs/architecture.md](docs/architecture.md) for the design and both
 pipelines stage by stage.

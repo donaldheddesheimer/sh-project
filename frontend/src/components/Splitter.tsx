@@ -39,8 +39,9 @@ export function Splitter({ axis, label, className, current, onResize, onReset, m
       role="separator"
       aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
       aria-label={label}
-      title={`${label} (drag, arrow keys, double-click to reset)`}
-      tabIndex={0}
+      aria-valuenow={clamp(current())}
+      aria-valuemin={min}
+      aria-valuemax={Math.max(min, max())}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
         setDrag({ from: pos(e), size: current() })

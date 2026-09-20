@@ -6,6 +6,11 @@ consistent) apply to every line below. This file covers only your branch.
 
 ## Context
 
+This is the original, broader handoff. Goal 3 implemented its trust, transfer, embedding,
+reporting and REST-Nemotron scope; its explicit exclusions leave this handoff's auto-revert and
+per-responder EMS tasks planned. The detailed tasks below are the planning record; the current
+implementation status is the [Result](#result).
+
 Milestone 3 built the episode in `backend/app/learning/`: `EpisodeService` (the state
 machine), `Implementor` (applies a recommendation to the live twin), `LiveMonitor` and
 `scorecard.py` (predicted against realised), the reviewer, and `ExperienceStore` (markdown
@@ -13,16 +18,16 @@ memory, similarity recall). Read the README section **The autonomous, self-learn
 first; it is the single description of how these fit together, and it says what is built and
 what has **not** been run.
 
-The gaps this part closes, each written in the README:
+The gaps this part originally set out to close, each written in the README:
 
 - **An applied plan stays on the live signals until a reset** (Current limitations).
 - **The learnable signal is thin, and the high-impact plans have the least verification**
   (Risks): lessons about the corridor and diversion should be checked before they are trusted.
-- **Recall is structured only**; embeddings were left for later ("Later", and the store's
+- **Recall was structured only**; embeddings were left for later ("Later", and the store's
   docstring: "an NVIDIA embedding NIM can later replace `similarity` behind the same `recall`").
-- **The learning has never been measured** (the unticked **Measure the learning** task).
-- **The REST Analyze Response cannot use Nemotron**: `NemotronAgentProvider` is a stub, so
-  `AGENT_PROVIDER=nemotron` starts and then fails when a run calls it.
+- **The learning had never been measurable** (the unticked **Measure the learning** task).
+- **The REST Analyze Response could not use Nemotron**: `NemotronAgentProvider` was a stub, so
+  `AGENT_PROVIDER=nemotron` started and then failed when a run called it.
 - **The EMS figures are one number** even with two responders.
 
 Twin-engine (a parallel branch) provides `TrafficSimulation.revert_response()` and
@@ -312,20 +317,34 @@ learning** is left unticked. Everything is committed on `feature/agent-memory`.
 
 ## Result
 
-_To be filled in by whoever implements this branch._
+**Built.** Goal 3's memory-transfer scope: response checks and provisional trust; `use`/`ignore`
+memory mode with recall provenance; durable learning report and collapsed UI; optional async
+embedding NIM sidecars with structured fallback; REST `NemotronAgentProvider` plus explicit
+`nemotron→mock` fallback. No dependency was added.
 
-**Built.**
+**How it hooks in.** `ScenarioService` awaits memory recall during capture and retains a
+per-analysis query-vector cache. `EpisodeService` carries its demo mode into the scenario and
+persists it on the experience. `ExperienceStore` filters controls from recall/playbook,
+asynchronously writes embeddings only after markdown, and is the sole source of
+`GET /api/learning/report`. The REST provider returns validated plan data only; ScenarioService
+keeps validation, branches and completed-candidate gating.
 
-**How it hooks in.**
+**Verified by reading.** Followed every `recall`, `save`, `open`, demo-start and MCP call site;
+checked model defaults preserve legacy markdown; checked semantic scoring cannot reach pruning
+authority; checked vector deletion, control filtering, fallback provenance and TypeScript model
+mirrors. Frontend lint/build were run after the UI change.
 
-**Verified by reading.**
+**Not run / not verified.** No backend, SUMO, HTTP, MCP, NIM or behavioral checks were run;
+there are no measured learning results.
 
-**Not run / not verified.**
+**Checks for the user to run.** Clear memory once; run `crash-ahead` twice with memory `use`,
+then `varied-crash` with `use` and `ignore`; inspect `/api/learning/report`. Repeat with valid
+and invalid embedding settings. Run REST Analyze Response with valid/invalid Nemotron output
+and with `AGENT_FALLBACK_TO_MOCK=false`; confirm the agent provenance and failure behavior.
 
-**Checks for the user to run** (commands, and what to look for).
+**Measured.** None; user-run values only.
 
-**Measured** (only numbers the user reported).
+**Contract change requests.** None.
 
-**Contract change requests.**
-
-**Deviations.**
+**Deviations.** This Goal 3 explicitly excludes auto-revert and per-responder EMS metrics, so
+the handoff's Tasks 1 and 2 remain planned despite the broader historical handoff scope.

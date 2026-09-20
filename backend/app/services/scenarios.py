@@ -22,13 +22,14 @@ import itertools
 import logging
 import time
 from collections import Counter, deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app.agent.base import AgentProvider, CandidatePlan, IncidentContext
+from app.agent.mock import MockAgentProvider
 from app.config import Settings
 from app.models.api import EventLevel, RunStatus
 from app.models.domain import (
@@ -42,6 +43,7 @@ from app.models.domain import (
     SimulationCandidate,
     SimulationSnapshot,
 )
+from app.models.episode import MemoryMode, RecalledExperience
 from app.models.scenario import ScenarioRun, ScenarioRunRequest, ScenarioStatus
 from app.safety.validator import SafetyValidator
 from app.services.city import CityService, Conflict, NotReady
@@ -52,6 +54,11 @@ from app.simulation.network import RoadNetwork
 log = logging.getLogger(__name__)
 
 BASELINE = CandidatePlan(id="baseline", name="Baseline", description="Continue current signal timing unchanged.")
+
+
+def _safe_error(exc: Exception) -> str:
+    """Keep provider diagnostics useful to operators without exposing a full upstream response."""
+    return " ".join(str(exc).split())[:240] or type(exc).__name__
 
 
 def validation_findings(
@@ -103,6 +110,7 @@ class Analysis:
     closed: bool = False
     branch_tasks: list[asyncio.Task] = field(default_factory=list)
     touched: float = field(default_factory=time.monotonic)
+    embedding_cache: dict[str, list[float]] = field(default_factory=dict)
 
 
 class ScenarioService:
@@ -127,7 +135,7 @@ class ScenarioService:
         self._tasks: set[asyncio.Task] = set()
         # Wired by the learning services (None/empty = nothing implemented on the live city, no memory).
         self.standing_source: Callable[[], list[CandidatePlan]] = list
-        self.lessons_source: Callable[[list[Incident]], list[dict]] | None = None
+        self.lessons_source: Callable[[list[Incident], list[CandidatePlan], dict[str, list[float]]], Awaitable[list[dict]]] | None = None
 
     # ------------------------------------------------------------ read side
 
@@ -157,25 +165,41 @@ class ScenarioService:
         """Queue a full mock-agent analysis and return it; the work continues in the background."""
         horizon = request.horizon_s if "horizon_s" in request.model_fields_set else None
         analysis = await self.open(
-            request.incident_id, horizon, request.ems_probe, self.agent.name, incident_ids=request.incident_ids
+            request.incident_id,
+            horizon,
+            request.ems_probe,
+            self.agent.name,
+            memory_mode=request.memory_mode,
+            incident_ids=request.incident_ids,
         )
         self._spawn(self.run_pipeline(analysis))
         return analysis.run
 
-    async def _propose(self, a: Analysis) -> list[CandidatePlan]:
+    async def _propose(self, a: Analysis, agent: AgentProvider) -> list[CandidatePlan]:
         """The mock agent's proposals. With several incidents: a combined plan first, then each incident's own."""
         if len(a.incidents) == 1:
-            return await self.agent.propose_candidates(a.context)
+            plans = await agent.propose_candidates(a.context)
+            self._publish_agent_diagnostics(a, agent)
+            return plans
         per_incident: list[CandidatePlan] = []
         for incident in a.incidents:
             context = a.context.model_copy(update={"incident": incident})
-            for plan in await self.agent.propose_candidates(context):
+            proposed = await agent.propose_candidates(context)
+            self._publish_agent_diagnostics(a, agent)
+            for plan in proposed:
                 if plan.id == BASELINE.id or plan.id.startswith("aggressive"):
                     continue  # the unsafe validator demo belongs to the single-incident story
                 per_incident.append(
                     plan.model_copy(update={"id": f"{incident.id}:{plan.id}", "name": f"{incident.id} {plan.name}"})
                 )
         return [*self._combined_plans(per_incident), *per_incident]
+
+    def _publish_agent_diagnostics(self, a: Analysis, agent: AgentProvider) -> None:
+        drain = getattr(agent, "drain_diagnostics", None)
+        if not callable(drain):
+            return
+        for diagnostic in drain():
+            self.city.events.add(EventLevel.WARNING, f"{a.run.agent}: {diagnostic}", self.city.sim_time, a.incident.id)
 
     @staticmethod
     def _combined_plans(plans: list[CandidatePlan]) -> list[CandidatePlan]:
@@ -236,14 +260,38 @@ class ScenarioService:
         """
         try:
             await self.capture(a)
-            plans = await self._propose(a)
+            agent = self.agent
+            try:
+                plans = await self._propose(a, agent)
+            except Exception as exc:
+                agent = self._fallback_agent(a, "proposal", exc)
+                plans = await self._propose(a, agent)
             plans = [BASELINE, *(p for p in plans if p.id != BASELINE.id)][: self.settings.scenario_max_candidates]
             await self.evaluate(a, plans, then=ScenarioStatus.RECOMMENDING)
-            recommendation = await self.agent.recommend(a.context, a.run.candidates)
+            try:
+                recommendation = await agent.recommend(a.context, a.run.candidates)
+            except Exception as exc:
+                agent = self._fallback_agent(a, "recommendation", exc)
+                recommendation = await agent.recommend(a.context, a.run.candidates)
             self.finish(a, self._checked(recommendation, a.run))
         except Exception as exc:  # noqa: BLE001 - reported on the run and in the ops log
             log.exception("scenario run %s failed", a.run.id)
             self.fail(a, f"{type(exc).__name__}: {exc}")
+
+    def _fallback_agent(self, a: Analysis, stage: str, exc: Exception) -> AgentProvider:
+        """Switch a REST NIM run to the deterministic provider once, or preserve its configured failure."""
+        if self.agent.name != "nemotron" or a.run.agent == "nemotron→mock" or not self.settings.agent_fallback_to_mock:
+            raise exc
+        message = _safe_error(exc)
+        a.run.agent = "nemotron→mock"
+        self.city.publish_scenario(a.run)
+        self.city.events.add(
+            EventLevel.WARNING,
+            f"Nemotron {stage} failed; mock continues this run ({message})",
+            self.city.sim_time,
+            a.incident.id,
+        )
+        return MockAgentProvider()
 
     # ------------------------------------------------------------ the steps
 
@@ -255,6 +303,7 @@ class ScenarioService:
         driver: str,
         idle_timeout_s: float | None = None,
         *,
+        memory_mode: MemoryMode = "use",
         incident_ids: list[str] | None = None,
     ) -> Analysis:
         """Guard, resolve the incident(s) and create the run (status queued). One open run at a time.
@@ -278,6 +327,7 @@ class ScenarioService:
             created_at=datetime.now(UTC),
             horizon_s=horizon_s if horizon_s is not None else self.settings.scenario_horizon_s,
             ems_probe=ems_probe,
+            memory_mode=memory_mode,
         )
         analysis = Analysis(run=run, incident=incident, incidents=incidents, idle_timeout_s=idle_timeout_s)
         self._open = analysis
@@ -297,8 +347,9 @@ class ScenarioService:
             Path(a.snapshot.path).unlink(missing_ok=True)
             raise Conflict(f"{a.run.id} was abandoned")
         a.run.snapshot_sim_time = a.snapshot.sim_time
-        a.context = self._context(a, state)
+        a.context = await self._context(a, state)
         a.run.recalled = [lesson["id"] for lesson in a.context.lessons if "id" in lesson]
+        a.run.recall_provenance = [RecalledExperience.model_validate(lesson) for lesson in a.context.lessons]
         a.probes = self._probes(a)
         self._set_status(a.run, ScenarioStatus.PROPOSING)
 
@@ -437,8 +488,11 @@ class ScenarioService:
             Path(snapshot.path).unlink(missing_ok=True)
             raise
 
-    def _context(self, a: Analysis, state: NetworkState) -> IncidentContext:
+    async def _context(self, a: Analysis, state: NetworkState) -> IncidentContext:
         stations = self.city.scenario.ems_stations
+        lessons = []
+        if a.run.memory_mode == "use" and self.lessons_source is not None:
+            lessons = await self.lessons_source(a.incidents, a.standing, a.embedding_cache)
         return IncidentContext(
             incident=a.incident,
             incidents=a.incidents,
@@ -449,7 +503,7 @@ class ScenarioService:
             emergency_vehicles=state.emergency_vehicles,
             ems_origin_segment=stations[0].edge if stations else None,
             standing=a.standing,
-            lessons=self.lessons_source(a.incidents) if self.lessons_source else [],
+            lessons=lessons,
         )
 
     def _probes(self, a: Analysis) -> list[ProbeSpec]:

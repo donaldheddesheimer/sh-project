@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { DemoInfo, Episode, EpisodeStatus, Outcome } from '../api/types'
+import type { DemoInfo, Episode, EpisodeStatus, LearningReport, MemoryMode, Outcome } from '../api/types'
 import { clock, duration } from '../lib/format'
 import { Icon, type IconName } from './Icon'
 import { Section } from './Section'
@@ -110,7 +110,9 @@ function EpisodeCard({ episode }: { episode: Episode }) {
           </>
         )}
         <dt>Lessons used</dt>
-        <dd className="mono">{episode.recalled.join(', ') || 'none'}</dd>
+        <dd className="mono">
+          {episode.recalled.join(', ') || 'none'} · memory {episode.memory_mode}
+        </dd>
         {impl && (
           <>
             <dt>Applied</dt>
@@ -181,11 +183,57 @@ function EpisodeCard({ episode }: { episode: Episode }) {
   )
 }
 
+function Learning({ report }: { report: LearningReport | null }) {
+  if (!report || report.episodes.length === 0) return null
+  return (
+    <details className="learning-report">
+      <summary>
+        Learning <span>{report.episodes.length} episode{report.episodes.length === 1 ? '' : 's'}</span>
+      </summary>
+      <div className="learning-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Episode</th>
+              <th>Mode</th>
+              <th>Recall</th>
+              <th>Plans</th>
+              <th>Verdict</th>
+              <th>Delay</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.episodes.map((row) => (
+              <tr key={row.id}>
+                <td className="mono">{row.id}</td>
+                <td>{row.memory_mode}</td>
+                <td>{row.recalled_sources.join(', ') || 'cold'}</td>
+                <td>{row.candidates_tried} / {row.rounds}r</td>
+                <td>{row.verdict}{row.provisional ? ' · provisional' : ''}</td>
+                <td>{signed(row.delay_vs_baseline_pct)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {report.comparisons.map((comparison) => (
+        <p key={`${comparison.warm_episode_id}-${comparison.control_episode_id}`} className="learning-comparison">
+          {comparison.transfer ? 'Transfer' : 'Same-script'} {comparison.warm_episode_id} vs {comparison.control_episode_id}:{' '}
+          {comparison.useful == null ? 'reported, not rated' : comparison.useful ? 'useful by the configured rule' : 'not useful by the configured rule'}
+          {comparison.behavior_changes.length > 0 && ` · ${comparison.behavior_changes.join('; ')}`}
+        </p>
+      ))}
+    </details>
+  )
+}
+
 /** Autonomous, self-learning episodes: pick a demo script, watch the agent respond, see what it learned. */
 export function EpisodePanel({ episode, busy, onRun }: Props) {
   const [info, setInfo] = useState<DemoInfo | null>(null)
   const [refreshes, setRefreshes] = useState(0)
   const [picked, setPicked] = useState('')
+  const [memoryMode, setMemoryMode] = useState<MemoryMode>('use')
+  const [report, setReport] = useState<LearningReport | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -200,6 +248,7 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
           if (!cancelled) timer = setTimeout(load, 1500)
         })
     load()
+    api.learningReport().then((next) => !cancelled && setReport(next)).catch(() => undefined)
     return () => {
       cancelled = true
       clearTimeout(timer)
@@ -230,11 +279,20 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
             </option>
           ))}
         </select>
+        <select
+          className="episode-memory-mode"
+          value={memoryMode}
+          aria-label="Memory mode"
+          onChange={(e) => setMemoryMode(e.target.value as MemoryMode)}
+        >
+          <option value="use">Use memory</option>
+          <option value="ignore">Ignore memory</option>
+        </select>
         <button
           className="btn btn-sm btn-primary"
           disabled={!!busy || !script}
           title={description ?? 'Reset the city and play this script'}
-          onClick={() => act('demo', () => api.demoStart(script))}
+          onClick={() => act('demo', () => api.demoStart(script, memoryMode))}
         >
           <Icon name="play" size={12} /> Run
         </button>
@@ -251,7 +309,7 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
         Analyst <span className="mono">{info?.analyst ?? '—'}</span>
         <span className="sep">·</span>
         Memory{' '}
-        {memory?.enabled ? `${memory.episodes} lesson${memory.episodes === 1 ? '' : 's'}` : 'off'}
+        {memory?.enabled ? `${memory.episodes} stored episode${memory.episodes === 1 ? '' : 's'}` : 'off'}
         {memory?.enabled && memory.episodes > 0 && (
           <button
             className="episode-link"
@@ -271,6 +329,7 @@ export function EpisodePanel({ episode, busy, onRun }: Props) {
           watches the result and stores a lesson for the next incident.
         </p>
       )}
+      <Learning report={report} />
     </Section>
   )
 }

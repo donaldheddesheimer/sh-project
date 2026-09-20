@@ -22,6 +22,7 @@ from pydantic import Field
 from app.agent.base import CandidatePlan
 from app.learning.store import incident_features
 from app.models.domain import Recommendation, SimulationCandidate, TrafficMetrics
+from app.models.episode import MemoryMode
 from app.models.scenario import ScenarioRun
 from app.services.city import Conflict, NotReady
 from app.services.scenarios import Analysis
@@ -235,6 +236,7 @@ def build_mcp(get_services: Callable[[], Services]) -> MCPServer:
         ] = None,
         horizon_s: Annotated[float | None, Field(ge=120, le=1800, description="Simulated seconds per plan")] = None,
         agent: Annotated[str, Field(description="Your name, shown to operators")] = "mcp-agent",
+        memory_mode: Annotated[MemoryMode, Field(description="use recalled lessons, or ignore them for a control run")] = "use",
     ) -> dict:
         """Freeze the live city for analysis. Returns run_id, the incident(s), road segments (worst first), every
         signal's phases, the responses already in force and lessons from earlier episodes. Only one analysis can
@@ -246,6 +248,7 @@ def build_mcp(get_services: Callable[[], Services]) -> MCPServer:
                 incident_ids = [i.id for i in await service.city.smart_city.list_incidents()] or None
             analysis = await service.open(
                 None, horizon_s, True, agent, idle_timeout_s=service.settings.scenario_idle_timeout_s,
+                memory_mode=memory_mode,
                 incident_ids=incident_ids,
             )
         try:
@@ -253,7 +256,8 @@ def build_mcp(get_services: Callable[[], Services]) -> MCPServer:
         except Exception as exc:
             service.fail(analysis, f"{type(exc).__name__}: {exc}")
             raise ToolError(f"could not snapshot the simulation: {exc}") from exc
-        return _context(analysis, service.settings.scenario_max_candidates, services.memory.playbook())
+        playbook = services.memory.playbook() if analysis.run.memory_mode == "use" else ""
+        return _context(analysis, service.settings.scenario_max_candidates, playbook)
 
     @mcp.tool()
     async def validate_plan(run_id: str, plan: CandidatePlan) -> dict:
@@ -328,11 +332,20 @@ def build_mcp(get_services: Callable[[], Services]) -> MCPServer:
         services = get_services()
         with _as_tool_errors():
             run = services.scenarios.get(run_id)
+        if run.memory_mode == "ignore":
+            return {"playbook": "", "similar": []}
         found = [await services.city.smart_city.get_incident(i) for i in run.incident_ids or [run.incident_id]]
         features = [incident_features(i, services.city.network) for i in found if i is not None]
+        standing = []
+        cache: dict[str, list[float]] | None = None
+        try:
+            analysis = services.scenarios.analysis(run_id)
+            standing, cache = analysis.standing, analysis.embedding_cache
+        except Conflict:
+            pass  # a finished run has no analysis cache; recall remains available from its durable incident context
         return {
             "playbook": services.memory.playbook(),
-            "similar": [r.model_dump() for r in services.memory.recall(features, limit)],
+            "similar": [r.model_dump() for r in await services.memory.recall(features, standing, limit, cache)],
         }
 
     return mcp

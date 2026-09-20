@@ -46,9 +46,6 @@ def _corridor_check(notes: list[str], available: bool) -> ResponseCheck:
 
 def _diversion_check(implementation: Implementation, available: bool) -> ResponseCheck:
     result = next((match for note in implementation.notes if (match := _DIVERSION_RESULT.fullmatch(note))), None)
-    if result is not None:
-        count = int(result.group("count"))
-        return ResponseCheck(kind="diversion", ok=count > 0, detail=result.group(0))
     if implementation.diverted > 0:
         count = implementation.diverted
         return ResponseCheck(
@@ -56,9 +53,17 @@ def _diversion_check(implementation: Implementation, available: bool) -> Respons
             ok=True,
             detail=f"{count} vehicle{'s' if count != 1 else ''} diverted when the response was applied",
         )
-    if available:
-        return ResponseCheck(kind="diversion", ok=False, detail="0 vehicles diverted")
-    return ResponseCheck(kind="diversion", ok=None, detail="response notes unavailable")
+    if result is None:
+        detail = "response notes did not contain diversion evidence" if available else "response notes unavailable"
+        return ResponseCheck(kind="diversion", ok=None, detail=detail)
+    count = int(result.group("count"))
+    if count == 0:
+        return ResponseCheck(kind="diversion", ok=False, detail=result.group(0))
+    return ResponseCheck(
+        kind="diversion",
+        ok=None,
+        detail=f"{result.group(0)} across active advisories; none attributable to this response at application",
+    )
 
 
 def _response_checks(chosen: SimulationCandidate, implementation: Implementation, available: bool) -> list[ResponseCheck]:

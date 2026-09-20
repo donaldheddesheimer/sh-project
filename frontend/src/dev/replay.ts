@@ -18,7 +18,9 @@ function finalRun(mode: FixtureMode): ScenarioRun {
   const run = {
     incident_ids: [recorded.incident_id],
     rounds: 1,
+    memory_mode: 'use',
     recalled: [],
+    recall_provenance: [],
     implementation: null,
     ...structuredClone(recorded),
   } as ScenarioRun

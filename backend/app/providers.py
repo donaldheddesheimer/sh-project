@@ -11,6 +11,7 @@ from app.agent.base import AgentProvider
 from app.agent.mock import MockAgentProvider
 from app.agent.nemotron import NemotronAgentProvider, NimClient
 from app.config import Settings
+from app.learning.embeddings import NimEmbedder
 from app.learning.analysts import MockAnalyst, NemotronAnalyst
 from app.learning.episode import Analyst, EpisodeService, Reviewer
 from app.learning.implementor import Implementor
@@ -18,6 +19,7 @@ from app.learning.monitor import LiveMonitor
 from app.learning.reviewer import MockReviewer, NemotronReviewer
 from app.learning.store import ExperienceStore
 from app.models.domain import Severity
+from app.models.api import EventLevel
 from app.safety.validator import RuleBasedSafetyValidator
 from app.services.city import CityService, FrameObserver
 from app.services.scenarios import ScenarioService
@@ -73,8 +75,12 @@ def build_smart_city_provider(settings: Settings, network: RoadNetwork) -> tuple
 def build_agent_provider(settings: Settings) -> AgentProvider:
     if settings.agent_provider == "mock":
         return MockAgentProvider()
+    if not settings.nemotron_model:
+        raise RuntimeError("AGENT_PROVIDER=nemotron requires NEMOTRON_MODEL (a NIM model id)")
     api_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
-    return NemotronAgentProvider(settings.nemotron_base_url, settings.nemotron_model, api_key)
+    return NemotronAgentProvider(
+        settings.nemotron_base_url, settings.nemotron_model, api_key, settings.scenario_max_candidates
+    )
 
 
 def build_episode_agents(
@@ -147,7 +153,23 @@ def build_services(settings: Settings, hub: ConnectionHub, mcp_server: MCPServer
         branch_factory=branch_simulation,
     )
     implementor = Implementor(city=city, scenarios=scenarios, validator=validator)
-    memory = ExperienceStore(settings.memory_dir, enabled=settings.memory_enabled)
+    api_key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
+    embedder = (
+        NimEmbedder(settings.embedding_base_url or settings.nemotron_base_url, settings.embedding_model, api_key)
+        if settings.embedding_model
+        else None
+    )
+
+    def report_embedding_event(message: str) -> None:
+        level = EventLevel.WARNING if "unavailable" in message else EventLevel.INFO
+        city.events.add(level, message, city.sim_time)
+
+    memory = ExperienceStore(
+        settings.memory_dir,
+        enabled=settings.memory_enabled,
+        embedder=embedder,
+        on_embedding_event=report_embedding_event,
+    )
     analyst, fallback, reviewer = build_episode_agents(settings, scenarios, implementor, mcp_server)
     episodes = EpisodeService(
         settings=settings,

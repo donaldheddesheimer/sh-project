@@ -61,7 +61,7 @@ class Implementation(BaseModel):
     staleness_s: float | None = Field(None, description="Live time that passed between the branch snapshot and the apply")
     policies: dict[str, str] = Field(default_factory=dict, description="Intersection -> program id now running")
     corridor: bool = False
-    diverted: int = 0
+    diverted: int = Field(0, description="Vehicles diverted synchronously when this response was applied")
     ems_dispatch_ids: list[str] = Field(default_factory=list, description="Responders dispatched with the plan")
     ems_en_route_ids: list[str] = Field(
         default_factory=list, description="Responders already on the way at the snapshot; the branches timed them too"
@@ -100,6 +100,7 @@ class WindowStats(BaseModel):
 
 Outcome = Literal["effective", "ineffective", "inconclusive"]
 ResponseKind = Literal["corridor", "diversion"]
+MemoryMode = Literal["use", "ignore"]
 
 
 class ResponseCheck(BaseModel):
@@ -191,7 +192,12 @@ class Experience(BaseModel):
     scorecard: Scorecard
     lesson: Lesson
     rounds: int = 0
+    memory_mode: MemoryMode = "use"
+    eligible_for_recall: bool = True
     recalled: list[str] = Field(default_factory=list, description="Remembered episodes the analyst was given")
+    recall_provenance: list[RecalledExperience] = Field(
+        default_factory=list, description="Scores and trust state for every remembered episode given to the analyst"
+    )
     analysis_wall_s: float | None = Field(None, description="Wall-clock seconds from detection to recommendation")
 
 
@@ -218,6 +224,48 @@ class RecalledExperience(BaseModel):
     numbers: dict[str, float | None] = Field(default_factory=dict)
 
 
+class LearningReportEpisode(BaseModel):
+    """One durable episode in the read-only learning report."""
+
+    id: str
+    script_id: str | None = None
+    analyst: str
+    memory_mode: MemoryMode = "use"
+    eligible_for_recall: bool = True
+    recalled_sources: list[str] = Field(default_factory=list)
+    recall_provenance: list[RecalledExperience] = Field(default_factory=list)
+    warm: bool = False
+    transfer: bool = False
+    candidate_order: list[str] = Field(default_factory=list)
+    rounds: int = 0
+    candidates_tried: int = 0
+    analysis_wall_s: float | None = None
+    selected_plan: str
+    verdict: Outcome
+    delay_vs_baseline_pct: float | None = None
+    prediction_error: dict[str, float | None] = Field(default_factory=dict)
+    staleness_s: float | None = None
+    checks: list[ResponseCheck] = Field(default_factory=list)
+    provisional: bool = False
+
+
+class LearningComparison(BaseModel):
+    """A warm episode compared with a no-memory control of the same script."""
+
+    script_id: str | None = None
+    warm_episode_id: str
+    control_episode_id: str
+    transfer: bool
+    useful: bool | None = Field(None, description="Only evaluated for a cross-script recall comparison")
+    behavior_changes: list[str] = Field(default_factory=list)
+    deltas: dict[str, float | None] = Field(default_factory=dict)
+
+
+class LearningReport(BaseModel):
+    episodes: list[LearningReportEpisode] = Field(default_factory=list)
+    comparisons: list[LearningComparison] = Field(default_factory=list)
+
+
 class EpisodeStep(BaseModel):
     status: EpisodeStatus
     at: datetime
@@ -239,6 +287,7 @@ class Episode(BaseModel):
     run_id: str | None = None
     rounds: int = 0
     candidates: int = Field(0, description="Candidates in the analysis, baseline included")
+    memory_mode: MemoryMode = "use"
     analysis_wall_s: float | None = Field(None, description="Wall-clock seconds from detection to recommendation")
     detected_sim_time: float | None = None
     implemented_sim_time: float | None = None
@@ -248,6 +297,9 @@ class Episode(BaseModel):
     scorecard: Scorecard | None = None
     lesson: Lesson | None = None
     recalled: list[str] = Field(default_factory=list, description="Ids of remembered episodes given to the agent")
+    recall_provenance: list[RecalledExperience] = Field(
+        default_factory=list, description="Scores and trust state for every remembered episode given to the analyst"
+    )
     memory_path: str | None = None
     error: str | None = None
     steps: list[EpisodeStep] = Field(default_factory=list)

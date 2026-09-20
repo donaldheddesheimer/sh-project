@@ -1,4 +1,14 @@
-import type { Camera, DemoInfo, Episode, Implementation, NetworkGeometry, ScenarioRun, ScenarioRunRequest } from './types'
+import type {
+  Camera,
+  DemoInfo,
+  Episode,
+  Implementation,
+  LearningReport,
+  MemoryMode,
+  NetworkGeometry,
+  ScenarioRun,
+  ScenarioRunRequest,
+} from './types'
 
 /**
  * Absolute origin of the backend, e.g. 'https://traffic-ops-backend-xxxx.run.app'. Set
@@ -50,9 +60,11 @@ export const api = {
   listScenarios: () => request<ScenarioRun[]>('GET', '/api/scenarios'),
   implement: (id: string) => request<Implementation>('POST', `/api/scenarios/${encodeURIComponent(id)}/implement`),
   demo: () => request<DemoInfo>('GET', '/api/demo'),
-  demoStart: (script: string) => request<Episode>('POST', '/api/demo/start', { script }),
+  demoStart: (script: string, memoryMode: MemoryMode = 'use') =>
+    request<Episode>('POST', '/api/demo/start', { script, memory_mode: memoryMode }),
   demoStop: () => request<DemoInfo>('POST', '/api/demo/stop'),
   clearMemory: () => request<{ removed: number }>('DELETE', '/api/memory'),
+  learningReport: () => request<LearningReport>('GET', '/api/learning/report'),
 }
 
 /**

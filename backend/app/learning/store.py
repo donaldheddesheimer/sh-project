@@ -9,15 +9,29 @@ contract so optional semantic recall can improve ranking later without gaining p
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Callable
 
-from app.learning.scorecard import PROVISIONAL_CONFIDENCE_CAP
+from app.agent.base import CandidatePlan
+from app.learning.embeddings import NimEmbedder
+from app.learning.scorecard import MATERIAL_DELAY_PCT, MATERIAL_EMS_S, MATERIAL_QUEUE, PROVISIONAL_CONFIDENCE_CAP
 from app.models.domain import Incident
-from app.models.episode import Experience, IncidentFeatures, RecalledExperience, ResponseCheck
+from app.models.episode import (
+    Experience,
+    IncidentFeatures,
+    LearningComparison,
+    LearningReport,
+    LearningReportEpisode,
+    RecalledExperience,
+    ResponseCheck,
+)
 from app.simulation.network import RoadNetwork
 
 log = logging.getLogger(__name__)
@@ -111,6 +125,147 @@ def plan_family(plan_id: str) -> str:
     return plan_id.split(":", 1)[-1]
 
 
+def _experience_text(exp: Experience) -> str:
+    """The durable meaning of an episode, deliberately excluding noisy numeric outcomes."""
+    situation = "; ".join(describe(incident) for incident in exp.incidents)
+    guidance = " ".join(exp.lesson.next_time)
+    return (
+        f"Situation: {situation}. Plan family: {plan_family(exp.chosen.id)}. "
+        f"Verdict: {exp.lesson.verdict}. Next time: {guidance}"
+    )
+
+
+def _query_text(current: list[IncidentFeatures], standing: list[CandidatePlan]) -> str:
+    situation = "; ".join(describe(incident) for incident in current)
+    active = ", ".join(plan_family(plan.id) for plan in standing) or "none"
+    return f"Situation: {situation}. Standing responses: {active}."
+
+
+def _input_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _validated_vector(value: object) -> list[float] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    try:
+        vector = [float(item) for item in value]
+    except (TypeError, ValueError):
+        return None
+    return vector if all(math.isfinite(item) for item in vector) else None
+
+
+def _cosine(left: list[float], right: list[float]) -> float | None:
+    if len(left) != len(right):
+        return None
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return None
+    cosine = sum(a * b for a, b in zip(left, right)) / (left_norm * right_norm)
+    return max(0.0, min(1.0, cosine))
+
+
+def _report_episode(exp: Experience, by_id: dict[str, Experience]) -> LearningReportEpisode:
+    recalled_sources = list(exp.recalled)
+    transfer = any(source in by_id and by_id[source].script_id != exp.script_id for source in recalled_sources)
+    scorecard = exp.scorecard
+    return LearningReportEpisode(
+        id=exp.id,
+        script_id=exp.script_id,
+        analyst=exp.analyst,
+        memory_mode=exp.memory_mode,
+        eligible_for_recall=exp.eligible_for_recall,
+        recalled_sources=recalled_sources,
+        recall_provenance=exp.recall_provenance,
+        warm=bool(recalled_sources),
+        transfer=transfer,
+        candidate_order=[plan.id for plan in exp.tried],
+        rounds=exp.rounds,
+        candidates_tried=scorecard.candidates_tried,
+        analysis_wall_s=exp.analysis_wall_s,
+        selected_plan=exp.chosen.id,
+        verdict=exp.lesson.verdict,
+        delay_vs_baseline_pct=scorecard.realised_vs_baseline.get("delay_pct"),
+        prediction_error=scorecard.prediction_error,
+        staleness_s=scorecard.staleness_s,
+        checks=scorecard.checks,
+        provisional=scorecard.provisional,
+    )
+
+
+def _comparison(warm: Experience, control: Experience, by_id: dict[str, Experience]) -> LearningComparison:
+    transfer_sources = [
+        by_id[source]
+        for source in warm.recalled
+        if source in by_id and by_id[source].script_id != warm.script_id
+    ]
+    behavior: list[str] = []
+    for source in transfer_sources:
+        family = plan_family(source.chosen.id)
+        warm_position = _family_position(warm, family)
+        control_position = _family_position(control, family)
+        if source.lesson.verdict == "effective" and warm_position is not None and (
+            control_position is None or warm_position < control_position
+        ):
+            behavior.append(f"{family} moved earlier")
+        if source.lesson.verdict == "ineffective" and (
+            warm_position is None or (control_position is not None and warm_position > control_position)
+        ):
+            behavior.append(f"{family} moved later or was omitted")
+    if warm.scorecard.candidates_tried < control.scorecard.candidates_tried:
+        behavior.append("fewer candidates tried")
+    if warm.rounds < control.rounds:
+        behavior.append("fewer simulation rounds")
+    if control.lesson.verdict == "ineffective" and warm.lesson.verdict in ("inconclusive", "effective"):
+        behavior.append("recommendation verdict improved")
+    delay_improved = _material_delay_improvement(warm, control)
+    if delay_improved:
+        behavior.append("realised delay improved without a material queue or EMS regression")
+    transfer = bool(transfer_sources)
+    useful = bool(behavior) if transfer else None
+    return LearningComparison(
+        script_id=warm.script_id,
+        warm_episode_id=warm.id,
+        control_episode_id=control.id,
+        transfer=transfer,
+        useful=useful,
+        behavior_changes=behavior,
+        deltas={
+            "rounds": float(warm.rounds - control.rounds),
+            "candidates_tried": float(warm.scorecard.candidates_tried - control.scorecard.candidates_tried),
+            "analysis_wall_s": _delta(warm.analysis_wall_s, control.analysis_wall_s),
+            "delay_vs_baseline_pct": _delta(
+                warm.scorecard.realised_vs_baseline.get("delay_pct"),
+                control.scorecard.realised_vs_baseline.get("delay_pct"),
+            ),
+            "prediction_error_delay_pct": _delta(
+                warm.scorecard.prediction_error.get("delay_pct"), control.scorecard.prediction_error.get("delay_pct")
+            ),
+            "staleness_s": _delta(warm.scorecard.staleness_s, control.scorecard.staleness_s),
+        },
+    )
+
+
+def _family_position(exp: Experience, family: str) -> int | None:
+    return next((index for index, plan in enumerate(exp.tried) if plan_family(plan.id) == family), None)
+
+
+def _material_delay_improvement(warm: Experience, control: Experience) -> bool:
+    warm_metrics = warm.scorecard.realised_vs_baseline
+    control_metrics = control.scorecard.realised_vs_baseline
+    delay_delta = _delta(warm_metrics.get("delay_pct"), control_metrics.get("delay_pct"))
+    if delay_delta is None or delay_delta > -MATERIAL_DELAY_PCT:
+        return False
+    queue_delta = _delta(warm_metrics.get("queue"), control_metrics.get("queue"))
+    ems_delta = _delta(warm_metrics.get("ems_s"), control_metrics.get("ems_s"))
+    return (queue_delta is None or queue_delta < MATERIAL_QUEUE) and (ems_delta is None or ems_delta < MATERIAL_EMS_S)
+
+
+def _delta(current: float | None, prior: float | None) -> float | None:
+    return round(current - prior, 1) if current is not None and prior is not None else None
+
+
 @dataclass(frozen=True)
 class _ScoredExperience:
     experience: Experience
@@ -156,14 +311,21 @@ def _confirmed_by_replication(
     return len(supporters) >= CONFIRMATION_COUNT
 
 
-def _score_recall(exp: Experience, structured: float, all_scores: list[tuple[float, Experience]]) -> _ScoredExperience:
+def _score_recall(
+    exp: Experience,
+    structured: float,
+    semantic: float | None,
+    all_scores: list[tuple[float, Experience]],
+) -> _ScoredExperience:
     trusted = not exp.scorecard.provisional or _confirmed_by_replication(exp, all_scores)
-    combined = structured  # semantic recall is optional and added behind this contract later
-    ranking = combined if trusted else round(combined * PROVISIONAL_RANKING_FACTOR, 3)
+    combined = structured
+    if semantic is not None:
+        combined = max(structured, min(0.74, 0.65 * structured + 0.35 * semantic))
+    ranking = combined if trusted else combined * PROVISIONAL_RANKING_FACTOR
     return _ScoredExperience(
         experience=exp,
         structured_score=structured,
-        semantic_score=None,
+        semantic_score=semantic,
         combined_score=combined,
         ranking_score=ranking,
         trusted=trusted,
@@ -203,10 +365,19 @@ def recalled_view(scored: _ScoredExperience) -> RecalledExperience:
 
 
 class ExperienceStore:
-    def __init__(self, directory: Path, enabled: bool = True):
+    def __init__(
+        self,
+        directory: Path,
+        enabled: bool = True,
+        embedder: NimEmbedder | None = None,
+        on_embedding_event: Callable[[str], None] | None = None,
+    ):
         self.directory = directory
         self.enabled = enabled
         self._episodes = directory / "episodes"
+        self._embedder = embedder
+        self._on_embedding_event = on_embedding_event
+        self._embedding_outage = False
 
     # ------------------------------------------------------------ read side
 
@@ -223,12 +394,22 @@ class ExperienceStore:
                 log.warning("skipping unreadable memory file %s", path)
         return sorted(found, key=lambda e: e.created_at)
 
-    def recall(self, current: list[IncidentFeatures], limit: int = RECALL_LIMIT) -> list[RecalledExperience]:
-        """Rank by trust-adjusted score, then recency and confidence; confirmation never mutates stored memory."""
+    async def recall(
+        self,
+        current: list[IncidentFeatures],
+        standing: list[CandidatePlan] | None = None,
+        limit: int = RECALL_LIMIT,
+        query_cache: dict[str, list[float]] | None = None,
+    ) -> list[RecalledExperience]:
+        """Rank eligible memory without ever letting semantic similarity grant pruning authority."""
         if not self.enabled or not current:
             return []
-        structured = [(similarity(current, exp.incidents), exp) for exp in self.load()]
-        scored = [_score_recall(exp, score, structured) for score, exp in structured]
+        experiences = [exp for exp in self.load() if exp.eligible_for_recall]
+        if not experiences:
+            return []
+        structured = [(similarity(current, exp.incidents), exp) for exp in experiences]
+        semantics = await self._semantic_scores(current, standing or [], experiences, query_cache)
+        scored = [_score_recall(exp, score, semantics.get(exp.id), structured) for score, exp in structured]
         scored = [item for item in scored if item.ranking_score >= MIN_SIMILARITY]
         scored.sort(
             key=lambda item: (item.ranking_score, item.experience.created_at, item.experience.lesson.confidence),
@@ -256,9 +437,35 @@ class ExperienceStore:
             "latest": [e.id for e in reversed(episodes)][:10],
         }
 
+    def report(self) -> LearningReport:
+        """Summarise durable episodes and pair warm runs with same-script controls without inventing a conclusion."""
+        experiences = self.load() if self.enabled else []
+        by_id = {exp.id: exp for exp in experiences}
+        rows = [_report_episode(exp, by_id) for exp in experiences]
+        controls_by_script: dict[str | None, list[Experience]] = {}
+        for exp in experiences:
+            if exp.memory_mode == "ignore":
+                controls_by_script.setdefault(exp.script_id, []).append(exp)
+        comparisons: list[LearningComparison] = []
+        for exp in experiences:
+            if exp.memory_mode != "use" or not exp.recalled:
+                continue
+            controls = controls_by_script.get(exp.script_id, [])
+            if not controls:
+                continue
+            control = min(controls, key=lambda other: abs((other.created_at - exp.created_at).total_seconds()))
+            comparisons.append(_comparison(exp, control, by_id))
+        return LearningReport(episodes=rows, comparisons=comparisons)
+
     # ----------------------------------------------------------- write side
 
-    def save(self, exp: Experience) -> Path:
+    async def save(self, exp: Experience) -> Path:
+        """Persist the durable markdown first, then best-effort embed it as a passage."""
+        path = await asyncio.to_thread(self._save_durable, exp)
+        await self._embed_experiences([exp])
+        return path
+
+    def _save_durable(self, exp: Experience) -> Path:
         self._episodes.mkdir(parents=True, exist_ok=True)
         path = self._episodes / f"{exp.id}.md"
         path.write_text(f"---\n{exp.model_dump_json(indent=1)}\n---\n{_body(exp)}", encoding="utf-8")
@@ -272,11 +479,13 @@ class ExperienceStore:
             for path in self._episodes.glob("EP-*.md"):
                 path.unlink()
                 removed += 1
+            for path in self._episodes.glob("EP-*.vec.json"):
+                path.unlink()
         (self.directory / "playbook.md").unlink(missing_ok=True)
         return removed
 
     def _write_playbook(self) -> None:
-        experiences = list(reversed(self.load()))[:PLAYBOOK_LIMIT]
+        experiences = [exp for exp in reversed(self.load()) if exp.eligible_for_recall][:PLAYBOOK_LIMIT]
         lines = [
             "# Playbook",
             "",
@@ -296,6 +505,120 @@ class ExperienceStore:
             lines.extend(f"  - Next time: {tip}" for tip in exp.lesson.next_time[:2])
         (self.directory / "playbook.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    # --------------------------------------------------------- semantic recall
+
+    async def _semantic_scores(
+        self,
+        current: list[IncidentFeatures],
+        standing: list[CandidatePlan],
+        experiences: list[Experience],
+        query_cache: dict[str, list[float]] | None,
+    ) -> dict[str, float]:
+        """Return cosine scores, or no scores at all when optional embeddings are unavailable."""
+        if self._embedder is None:
+            return {}
+        vectors = await self._experience_vectors(experiences)
+        if vectors is None:
+            return {}
+        query = _query_text(current, standing)
+        key = _input_hash(query)
+        query_vector = (query_cache or {}).get(key)
+        if query_vector is None:
+            found = await self._request_vectors([query], "query")
+            if found is None:
+                return {}
+            query_vector = found[0]
+            if query_cache is not None:
+                query_cache[key] = query_vector
+        return {
+            episode_id: score
+            for episode_id, vector in vectors.items()
+            if (score := _cosine(query_vector, vector)) is not None
+        }
+
+    async def _experience_vectors(self, experiences: list[Experience]) -> dict[str, list[float]] | None:
+        cached: dict[str, list[float]] = {}
+        stale: list[Experience] = []
+        for exp in experiences:
+            vector = self._read_vector(exp)
+            if vector is None:
+                stale.append(exp)
+            else:
+                cached[exp.id] = vector
+        if not stale:
+            return cached
+        vectors = await self._request_vectors([_experience_text(exp) for exp in stale], "passage")
+        if vectors is None:
+            return None
+        await self._store_vectors(stale, vectors)
+        cached.update({exp.id: vector for exp, vector in zip(stale, vectors)})
+        return cached
+
+    async def _embed_experiences(self, experiences: list[Experience]) -> None:
+        """Best-effort post-save passage embeddings; a failure leaves durable memory usable."""
+        if self._embedder is None or not experiences:
+            return
+        vectors = await self._request_vectors([_experience_text(exp) for exp in experiences], "passage")
+        if vectors is not None:
+            await self._store_vectors(experiences, vectors)
+
+    async def _store_vectors(self, experiences: list[Experience], vectors: list[list[float]]) -> None:
+        try:
+            await asyncio.to_thread(self._write_vectors, experiences, vectors)
+        except OSError as exc:
+            log.warning("could not write embedding sidecars: %s", exc)
+
+    async def _request_vectors(self, texts: list[str], input_type: str) -> list[list[float]] | None:
+        try:
+            vectors = await self._embedder.embed(texts, input_type) if self._embedder else None
+        except Exception as exc:  # noqa: BLE001 - optional network capability cannot fail an analysis
+            self._embedding_failed(exc)
+            return None
+        if vectors is None:
+            return None
+        self._embedding_recovered()
+        return vectors
+
+    def _read_vector(self, exp: Experience) -> list[float] | None:
+        if self._embedder is None:
+            return None
+        path = self._vector_path(exp)
+        try:
+            sidecar = json.loads(path.read_text(encoding="utf-8"))
+            if sidecar.get("model") != self._embedder.model or sidecar.get("input_hash") != _input_hash(_experience_text(exp)):
+                return None
+            vector = sidecar.get("vector")
+            return _validated_vector(vector)
+        except (OSError, TypeError, ValueError):
+            return None
+
+    def _write_vectors(self, experiences: list[Experience], vectors: list[list[float]]) -> None:
+        for exp, vector in zip(experiences, vectors):
+            self._episodes.mkdir(parents=True, exist_ok=True)
+            sidecar = {"model": self._embedder.model, "input_hash": _input_hash(_experience_text(exp)), "vector": vector}
+            self._vector_path(exp).write_text(json.dumps(sidecar, separators=(",", ":")) + "\n", encoding="utf-8")
+
+    def _vector_path(self, exp: Experience) -> Path:
+        return self._episodes / f"{exp.id}.vec.json"
+
+    def _embedding_failed(self, exc: Exception) -> None:
+        if self._embedding_outage:
+            return
+        self._embedding_outage = True
+        log.warning("embedding recall unavailable: %s", exc)
+        self._emit_embedding_event("Embedding recall unavailable; using structured memory only")
+
+    def _embedding_recovered(self) -> None:
+        if not self._embedding_outage:
+            return
+        self._embedding_outage = False
+        log.info("embedding recall recovered")
+        self._emit_embedding_event("Embedding recall recovered")
+
+    def _emit_embedding_event(self, message: str) -> None:
+        if self._on_embedding_event is not None:
+            self._on_embedding_event(message)
+
 
 def _num(value: float | None, unit: str = "", fmt: str = ".0f") -> str:
     return f"{value:{fmt}}{unit}" if value is not None else "n/a"
@@ -307,7 +630,9 @@ def _body(exp: Experience) -> str:
         f"# {exp.id}: {lesson.summary}",
         "",
         f"**Situation.** {'; '.join(describe(f) for f in exp.incidents)}. Script: {exp.script_id or 'none'}. "
-        f"Analyst: {exp.analyst}. Lessons recalled: {', '.join(exp.recalled) or 'none'}.",
+        f"Analyst: {exp.analyst}. Memory mode: {exp.memory_mode} "
+        f"({'eligible for recall' if exp.eligible_for_recall else 'control; not eligible for recall'}). "
+        f"Lessons recalled: {', '.join(exp.recalled) or 'none'}.",
         "",
         f"**What was tried** ({exp.rounds} round{'s' if exp.rounds != 1 else ''}, "
         f"{sc.candidates_tried} candidates, {sc.rejected} rejected):",

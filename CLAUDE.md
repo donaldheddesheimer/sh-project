@@ -96,9 +96,11 @@ venv directly (this is what works in PowerShell or Git Bash):
 - **Providers are interfaces.** `CityService` sees `SmartCityProvider` and `AgentProvider`
   only; `providers.py` picks mock vs NVIDIA/Nemotron. `NvidiaSmartCityProvider` polls VSS
   over MCP (or a development replay file), map-matches reports and has `CityService` mirror
-  matched collisions into the twin. The REST pipeline's `NemotronAgentProvider` is still a
-  stub: with `AGENT_PROVIDER=nemotron` Analyze Response fails. Nemotron runs only as an
-  episode's analyst (`EPISODE_ANALYST`).
+  matched collisions into the twin. `NemotronAgentProvider` powers REST Analyze Response with
+  schema-validated plan data; the safety validator and completed-candidate gate still decide
+  what can run. Its first failure switches that run to the mock when
+  `AGENT_FALLBACK_TO_MOCK=true`, or fails it when false. Nemotron also runs as an episode
+  analyst (`EPISODE_ANALYST`).
 - **One thread owns the live TraCI connection.** TraCI is blocking and not thread-safe.
   Touch the live simulation only through `CityService.run_on_live(fn)`; scripted crashes are
   fired by the runner thread itself (`set_scripted_events`).

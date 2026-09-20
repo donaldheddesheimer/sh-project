@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     memory_dir: Path = REPO_ROOT / "memory"
     mcp_url: str | None = None  # where the Nemotron loop reaches /mcp; unset = this app's MCP server, in-process
 
+    # --- memory and agents --------------------------------------------------
+    embedding_model: str | None = None  # unset keeps recall structured-only
+    embedding_base_url: str | None = None  # defaults to NEMOTRON_BASE_URL after settings load
+    agent_fallback_to_mock: bool = True  # REST Analyze Response uses mock after a Nemotron failure
+
     # --- mock Smart City provider ------------------------------------------
     incident_detection_delay_s: float = 4.0  # simulated seconds between a crash and its detection
 
@@ -101,6 +106,12 @@ class Settings(BaseSettings):
         if text.startswith("["):
             return json.loads(text)
         return [origin.strip() for origin in text.split(",") if origin.strip()]
+
+    @model_validator(mode="after")
+    def _default_embedding_base_url(self) -> Settings:
+        if self.embedding_base_url is None:
+            self.embedding_base_url = self.nemotron_base_url
+        return self
 
 
 @lru_cache

@@ -1,0 +1,544 @@
+/* Operations-console layer. Kept separate from the map and data styles so concurrent
+   feature branches can add domain-specific UI without rebasing a shared stylesheet. */
+
+:root {
+  --gutter: #080d13;
+  --page: #0b121a;
+  --panel: #141d26;
+  --panel-2: #1b2630;
+  --panel-3: #26333f;
+  --panel-4: #334250;
+  --line: #2b3945;
+  --line-strong: #455767;
+  --text: #edf3f7;
+  --text-2: #bac9d5;
+  --muted: #9aabba;
+  --faint: #718596;
+  --accent: #287fbd;
+  --accent-hover: #3295da;
+  --accent-text: #99d5ff;
+  --accent-bg: rgba(40, 127, 189, 0.2);
+  --spark: #658ba7;
+  --radius: 3px;
+  --shadow: 0 0 0 1px rgba(8, 13, 19, 0.65), 0 10px 24px rgba(3, 8, 13, 0.45);
+}
+
+body {
+  background: var(--gutter);
+}
+
+.app {
+  grid-template-columns: minmax(0, 1fr) 410px;
+  grid-template-rows: 70px minmax(0, 1fr) 272px;
+}
+
+/* Global command bar: a clear city identity, live state and the demo actions. */
+.topbar {
+  gap: 0;
+  padding: 0 14px 0 0;
+  background: linear-gradient(90deg, #192631 0%, #1b2630 72%, #17222b 100%);
+  box-shadow: inset 0 -1px 0 var(--line-strong);
+}
+
+.brand {
+  flex: none;
+  gap: 12px;
+  min-width: 258px;
+  padding-right: 17px;
+  border-right: 1px solid var(--line-strong);
+}
+
+.brand-mark {
+  width: 52px;
+  height: 70px;
+  background: #113249;
+  color: #b1e2ff;
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+
+.brand-lockup {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.brand-eyebrow,
+.topbar-caption {
+  color: var(--faint);
+  font: 700 9px/1.15 var(--mono);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.brand-eyebrow {
+  margin-bottom: 4px;
+  color: var(--accent-text);
+}
+
+.brand-name {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.brand .crumbs {
+  gap: 4px;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  font: 10.5px/1.2 var(--sans);
+}
+
+.brand .crumb-current {
+  color: var(--text-2);
+}
+
+.sim-clock {
+  align-self: stretch;
+  flex: none;
+  gap: 15px;
+  padding: 0 16px;
+  border-right: 1px solid var(--line-strong);
+}
+
+.topbar-stack,
+.control-cluster {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+}
+
+.topbar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.run-tag,
+.clock,
+.seg {
+  height: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: none;
+}
+
+.run-tag {
+  padding: 0 9px;
+}
+
+.clock {
+  padding: 0 8px;
+  background: #101922;
+}
+
+.clock-value {
+  font-size: 14px;
+}
+
+.seg button {
+  height: 28px;
+  padding: 0 7px;
+}
+
+.seg button.active {
+  background: var(--accent);
+}
+
+.speed-select {
+  display: none;
+  min-width: 68px;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #101922;
+  color: var(--text);
+  font: 12px var(--mono);
+}
+
+.controls {
+  align-self: stretch;
+  gap: 15px;
+  min-width: 0;
+  padding-left: 16px;
+}
+
+.control-group {
+  gap: 5px;
+}
+
+.incident-ready {
+  color: var(--caution-text);
+}
+
+.btn {
+  height: 30px;
+  background: var(--panel-4);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.btn:hover:not(:disabled) {
+  background: #3f5261;
+}
+
+.btn-icon {
+  width: 30px;
+}
+
+.btn-sm {
+  height: 26px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(144, 210, 252, 0.25);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-analyze {
+  min-width: 155px;
+  font-weight: 700;
+}
+
+.btn-danger {
+  background: rgba(205, 66, 70, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(205, 66, 70, 0.75);
+}
+
+.fixture-badge {
+  flex: none;
+  margin-left: 10px;
+}
+
+/* The map remains the primary canvas, with a quieter telemetry frame. */
+.map-area {
+  background: var(--page);
+}
+
+.map-caption {
+  top: 14px;
+  left: 14px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  background: rgba(19, 31, 42, 0.95);
+  box-shadow: var(--shadow), inset 3px 0 0 var(--accent);
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+
+.map-caption .sources {
+  color: var(--muted);
+}
+
+.overlay-card {
+  border: 1px solid rgba(89, 111, 128, 0.6);
+  background: rgba(19, 31, 42, 0.95);
+  box-shadow: var(--shadow);
+}
+
+.legend {
+  left: 14px;
+  bottom: 14px;
+  min-width: 166px;
+}
+
+.legend-body {
+  padding: 8px 12px 10px;
+}
+
+.legend-title {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.plan-card {
+  right: 14px;
+  bottom: 14px;
+}
+
+.map-attribution {
+  right: 14px;
+  color: var(--muted);
+}
+
+/* Dense but legible operational panels. */
+.side {
+  border-left: 1px solid var(--gutter);
+  background: #111922;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.panel {
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-head {
+  height: 39px;
+  padding-right: 12px;
+  background: #1a2631;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+.panel-toggle {
+  height: 31px;
+}
+
+.panel-title {
+  color: var(--text-2);
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+}
+
+.panel-icon {
+  color: var(--accent-text);
+}
+
+.panel-body {
+  padding: 12px;
+}
+
+.object-card,
+.cand {
+  background: #1b2833;
+}
+
+.object-title {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.object-desc {
+  line-height: 1.5;
+}
+
+.tiles {
+  border-radius: var(--radius);
+}
+
+.tile {
+  padding: 11px 12px;
+  background: #1c2934;
+}
+
+.tile:first-child {
+  background: linear-gradient(145deg, #1b3243, #1c2934 70%);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tile-value {
+  font-size: 22px;
+  line-height: 1.45;
+}
+
+.tile-label {
+  color: var(--text-2);
+}
+
+.pipe-step {
+  padding-bottom: 6px;
+}
+
+.pipe-num {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #22313e;
+  color: var(--accent-text);
+}
+
+.pipe-step:not(:last-child)::before {
+  background: var(--line-strong);
+}
+
+.pipe-title {
+  color: var(--text);
+}
+
+.pipe-desc {
+  font-size: 11.5px;
+}
+
+.callout {
+  border: 1px solid var(--line-strong);
+}
+
+.run-summary {
+  display: block;
+  line-height: 1.5;
+}
+
+.run-summary .sep {
+  margin: 0 5px;
+}
+
+.recommendation {
+  background: linear-gradient(150deg, rgba(40, 127, 189, 0.29), rgba(29, 50, 65, 0.7));
+  box-shadow: inset 0 0 0 1px rgba(107, 183, 232, 0.6), inset 3px 0 0 var(--accent);
+}
+
+.rec-name {
+  color: var(--text);
+}
+
+.cand {
+  padding: 10px 11px 10px 14px;
+}
+
+.cand:hover,
+.cand.is-active {
+  background: #253542;
+}
+
+.status-pill {
+  border-radius: var(--radius);
+}
+
+.chips {
+  margin-top: 8px;
+}
+
+.chip {
+  background: #121e28;
+}
+
+/* Comparison and telemetry feel like one analytical workbench. */
+.dock {
+  border-top: 1px solid var(--line-strong);
+  background: var(--panel);
+}
+
+.dock-tabs {
+  height: 38px;
+  padding-left: 9px;
+  background: #1a2631;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+.dock-tab {
+  padding: 0 13px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dock-tab.active {
+  background: rgba(40, 127, 189, 0.08);
+  border-bottom-color: var(--accent-text);
+}
+
+.trend,
+.compare-pane {
+  padding-top: 11px;
+}
+
+.trend-title,
+.km-head {
+  color: var(--text-2);
+}
+
+.trend-value {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.grid {
+  stroke: #2c3b47;
+}
+
+.series-line {
+  stroke-width: 2.3;
+}
+
+.event {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+@media (max-width: 1280px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr) 375px;
+    grid-template-rows: 64px minmax(0, 1fr) 280px;
+  }
+
+  .brand {
+    min-width: 185px;
+    padding-right: 10px;
+  }
+
+  .brand-mark {
+    width: 45px;
+    height: 64px;
+  }
+
+  .brand-eyebrow,
+  .brand .crumbs {
+    display: none;
+  }
+
+  .sim-clock {
+    gap: 9px;
+    padding: 0 10px;
+  }
+
+  .controls {
+    gap: 9px;
+    padding-left: 10px;
+  }
+
+  .btn-analyze {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 1120px) {
+  .brand {
+    min-width: 160px;
+  }
+
+  .brand-name {
+    font-size: 13px;
+  }
+
+  .speed-stack {
+    display: flex;
+  }
+
+  .speed-stack .seg {
+    display: none;
+  }
+
+  .speed-select {
+    display: block;
+  }
+
+  .response-cluster .control-group > .btn:nth-child(2) {
+    width: 30px;
+    padding: 0;
+    font-size: 0;
+  }
+}
+
+@media (max-height: 760px) {
+  .app {
+    grid-template-rows: 64px minmax(0, 1fr) 228px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-running .dot,
+  .live-dot[data-live='true'],
+  .incident-marker .pulse {
+    animation: none;
+  }
+}

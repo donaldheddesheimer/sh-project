@@ -30,23 +30,22 @@ const RUN_TAG: Record<ScenarioStatus, { tone: string; icon: IconName; label: str
 }
 
 const PIPELINE: { title: string; desc: string; safety?: boolean }[] = [
-  { title: 'Snapshot', desc: 'Freeze the live SUMO network at the current second.' },
-  { title: 'Propose', desc: 'The response agent drafts signal splits, a green corridor and diversions.' },
+  { title: 'Snapshot', desc: 'Capture traffic and signal state now.' },
+  { title: 'Propose', desc: 'Draft timing, corridor and diversion options.' },
   {
     title: 'Validate',
-    desc: 'A deterministic safety validator rejects unsafe timings (minimum greens, clearances, cycle limits). Agents never set signal states: only a validated, simulated recommendation can be applied to the live city, and it is re-checked first.',
+    desc: 'Block unsafe timings before any branch runs.',
     safety: true,
   },
-  { title: 'Simulate', desc: 'Each surviving plan runs in its own branch over a 10-minute horizon, in parallel.' },
-  { title: 'Recommend', desc: 'Plans are compared on delay, queues, throughput and EMS response, against doing nothing.' },
+  { title: 'Simulate', desc: 'Test safe plans in parallel for 10 minutes.' },
+  { title: 'Recommend', desc: 'Compare results against doing nothing.' },
 ]
 
 function EmptyState({ incidentId, fixture }: { incidentId: string | null; fixture: boolean }) {
   return (
     <div className="empty-state">
       <p>
-        <strong>Analyze Response</strong> branches the digital twin and tests candidate responses before anything
-        touches the street.
+        <strong>From incident to decision.</strong> Test response plans against a live twin snapshot.
       </p>
       <ol className="pipeline">
         {PIPELINE.map((step, i) => (
@@ -159,7 +158,7 @@ export function ResponsePlans(props: Props) {
 
   if (!run) {
     return (
-      <Section title="Response plans" icon="branch">
+      <Section id="response-plans" title="Response plans" icon="branch">
         <EmptyState incidentId={incidentId} fixture={fixture} />
       </Section>
     )
@@ -170,7 +169,7 @@ export function ResponsePlans(props: Props) {
   const recommended = rec ? run.candidates.find((c) => c.id === rec.candidate_id) : undefined
 
   return (
-    <Section title="Response plans" icon="branch" meta={run.id}>
+    <Section id="response-plans" title="Response plans" icon="branch" meta={run.id}>
       <RunHeader run={run} />
 
       {run.error && (

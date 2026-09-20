@@ -2,18 +2,20 @@ import { useState, type ReactNode } from 'react'
 import { Icon, type IconName } from './Icon'
 
 interface Props {
+  id?: string
   title: string
   icon?: IconName
   meta?: ReactNode
   className?: string
+  defaultOpen?: boolean
   children: ReactNode
 }
 
 /** Collapsible side-panel section with a sticky title bar. */
-export function Section({ title, icon, meta, className, children }: Props) {
-  const [open, setOpen] = useState(true)
+export function Section({ id, title, icon, meta, className, defaultOpen = true, children }: Props) {
+  const [open, setOpen] = useState(defaultOpen)
   return (
-    <section className={className ? `panel ${className}` : 'panel'}>
+    <section id={id} className={className ? `panel ${className}` : 'panel'}>
       <header className="panel-head">
         <button className="panel-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} className="panel-chevron" />

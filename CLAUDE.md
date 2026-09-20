@@ -92,7 +92,7 @@ venv directly (this is what works in PowerShell or Git Bash):
 | WebSocket client, scenario state | [frontend/src/hooks/useCityStream.ts](frontend/src/hooks/useCityStream.ts) |
 | Response-plan UI and derived deltas | `frontend/src/components/plans/`, `frontend/src/lib/plans.ts` |
 | Episode panel (scripts, step strip, lesson) | [frontend/src/components/EpisodePanel.tsx](frontend/src/components/EpisodePanel.tsx) |
-| Theme | one file, [frontend/src/styles.css](frontend/src/styles.css), driven by CSS variables |
+| Theme | [frontend/src/styles.css](frontend/src/styles.css) for base styles; [frontend/src/console.css](frontend/src/console.css) for the operations presentation and responsive layout |
 
 ## Rules the design depends on
 

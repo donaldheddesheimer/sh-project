@@ -13,6 +13,8 @@ interface Props {
   busy: boolean
   colors: Record<string, string>
   phaseLabels: PhaseLabels
+  /** Intersection id -> street names, so plans say where they act in words. */
+  names: Record<string, string>
   activeId: string | null
   selectedId: string | null
   onHover: (id: string | null) => void
@@ -70,14 +72,16 @@ function EmptyState({ incidentId, fixture }: { incidentId: string | null; fixtur
         <div className="callout callout-success">
           <Icon name="check" size={14} />
           <div className="callout-body">
-            <strong>{incidentId}</strong> is active. Ready to analyze.
+            <strong>{incidentId}</strong> is active. Press <strong>Analyze</strong> on the map to test response plans;
+            if it is not offered, arm a script in the Agent view.
           </div>
         </div>
       ) : (
         <div className="callout callout-caution">
           <Icon name="warning" size={14} />
           <div className="callout-body">
-            <strong>Needs an active incident.</strong> Inject a collision, then click Analyze Response.
+            <strong>Needs an active incident.</strong> Inject a collision; the map then offers <strong>Analyze</strong>.
+            If it does not, arm a script in the Agent view.
           </div>
         </div>
       )}
@@ -153,8 +157,9 @@ function RunHeader({ run }: { run: ScenarioRun }) {
 }
 
 export function ResponsePlans(props: Props) {
-  const { run, incidentId, fixture, busy, colors, phaseLabels, activeId, selectedId, onHover, onSelect, onImplement } =
-    props
+  const {
+    run, incidentId, fixture, busy, colors, phaseLabels, names, activeId, selectedId, onHover, onSelect, onImplement,
+  } = props
 
   if (!run) {
     return (
@@ -231,10 +236,16 @@ onKeyDown={(e) => {
 
       {rec && !run.implementation && run.status === 'completed' && !fixture && (
         <div className="rec-apply">
-          <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onImplement(run.id)}>
-            <Icon name="bolt" size={12} /> Apply to live signals
-          </button>
-          <span>Operator path. An autonomous agent applies its own recommendation.</span>
+          {incidentId != null ? (
+            <>
+              <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onImplement(run.id)}>
+                <Icon name="bolt" size={12} /> Apply to live signals
+              </button>
+              <span>Operator path. An autonomous agent applies its own recommendation.</span>
+            </>
+          ) : (
+            <span>The incident was cleared, so this analysis can no longer be applied to the live signals.</span>
+          )}
         </div>
       )}
 
@@ -261,6 +272,7 @@ onKeyDown={(e) => {
               active={activeId === c.id}
               selected={selectedId === c.id}
               phaseLabels={phaseLabels}
+              names={names}
               onHover={onHover}
               onSelect={onSelect}
             />

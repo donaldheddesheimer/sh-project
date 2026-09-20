@@ -68,6 +68,13 @@ class SmartCityProvider(ABC):
         """Record whether an external incident currently has a disruption in the twin."""
         return None
 
+    def disruptions_of(self, incident_id: str) -> list[str] | None:
+        """Ids of the twin's disruptions that make up this incident, or None when the provider cannot say.
+
+        Clear scene removes exactly these, so a second crash on the same road stays a separate incident.
+        """
+        return None
+
 
 class SmartCityStatus(BaseModel):
     ok: bool

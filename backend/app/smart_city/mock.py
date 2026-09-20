@@ -11,11 +11,17 @@ from __future__ import annotations
 import itertools
 from datetime import UTC, datetime
 
-from app.models.domain import Disruption, Incident, IncidentLocation, IncidentStatus, NetworkState, Severity
+from app.models.domain import (
+    Disruption,
+    Incident,
+    IncidentLocation,
+    IncidentStatus,
+    NetworkState,
+    Severity,
+    lane_name,
+)
 from app.simulation.network import RoadNetwork
 from app.smart_city.base import Camera, EventSink, SmartCityEvent, SmartCityEventKind, SmartCityProvider
-
-LANE_NAMES = {0: "right lane", 1: "left lane"}
 
 
 class MockSmartCityProvider(SmartCityProvider):
@@ -74,6 +80,9 @@ class MockSmartCityProvider(SmartCityProvider):
     async def list_cameras(self) -> list[Camera]:
         return list(self._cameras)
 
+    def disruptions_of(self, incident_id: str) -> list[str] | None:
+        return [disruption for disruption, owner in self._by_disruption.items() if owner == incident_id]
+
     # ----------------------------------------------------------------- helpers
 
     async def _publish(self, kind: SmartCityEventKind, incident: Incident) -> None:
@@ -91,7 +100,7 @@ class MockSmartCityProvider(SmartCityProvider):
         if len(d.lanes) == d.total_lanes:
             blocked = "all lanes"
         else:
-            blocked = ", ".join(LANE_NAMES.get(lane, f"lane {lane + 1}") for lane in d.lanes)
+            blocked = ", ".join(lane_name(lane, d.total_lanes) for lane in d.lanes)
         n_vehicles = len(d.vehicle_ids)
         nearest = downstream or upstream
         return Incident(

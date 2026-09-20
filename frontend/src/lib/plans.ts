@@ -16,8 +16,10 @@ export type PhaseLabels = Record<string, Record<number, string>>
 // ---- colors -----------------------------------------------------------------------------
 
 // Categorical series slots (dataviz reference palette, dark steps), in their validated order.
-// Validated against the panel surface with the dataviz skill's validate_palette.js.
-export const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#00a000', '#9085e9']
+// Validated against the panel surface with the dataviz skill's validate_palette.js, except the eighth slot (cyan),
+// added because the mock proposes baseline plus eight other plans on the grid, and a ninth color would otherwise
+// fall back to the gray that sits next to the baseline's. Not run through the validator: check it when you next can.
+export const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#00a000', '#9085e9', '#2bb3c9']
 export const BASELINE_COLOR = '#8f99a8'
 const OVERFLOW_COLOR = '#5f6b7c' // never generate a hue past the palette
 
@@ -61,10 +63,17 @@ export interface AnalyzeState {
 }
 
 // Episode statuses in which the autonomous agent owns the response (mirrors WORKING_STATUSES in models/episode.py).
-const WORKING: ReadonlySet<EpisodeStatus> = new Set(['detected', 'analyzing', 'monitoring'])
+const WORKING: ReadonlySet<EpisodeStatus> = new Set(['awaiting', 'detected', 'analyzing', 'monitoring'])
 
 export const episodeWorking = (episode: Episode | null): episode is Episode =>
   episode != null && WORKING.has(episode.status)
+
+// Statuses in which an episode is under way (ACTIVE_STATUSES in models/episode.py). `armed` is left out: it only
+// means a script is loaded, and with the operator script armed at startup it would light the rail's count forever.
+const ACTIVE: ReadonlySet<EpisodeStatus> = new Set<EpisodeStatus>([...WORKING, 'reviewing'])
+
+export const episodeInProgress = (episode: Episode | null): episode is Episode =>
+  episode != null && ACTIVE.has(episode.status)
 
 // Deliberately narrower than WORKING: by `monitoring` the plan is chosen and applied, so the
 // agent is measuring, not deciding. Keep this the only definition of "the agent is deciding".
@@ -127,7 +136,9 @@ export interface PlanChip {
   title: string
 }
 
-export function planChips(c: SimulationCandidate, phaseLabels: PhaseLabels): PlanChip[] {
+/** `names` maps an intersection id to a street name; a junction with no entry is shown by its id. */
+export function planChips(c: SimulationCandidate, phaseLabels: PhaseLabels, names: Record<string, string> = {}): PlanChip[] {
+  const nameOf = (id: string) => names[id] ?? id
   const chips: PlanChip[] = []
   for (const p of c.policies) {
     const phases = Object.entries(p.phase_durations)
@@ -143,20 +154,24 @@ if (phases.length > 0) {
   )
 }
 if (p.offset_s != null) changes.push(`offset ${Math.round(p.offset_s)}s`)
-const label = `${p.intersection_id}${changes.length ? ` · ${changes.join(' · ')}` : ''}`
+const label = `${nameOf(p.intersection_id)}${changes.length ? ` · ${changes.join(' · ')}` : ''}`
 const detail = [
   ...phases.map((ph) => `phase ${ph.index}${ph.label ? ` (${ph.label})` : ''} ${Math.round(ph.seconds)}s green`),
   ...(p.offset_s != null ? [`offset ${Math.round(p.offset_s)}s`] : []),
 ].join(', ')
-chips.push({ kind: 'timing', label, title: `${p.intersection_id}: ${detail || 'timing update'}. ${p.reason}` })
+chips.push({
+  kind: 'timing',
+  label,
+  title: `${nameOf(p.intersection_id)} (${p.intersection_id}): ${detail || 'timing update'}. ${p.reason}`,
+})
   }
   if (c.corridor) {
     const ids = c.corridor.intersection_ids
     chips.push({
       kind: 'corridor',
-      label: ids.length ? `Green corridor · ${ids.join(', ')}` : 'Green corridor',
+      label: ids.length ? `Green corridor · ${ids.map(nameOf).join(', ')}` : 'Green corridor',
       title:
-        `Pre-empts ${ids.length ? ids.join(', ') : 'every signal on a responder’s route'} within ` +
+        `Pre-empts ${ids.length ? ids.map(nameOf).join(', ') : 'every signal on a responder’s route'} within ` +
         `${Math.round(c.corridor.detection_distance_m)} m; conflicting green serves ≥ ${Math.round(c.corridor.min_served_green_s)}s ` +
         `first, holds ≤ ${Math.round(c.corridor.max_hold_s)}s. ${c.corridor.reason}`,
     })

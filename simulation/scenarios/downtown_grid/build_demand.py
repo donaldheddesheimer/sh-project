@@ -32,7 +32,8 @@ BOUNDARY = {
     "NC": ("NC_C3", "C3_NC", 120, "SC"),
 }
 STRAIGHT_SHARE = 0.7
-HORIZON_S = 24 * 3600
+# Flows stop at this time and the network then empties for good (see the Oakland builder).
+HORIZON_S = 7 * 24 * 3600
 
 
 def flows() -> list[tuple[str, str, str, float]]:

@@ -5,14 +5,16 @@ starts or supersedes an episode:
 
 - ``armed``: the script is loaded; the live runner fires scheduled crashes at their simulation time, or an empty
   script waits for an operator-injected collision;
+- ``awaiting``: an operator script (no scheduled crash) detected a collision; the simulation is paused and the
+  episode waits for ``analyze()`` (the console's Analyze button). A scripted crash skips this step;
 - ``detected`` → ``analyzing``: the analyst tests plans in parallel branches and recommends one;
-- ``monitoring``: the recommendation is live (applied by the agent, or by this service if the agent did not) and
-  the monitor caches live samples for a fixed number of simulated seconds;
+- ``monitoring``: the recommendation is live (applied by the agent, or by this service if the agent did not), the
+  simulation resumes and the monitor caches live samples for a fixed number of simulated seconds;
 - ``reviewing`` → ``completed``: code builds the scorecard, the reviewer writes the lesson, the lesson is stored,
   and the live simulation is paused (EPISODE_PAUSE_ON_FINISH).
 
 The two-crash rule: a crash detected while an episode is ``detected``, ``analyzing`` or ``monitoring`` supersedes
-it. Its agent is cancelled, its analysis abandoned and its monitor stopped; no lesson is stored for it; a new
+it. A crash detected while it is ``awaiting`` joins it instead: nothing has started yet. Its agent is cancelled, its analysis abandoned and its monitor stopped; no lesson is stored for it; a new
 episode takes over every active incident. A plan it already applied stays on the live signals. An episode
 already ``reviewing`` finishes while the new one starts. A reset or a cleared scene aborts the working episode.
 
@@ -42,7 +44,6 @@ from app.learning.store import ExperienceStore, incident_features
 from app.models.api import EventLevel
 from app.models.domain import Incident
 from app.models.episode import (
-    ACTIVE_STATUSES,
     WORKING_STATUSES,
     DemoInfo,
     Episode,
@@ -65,6 +66,7 @@ from app.smart_city.base import SmartCityEvent, SmartCityEventKind
 log = logging.getLogger(__name__)
 
 HISTORY = 20  # episodes kept for GET /api/episodes
+OPERATOR_SCRIPT = "operator-collision"  # armed at startup on the twin's own crashes, so any injected collision awaits
 
 
 class Analyst(Protocol):
@@ -142,6 +144,14 @@ class EpisodeService:
                 return ep
         raise KeyError(episode_id)
 
+    def blocks_refresh(self) -> bool:
+        """True while the live city must not be reset behind the agent's back: an episode is past 'armed', or a
+        scheduled script is armed (a reset replays its crash and would start an unattended episode)."""
+        ep = self._working
+        if ep is not None and ep.status in WORKING_STATUSES:
+            return True
+        return self._script is not None and bool(self._script.crashes)
+
     def info(self) -> DemoInfo:
         return DemoInfo(
             scripts=[
@@ -158,10 +168,6 @@ class EpisodeService:
             analyst=self._analyst.name,
             analyst_model=self._team.analyst_model,
             reviewer_model=self._team.reviewer_model,
-            analysts=[
-                {"id": name, "model": team.analyst_model, "reviewer_model": team.reviewer_model}
-                for name, team in self._teams.items()
-            ],
             current=self._episodes[-1] if self._episodes else None,
             memory=self._store.stats(),
         )
@@ -169,9 +175,16 @@ class EpisodeService:
     # -------------------------------------------------------------- control
 
     def arm_at_startup(self) -> None:
-        """DEMO_SCRIPT: arm before the simulation boots, so the first warm-up already plays the early crashes."""
-        if self._settings.demo_script:
-            self._load(self._settings.demo_script)
+        """Arm before the simulation boots, so the first warm-up already plays the early crashes.
+
+        With no DEMO_SCRIPT the operator script is armed whenever the twin is the crash source, so every collision
+        injected in the console pauses the city and waits for Analyze. A real Smart City feed is analyzed by hand.
+        """
+        script_id = self._settings.demo_script
+        if script_id is None and self._city.smart_city.simulation_is_source and OPERATOR_SCRIPT in self._city.scenario.demos:
+            script_id = OPERATOR_SCRIPT
+        if script_id:
+            self._load(script_id)
             self._arm()
 
     async def start_demo(self, script_id: str | None = None, memory_mode: MemoryMode = "use") -> Episode:
@@ -217,15 +230,16 @@ class EpisodeService:
             self._abort(self._working, "the demo was stopped")
         return self.info()
 
-    def select_analyst(self, name: str) -> DemoInfo:
-        """Select the analyst/reviewer used by future episodes; never switch a live episode mid-run."""
-        if name not in self._teams:
-            raise KeyError(name)
-        if self._working is not None or any(ep.status in ACTIVE_STATUSES for ep in self._episodes):
-            raise RuntimeError("stop or finish the current episode before changing the analyst")
-        self._select_team(name)
-        self._city.events.add(EventLevel.INFO, f"Autonomous analyst changed to {name}", self._city.sim_time)
-        return self.info()
+    async def analyze(self, memory_mode: MemoryMode | None = None) -> Episode:
+        """The operator's go-ahead for a collision the paused city is waiting on: recall, analyze, apply, monitor."""
+        ep = self._working
+        if ep is None or ep.status is not EpisodeStatus.AWAITING:
+            raise RuntimeError("no collision is waiting for analysis")
+        if memory_mode is not None:
+            self._memory_mode = ep.memory_mode = memory_mode
+        self._step(ep, EpisodeStatus.DETECTED, f"the operator requested a response; the {self._analyst.name} analyst responds")
+        self._agent = self._spawn(self._drive(ep))
+        return ep
 
     def _load(self, script_id: str) -> DemoScript:
         script = self._city.scenario.demos.get(script_id)
@@ -262,15 +276,29 @@ class EpisodeService:
         if event.kind is not SmartCityEventKind.INCIDENT_DETECTED or self._script is None:
             return
         active = [i.id for i in sorted(await self._city.smart_city.list_incidents(), key=lambda i: i.timestamp)]
+        # an operator script has no scheduled crash: the collision pauses the city until Analyze is pressed
+        gated = not self._script.crashes
+        if ep is not None and ep.status is EpisodeStatus.AWAITING:
+            ep.incident_ids = active  # nothing has started, so a second crash just joins the same wait
+            self._step(ep, EpisodeStatus.AWAITING, self._awaiting_message(active))
+            return
         if ep is not None and ep.status is EpisodeStatus.ARMED:
             ep.incident_ids = active
         else:
             previous = ep if ep is not None and ep.status in WORKING_STATUSES else None
-            ep = self._new(EpisodeStatus.DETECTED, active, supersedes=previous.id if previous else None)
+            ep = self._new(
+                EpisodeStatus.AWAITING if gated else EpisodeStatus.DETECTED,
+                active,
+                supersedes=previous.id if previous else None,
+            )
             if previous is not None:
                 self._supersede(previous, ep, incident.id)
             self._working = ep
         ep.detected_sim_time = incident.sim_time
+        if gated:
+            self._step(ep, EpisodeStatus.AWAITING, self._awaiting_message(active))
+            self._spawn(self._city.set_running(False))  # the crash is frozen while the operator looks at it
+            return
         self._step(ep, EpisodeStatus.DETECTED, f"{' + '.join(active)} detected; the {self._analyst.name} analyst responds")
         self._agent = self._spawn(self._drive(ep))
 
@@ -308,6 +336,8 @@ class EpisodeService:
             f"{impl.candidate_name} is live (applied by {impl.implemented_by}); watching it for "
             f"{ep.monitor_s:.0f} simulated seconds",
         )
+        # the monitor only samples while simulation time advances, and the city was paused for the operator
+        self._spawn(self._city.set_running(True))
 
     # --------------------------------------------------------- the episode
 
@@ -443,6 +473,10 @@ class EpisodeService:
         )
 
     def _abort(self, ep: Episode, reason: str) -> None:
+        if ep.status is EpisodeStatus.AWAITING:
+            # the city was paused for this episode; nothing else will resume it, and a paused city never
+            # detects the next collision (detection is counted in simulation time)
+            self._spawn(self._city.set_running(True))
         if ep is self._working:
             self._working = None
             self._cancel_agent()
@@ -492,6 +526,9 @@ class EpisodeService:
         self._city.publish_episode(ep)
 
     # -------------------------------------------------------------- helpers
+
+    def _awaiting_message(self, active: list[str]) -> str:
+        return f"{' + '.join(active)} detected; the simulation is paused until an operator presses Analyze"
 
     def _monitor_s(self, horizon_s: float | None) -> float:
         script_s = self._script.monitor_s if self._script else None

@@ -13,9 +13,10 @@ interface Props {
 }
 
 // The happy path of an episode (EpisodeStatus in backend/app/models/episode.py); the other statuses end it early.
-const FLOW: EpisodeStatus[] = ['armed', 'detected', 'analyzing', 'monitoring', 'reviewing', 'completed']
+const FLOW: EpisodeStatus[] = ['armed', 'awaiting', 'detected', 'analyzing', 'monitoring', 'reviewing', 'completed']
 const FLOW_LABEL: Record<string, string> = {
   armed: 'Armed',
+  awaiting: 'Paused',
   detected: 'Detect',
   analyzing: 'Analyze',
   monitoring: 'Monitor',
@@ -25,6 +26,7 @@ const FLOW_LABEL: Record<string, string> = {
 
 const STATUS_TAG: Record<EpisodeStatus, { tone: string; icon: IconName }> = {
   armed: { tone: 'tag-minimal', icon: 'pending' },
+  awaiting: { tone: 'tag-caution', icon: 'pause' },
   detected: { tone: 'tag-primary', icon: 'spinner' },
   analyzing: { tone: 'tag-primary', icon: 'spinner' },
   monitoring: { tone: 'tag-primary', icon: 'spinner' },
@@ -65,7 +67,7 @@ function Flow({ episode }: { episode: Episode }) {
 
 function EpisodeCard({ episode }: { episode: Episode }) {
   const tag = STATUS_TAG[episode.status]
-  const working = ['detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status)
+  const working = ['detected', 'analyzing', 'monitoring', 'reviewing'].includes(episode.status) // awaiting is idle, not busy
   const impl = episode.implementation
   const sc = episode.scorecard
   const lesson = episode.lesson
@@ -286,7 +288,13 @@ export function EpisodePanel({ episode, demo, busy, onClearMemory }: Props) {
       </div>
       {awaitingOperator && episode?.status === 'armed' && (
         <div className="episode-next-action" role="status">
-          Agent armed. Click <strong>Inject collision</strong> in the top bar when you are ready.
+          Agent armed. Click <strong>Inject collision</strong> in the top bar; the city pauses and an{' '}
+          <strong>Analyze</strong> button appears on the map.
+        </div>
+      )}
+      {episode?.status === 'awaiting' && (
+        <div className="episode-next-action" role="status">
+          Collision detected and the simulation is paused. Press <strong>Analyze</strong> on the map to start the response.
         </div>
       )}
       {episode ? (

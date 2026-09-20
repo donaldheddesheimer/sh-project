@@ -25,6 +25,10 @@ from app.agent.briefing import PLAN_DESIGN, candidate_row, metrics_row
 from app.models.domain import SimulationCandidate
 
 
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}  # busy or briefly broken; the request itself is fine
+RETRY_PAUSES_S = (2.0, 6.0, 12.0)  # pause before the next attempt; the last entry is never waited out
+
+
 class NimError(RuntimeError):
     pass
 
@@ -74,11 +78,13 @@ class NimClient:
             body["tool_choice"] = "auto"
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         async with httpx2.AsyncClient(timeout=self._timeout_s) as http:
-            for attempt in range(2):
+            # The hosted endpoint answers 503 "Service temporarily overloaded" under load, and the large analyst
+            # model is the one that gets it. Half a second is not long enough for that queue to drain, so back off.
+            for attempt, pause in enumerate(RETRY_PAUSES_S):
                 response = await http.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
-                if response.status_code not in {500, 502, 503, 504} or attempt == 1:
+                if response.status_code not in RETRYABLE_STATUS or attempt == len(RETRY_PAUSES_S) - 1:
                     break
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(pause)
         if response.status_code >= 400:
             raise NimError(f"NIM returned {response.status_code}: {response.text[:300]}")
         try:
@@ -90,8 +96,10 @@ class NimClient:
 class NemotronAgentProvider(AgentProvider):
     name = "nemotron"
 
-    def __init__(self, base_url: str, model: str, api_key: str | None, candidate_limit: int):
-        self._nim = NimClient(base_url, model, api_key, json_mode=True)
+    def __init__(
+        self, base_url: str, model: str, api_key: str | None, candidate_limit: int, timeout_s: float = 120.0
+    ):
+        self._nim = NimClient(base_url, model, api_key, timeout_s, json_mode=True)
         self._candidate_limit = candidate_limit
         self._diagnostics: list[str] = []
 

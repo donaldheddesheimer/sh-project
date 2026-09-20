@@ -2,109 +2,181 @@
 
 # Traffic Operations Center
 
-**Simulation-backed incident response for safer traffic operations**
+### A city cannot A/B test an emergency. This one can.
 
-Detect a disruption, test response plans in parallel digital twins, and apply a validated
-recommendation to the live city—all from one operations console.
+**Detect the incident. Rehearse every response. Commit only the safe one.**
+
+[Run it locally](#run-the-city) · [See the demo](#the-three-minute-demo) · [Explore the architecture](docs/architecture.md)
 
 </div>
 
-![Traffic Operations Center showing a collision and EMS response in Oakland, Pittsburgh](docs/screenshots/map-first-demo-oakland.png)
+![Traffic Operations Center tracking a collision and EMS response in Oakland, Pittsburgh](docs/screenshots/map-first-demo-oakland.png)
+
+<div align="center">
+
+`LIVE CITY` → `SNAPSHOT` → `8 CANDIDATES` → `SAFETY GATE` → `BEST OUTCOME`
+
+</div>
+
+---
+
+## One crash. Eight futures. One decision.
+
+When a collision blocks a lane, traffic operators usually have to act with incomplete
+information. Change the signals? Divert traffic? Clear a corridor for EMS? Every option has
+side effects, and the real city is the worst place to discover them.
+
+Traffic Operations Center turns that decision into an experiment.
+
+It keeps a live traffic twin running, freezes the city at the instant of an incident, then
+launches fresh [Eclipse SUMO](https://eclipse.dev/sumo/) branches in parallel. Each branch
+tries a different response against the exact same traffic, signal state, and random state.
+The operator gets evidence, not a guess: delay, queues, throughput, EMS response time, safety
+findings, and a recommendation that is still advisory until someone chooses to apply it.
+
+> **The live map never becomes the experiment.** Every candidate is isolated. Every signal
+> plan is validated. Applying a response is a separate, gated action.
+
+## What happens under the hood
+
+![Incident response workflow: detect, evaluate, decide, and learn](docs/assets/incident-response-flow.svg)
+
+1. **Detect** — a collision arrives from the simulated smart-city feed.
+2. **Capture** — the system snapshots vehicles, signals, incidents, routes, and RNG state.
+3. **Branch** — a baseline and response plans run in fresh SUMO processes on four workers.
+4. **Challenge** — unsafe plans are rejected before simulation; runtime transitions are
+   checked again inside every branch.
+5. **Compare** — the console ranks outcomes across delay, queue length, throughput, and EMS
+   response time.
+6. **Commit** — the chosen plan is revalidated before it can touch the live twin.
+7. **Learn** — an autonomous episode watches the real outcome, scores the prediction, and
+   stores a lesson for the next incident.
+
+## The proof, not the pitch
+
+| | |
+|---|---|
+| **8 candidates** | evaluated in the latest staged autonomous run |
+| **4 parallel workers** | each candidate restored into a fresh SUMO process |
+| **2,778 signal transitions** | audited across branches with **0 unsafe changes** |
+| **26 seconds** | measured full mock analysis, including seven simulated branches¹ |
+| **2 city models** | a deterministic 3×3 grid and Pittsburgh's Oakland street network |
+
+<sub>¹ Measured on the documented 2026-09-19 run; performance varies by machine and incident state.</sub>
+
+## The three-minute demo
+
+1. Pick **Pittsburgh** for the real street network or **3×3 Grid** for predictable timing.
+2. Hit **Inject collision** and watch the queue spill backward through the city.
+3. Choose **Analyze Response**. The live map stays live while isolated futures run in parallel.
+4. Open **Scenario comparison** to inspect the rejected unsafe plan and compare every valid
+   response against doing nothing.
+5. Apply the recommendation, dispatch EMS, and watch the outcome unfold on the live map.
+
+Want the system to run the whole loop? Open **Agent**, arm the `operator-collision` episode,
+then inject the crash. It will detect, analyze, implement, monitor, review, and remember the
+result without changing the safety boundary.
+
+The full [demo guide](docs/demo-guide.md) includes presenter cues, expected screen states,
+and the credit-conscious order for Mock, Claude, and Nemotron.
+
+## Why it is different
+
+### It simulates the decision, not just the traffic
+
+Most traffic demos stop at visualization. This one creates a reproducible decision point,
+runs interventions from that exact point, and shows their deltas against a no-action baseline.
+
+### Safety is code, not a prompt
+
+Model output enters the system as untrusted plan data. Deterministic rules enforce minimum
+greens, pedestrian timing, yellow and all-red clearance, cycle limits, corridor bounds, and
+legal phase transitions. The default Mock demo deliberately proposes an unsafe
+`aggressive-flush` candidate so the gate proves itself on screen.
+
+### The recommendation has to survive reality
+
+After a plan is applied, the episode monitors what actually happened. A reviewer compares the
+predicted and realized outcome, assigns a verdict, and writes a compact lesson that can shape
+the next response. It is a closed loop, not a one-shot answer.
+
+## Run the city
+
+You need Python 3.11+, Node.js 22.12+, and `make` on macOS or Linux. SUMO comes from PyPI;
+no system SUMO install or GPU is required.
+
+```bash
+git clone https://github.com/donaldheddesheimer/traffic-sim.git
+cd traffic-sim
+make setup
+make dev
+```
+
+Then open **[localhost:5173](http://localhost:5173)**. The API and interactive schema live at
+**[localhost:8000/docs](http://localhost:8000/docs)**.
+
+The application boots with the offline Mock analyst, so the full workflow costs nothing to
+run. To enable a model-backed analyst:
+
+```bash
+cp .env.demo.example .env
+```
+
+Add an Anthropic or NVIDIA key, restart, and choose the provider from the **Agent** workspace.
+See [configuration](docs/configuration.md) for exact variables and Windows commands.
+
+## Architecture
+
+```text
+                       ┌──────── isolated scenario branches ────────┐
+                       │                                             │
+Smart-city feed ──► live SUMO twin ──► snapshot ──► validate ──► simulate × N
+                         │                                      │
+                         │ WebSocket                            ▼
+                         └────────► operations console ◄── compare + recommend
+                                           │
+                                           └── gated apply ──► live SUMO twin
+```
+
+| Layer | Built with | Job |
+|---|---|---|
+| Operations console | React, TypeScript, MapLibre GL | Live map, incident controls, branch comparison, learning views |
+| Application | FastAPI, Pydantic, WebSocket | State orchestration, streaming, provider selection |
+| Digital twin | Eclipse SUMO, TraCI | Live city and reproducible response experiments |
+| Agent interface | Model Context Protocol | Analysis tools with validation and implementation gates |
+| Analysts | Mock, Claude, NVIDIA Nemotron | Propose, compare, explain, review |
+| Deployment | Docker, Google Cloud Run | Single-container UI, API, MCP, WebSocket, and simulation |
 
 <p align="center">
   <img alt="React" src="https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white">
   <img alt="MapLibre" src="https://img.shields.io/badge/MapLibre-396CB2?style=flat-square&logo=maplibre&logoColor=white">
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white">
-  <img alt="Python" src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="Eclipse SUMO" src="https://img.shields.io/badge/Eclipse_SUMO-4C8CBF?style=flat-square">
   <img alt="Anthropic Claude" src="https://img.shields.io/badge/Claude-D97757?style=flat-square&logo=anthropic&logoColor=white">
   <img alt="NVIDIA Nemotron" src="https://img.shields.io/badge/Nemotron-76B900?style=flat-square&logo=nvidia&logoColor=white">
   <img alt="Google Cloud" src="https://img.shields.io/badge/Cloud_Run-4285F4?style=flat-square&logo=googlecloud&logoColor=white">
 </p>
 
-Traffic Operations Center is an interactive proving ground for AI-assisted traffic response.
-A FastAPI service maintains a live [Eclipse SUMO](https://eclipse.dev/sumo/) city twin and
-streams it to a React/MapLibre console. When an incident occurs, the system snapshots the
-city and runs each proposed response in a fresh SUMO process before recommending anything.
+## Go deeper
 
-The same workflow can be operated manually or driven by an autonomous analyst. The offline
-Mock analyst costs nothing; Claude and NVIDIA Nemotron can be selected at runtime when their
-API keys are configured. Deterministic safety validation and a single gated implementor sit
-between every analyst and the live simulation.
+- **[Demo guide](docs/demo-guide.md)** — the operator and autonomous presentation paths
+- **[Architecture](docs/architecture.md)** — services, data flow, safety boundaries, and pipeline stages
+- **[MCP specification](docs/specs/scenario-engine-mcp.md)** — the agent-facing tool contract
+- **[Configuration](docs/configuration.md)** — providers, API keys, and local commands
+- **[Cloud deployment](docs/deployment.md)** — Cloud Run and Secret Manager
+- **[Project status](docs/project-status.md)** — validation record, limitations, and remaining gates
 
-> **Project status:** the local Mock workflow has completed end to end. Claude/Nemotron
-> inference, live NVIDIA VSS input, and the Cloud Run deployment still require qualification.
-> See [project status](docs/project-status.md) for the evidence and remaining demo gates.
+## Current scope
 
-## From incident to evidence
+The offline Mock workflow and one local Nemotron episode are validated end to end. Claude,
+live NVIDIA VSS input, and the public Cloud Run deployment remain qualification gates. Both
+bundled city models use synthetic demand, and this is a simulation environment, not production
+traffic-control software. The [project status](docs/project-status.md) keeps the evidence and
+open limitations explicit.
 
-![Incident response workflow: detect, evaluate, decide, and learn](docs/assets/incident-response-flow.svg)
+<div align="center">
 
-The console makes the separation visible: the map always shows the live city, while scenario
-cards and comparison charts show isolated branch results. Candidate plans include signal
-timing, an EMS green corridor, diversion advice, and combinations of those controls.
+**The safest way to change a city is to test the future first.**
 
-## Quick start
-
-Requirements: Python 3.11 or newer, Node.js 22.12 or newer, and `make` on macOS/Linux.
-SUMO is installed from PyPI, so a system SUMO package and GPU are not required.
-
-```bash
-make setup
-make dev
-```
-
-Open [http://localhost:5173](http://localhost:5173). The backend API and interactive schema
-are available at [http://localhost:8000/docs](http://localhost:8000/docs).
-
-For Claude or Nemotron, copy the credential template before starting:
-
-```bash
-cp .env.demo.example .env
-```
-
-Add either or both keys to `.env`, then use the **Analyst** selector in the Agent workspace.
-The application always starts on Mock, so no model credits are used until you deliberately
-select and run a model-backed episode. See [configuration](docs/configuration.md) for exact
-variables and Windows commands.
-
-## Demo in five steps
-
-1. Select **Pittsburgh** or **3×3 Grid** from the command bar.
-2. Click **Inject collision** and let congestion develop.
-3. Click **Analyze Response** to simulate the baseline and candidate plans.
-4. Inspect the safety decisions, KPI comparison, and recommended response.
-5. Apply the recommendation manually, or arm an Agent episode to run, monitor, and learn
-   from the entire loop.
-
-The [demo guide](docs/demo-guide.md) provides the presenter path, expected screen states,
-and the credit-conscious order for Mock, Claude, and Nemotron.
-
-## Toolchain
-
-| Layer | Technology | Responsibility |
-|---|---|---|
-| Operations UI | React, TypeScript, MapLibre GL | Live map, incident controls, scenario comparison, and learning views |
-| Application | FastAPI, Pydantic, WebSocket | State orchestration, REST API, provider selection, and live updates |
-| Digital twin | Eclipse SUMO, TraCI | Live traffic model and isolated response experiments |
-| Agent interface | Model Context Protocol | Analysis tools with validation and implementation gates |
-| Analysts | Mock, Claude, NVIDIA Nemotron | Propose, compare, explain, and review response plans |
-| Deployment | Docker, Google Cloud Run | Single-container console, API, MCP endpoint, WebSocket, and simulation |
-
-## Documentation
-
-- [Demo guide](docs/demo-guide.md) — operator and autonomous presentation paths
-- [Configuration](docs/configuration.md) — API keys, provider selection, and local commands
-- [Cloud deployment](docs/deployment.md) — Cloud Run and Secret Manager
-- [Architecture](docs/architecture.md) — services, safety boundaries, and pipeline stages
-- [MCP specification](docs/specs/scenario-engine-mcp.md) — agent-facing tool contract
-- [Project status](docs/project-status.md) — validation record, limitations, and next gates
-- [Archived project record](docs/project-history.md) — the former long-form README
-
-## Safety boundary
-
-Model output is treated as untrusted plan data. Signal timing and corridor requests pass a
-deterministic validator, every accepted candidate runs in an isolated branch, and only the
-gated implementor can modify the live twin. The application is a simulation and demonstration
-environment—not a production traffic-control system.
+</div>

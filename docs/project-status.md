@@ -24,6 +24,10 @@ the root README focused on the product while making implementation status explic
   running city with live vehicles and metrics.
 - A local Mock stage episode completed on 2026-09-20 with eight candidates, applied
   `corridor-plus-divert`, received an `effective` verdict, and wrote a readable lesson.
+- A local Nemotron stage episode completed end to end on 2026-09-20 with fallback disabled.
+  It proposed a valid plan after one correction retry, completed the baseline and candidate
+  branches in 16.7 seconds, applied the recommendation, monitored 600 simulated seconds, and
+  stored an `effective` Nemotron-reviewed lesson. All four NIM inference calls returned 200.
 - On 2026-09-19, authenticated catalog requests returned HTTP 200 for the configured
   Anthropic and NVIDIA credentials and included both configured model IDs. Those requests
   did not invoke a model or prove the inference/tool-calling path.
@@ -32,7 +36,7 @@ the root README focused on the product while making implementation status explic
 
 ## Not yet qualified
 
-- Claude or Nemotron inference through a full autonomous episode
+- Claude inference through a full autonomous episode
 - The Cloud Run image and public demo URL
 - Live NVIDIA VSS input or the VSS replay fixtures
 - A warm second episode proving useful recall in a controlled comparison
@@ -59,7 +63,8 @@ Complete these in order to minimize paid model usage:
 1. Rehearse the operator flow locally with Mock.
 2. Complete a cold Mock `operator-collision` episode.
 3. Complete one Claude episode and retain the exact episode/error record.
-4. Run Nemotron only after the shared model/MCP path succeeds with Claude.
+4. Keep the completed Nemotron episode as the qualification record; do not rerun it unless
+   a code change affects the structured provider path.
 5. Deploy the Mock configuration to Cloud Run and verify UI, API, WebSocket, and analysis.
 6. Attach secrets to Cloud Run and repeat one controlled model-backed episode.
 7. Rehearse the final presenter reset, including clearing memory and restoring Mock.

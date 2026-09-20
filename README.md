@@ -147,7 +147,9 @@ make frontend
   because Oakland's grid runs diagonally (`heading_offset_deg` in `scenario.json`). A label
   is display only: an approach is identified by its incoming segment, so the five-leg
   junction at Fifth Ave and Neville St keeps all its approaches even though two of them read
-  SB (the inspector adds the street name there). There is no basemap under the road network.
+  SB (the inspector adds the street name there). The rotation stays inside those labels — a
+  heading on a VSS report is a true bearing and is compared with the segment's own true
+  bearing (`smart_city/matching.py`). There is no basemap under the road network.
 
 ## Demo walkthrough: autonomous episode
 
@@ -668,7 +670,7 @@ docs/
 | POST | `/api/emergency/dispatch` | send EMS to the latest incident |
 | GET | `/api/signals/{intersection}` | active signal program |
 | GET | `/api/cameras`, `/api/events` | camera registry, ops log |
-| GET | `/api/smart-city/status` | provider health, last success/error, filtered and malformed document counts |
+| GET | `/api/smart-city/status` | provider health, last success/error, and how many documents the **latest** poll filtered as unconfirmed or could not read |
 | POST | `/api/scenarios/run` | start Analyze Response: `{"incident_id"?, "incident_ids"?, "horizon_s": 600, "ems_probe": true}` → `ScenarioRun` (202; 409 if no active incident or a run is open). `incident_ids` analyzes several crashes together |
 | GET | `/api/scenarios` | recent runs (newest first, last 10) |
 | GET | `/api/scenarios/{id}` | one run with candidates, metrics, timelines, the recommendation, and `implementation` once applied |

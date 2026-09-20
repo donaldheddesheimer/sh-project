@@ -56,16 +56,28 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
+    // Cameras exist only on the VSS path and appear once its first poll succeeds, so an empty
+    // list is normal at first. Back off to a minute so a mock backend, or a VSS endpoint that
+    // stays down, is not polled every 5 s for the life of the page.
+    let delay = 5000
+    const retry = () => {
+      timer = setTimeout(load, delay)
+      delay = Math.min(delay * 2, 60000)
+    }
     const load = () =>
       api
         .cameras()
         .then((items) => {
           if (cancelled) return
+          // Not calling setCameras on an empty payload keeps the array identity stable while waiting.
+          if (items.length === 0) {
+            retry()
+            return
+          }
           setCameras(items)
-          if (items.length === 0) timer = setTimeout(load, 5000)
         })
         .catch(() => {
-          if (!cancelled) timer = setTimeout(load, 5000)
+          if (!cancelled) retry()
         })
     void load()
     return () => {

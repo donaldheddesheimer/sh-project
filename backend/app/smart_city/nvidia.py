@@ -45,6 +45,8 @@ class NvidiaSmartCityProvider(SmartCityProvider):
         self._emit: EventSink | None = None
         self._task: asyncio.Task[None] | None = None
         self._incidents: dict[str, Incident] = {}
+        # The last incident the city was successfully told about, so a failed publish can be retried.
+        self._announced: dict[str, Incident] = {}
         self._by_external: dict[str, str] = {}
         self._ids = itertools.count(1)
         self._cameras: list[Camera] = []
@@ -150,12 +152,17 @@ class NvidiaSmartCityProvider(SmartCityProvider):
                 incident = outcome.incident
                 if incident is None or ext_id is None:
                     continue
+                # Both counts mean "as of the latest poll", so a document that recovers stops counting.
+                self._filtered.discard(marker)
+                self._malformed.discard(marker)
                 mapped.append((ext_id, incident))
             except Exception as exc:
+                # One unreadable document must not drop the rest of the batch. It stays in the upstream
+                # feed, so re-raising would fail every later poll too and stop incident input for good.
                 if marker not in self._malformed:
                     log.warning("Ignoring malformed VSS incident %s: %s", marker, exc)
                 self._malformed.add(marker)
-                raise RuntimeError(f"malformed VSS incident {marker}: {exc}") from exc
+                continue
 
         for ext_id, incident in mapped:
             internal_id = self._by_external.get(ext_id)
@@ -165,14 +172,34 @@ class NvidiaSmartCityProvider(SmartCityProvider):
                 incident.id = internal_id
             if previous and previous.location.match and incident.location.match:
                 incident.location.match.mirrored = previous.location.match.mirrored
+            # The cache is written first because CityService reconciles on the event below and reads the
+            # incident back through list_incidents(); announcing first would mirror nothing.
             self._by_external[ext_id] = internal_id
             self._incidents[internal_id] = incident
-            if previous is None:
-                await self._publish(SmartCityEventKind.INCIDENT_DETECTED, incident)
-            elif incident.status is IncidentStatus.CLEARED and previous.status is IncidentStatus.ACTIVE:
-                await self._publish(SmartCityEventKind.INCIDENT_CLEARED, incident)
-            elif incident.model_dump() != previous.model_dump():
-                await self._publish(SmartCityEventKind.INCIDENT_UPDATED, incident)
+            await self._announce(internal_id, incident)
+
+    async def _announce(self, internal_id: str, incident: Incident) -> None:
+        """Publish what changed since the city was last told, and keep quiet when nothing did.
+
+        Compared against the last *announced* incident rather than the cached one: a listener that
+        raises leaves the announcement unrecorded, so the next poll retries it as the same kind
+        instead of losing a detection or a clear.
+        """
+        announced = self._announced.get(internal_id)
+        if announced is None:
+            kind = SmartCityEventKind.INCIDENT_DETECTED
+        elif incident.status is IncidentStatus.CLEARED and announced.status is IncidentStatus.ACTIVE:
+            kind = SmartCityEventKind.INCIDENT_CLEARED
+        elif incident.model_dump() != announced.model_dump():
+            kind = SmartCityEventKind.INCIDENT_UPDATED
+        else:
+            return
+        try:
+            await self._publish(kind, incident)
+        except Exception:  # noqa: BLE001 - a listener failure is not an endpoint failure
+            log.exception("failed to publish %s for %s; retrying on the next poll", kind.value, internal_id)
+            return
+        self._announced[internal_id] = incident
 
     async def _load_cameras(self) -> None:
         records = sensor_records(await self._client.get_sensors(), await self._client.get_places())

@@ -145,8 +145,14 @@ class RoadMatcher:
         )
 
     def _heading_delta(self, segment: SegmentInfo, heading: float) -> float:
+        """How far the segment's travel direction is from a reported compass heading, in degrees.
+
+        Both sides are true bearings. The scenario's ``heading_offset_deg`` only rotates displacement
+        into NB/SB/EB/WB display labels (``heading_direction``); applying it here would compare a
+        label-frame bearing with the true bearing VSS reports and bias Oakland's approaches by 45°.
+        """
         (x0, y0), (x1, y1) = segment.centerline[-2], segment.centerline[-1]
-        bearing = (math.degrees(math.atan2(x1 - x0, y1 - y0)) + self.network.scenario.heading_offset_deg) % 360
+        bearing = math.degrees(math.atan2(x1 - x0, y1 - y0)) % 360
         return abs((bearing - heading + 180) % 360 - 180)
 
 

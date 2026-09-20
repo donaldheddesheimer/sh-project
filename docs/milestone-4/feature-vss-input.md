@@ -69,11 +69,13 @@ Six tasks. Sizes are S = 1, M = 2, L = 3 points, 13 in total.
   - **Frames.** Unlike the mock's, this provider needs the simulation clock: to stamp
     `Incident.sim_time` and to drive the replay. Register an `observe(state)` through the
     existing observers list in `build_smart_city_provider`, as the mock does.
-  - **Failure is not a crash.** A dead endpoint, a timeout or a malformed document degrades to
-    "no new incidents", with backoff. Log once when it goes down and once when it recovers. The
-    frame pipeline and the live twin never stop because VSS is down. Expose
-    `status()` (ok, last success, last error) and serve it from a new
-    `GET /api/smart-city/status`.
+  - **Failure is not a crash.** A dead endpoint or a timeout degrades to "no new incidents", with
+    backoff. Log once when it goes down and once when it recovers. A malformed *document* is
+    narrower: skip that one and keep the rest of the batch, because the bad document stays in the
+    upstream feed and failing the poll over it would stop incident input for good. The frame
+    pipeline and the live twin never stop because VSS is down. Expose `status()` (ok, last success,
+    last error, and how many documents the latest poll filtered or could not read) and serve it from
+    a new `GET /api/smart-city/status`.
   - **Two attributes on the base class:** `simulation_is_source: bool = True` (the mock
     keeps it; this provider sets `False`), used by task 4.
 
@@ -113,9 +115,11 @@ the piece the stub's docstring calls "a dedicated matcher, not the UI".
   - **Geometry:** nearest segment within `VSS_MATCH_MAX_DIST_M` (default 40 m); the position is
     the projection along the centerline, clamped like `inject_collision` does (20 m from either end).
   - **Two directions of one street** have nearly identical centerlines, and camera or GPS error is
-    larger than the gap between them. Use a heading when the document has one (compare it with the
-    segment's bearing, corrected by `heading_offset_deg`; `heading_direction` in `network.py` does
-    the compass conversion). Without one, pick the nearer, **lower the confidence and say so in
+    larger than the gap between them. Use a heading when the document has one, comparing it with the
+    segment's **true** bearing. Do not apply `heading_offset_deg`: that offset exists only to rotate a
+    displacement into an NB/SB/EB/WB display label (`heading_direction` in `network.py`), so applying
+    it here would measure a reported true bearing against a label-frame one and be 45° out on Oakland.
+    Without a heading, pick the nearer, **lower the confidence and say so in
     `notes`**; do not pretend to know.
   - **Lanes.** VSS does not say which lane. Default to lane 0 (the rightmost), or `[0]` on a
     one-lane road, and mark it `assumed`. Infer from the lateral offset only if you can justify
@@ -150,13 +154,15 @@ a provider whose `simulation_is_source` is `False`, add the reflection:
   the end of `CityService.reset`, after `runner.reset()`. The warm-up has already run without the
   crash, so the queue builds from that moment; say so in the ops line.
 - **Other types are not mirrored** (`inject_incident` only stages collisions). Log
-  `INC-0003 stalled vehicle reported; not mirrored (only collisions can be staged)`. Such an
+  `INC-0003 not mirrored: stalled vehicle reported; only collisions can be staged`, in that one
+  shape for every reason (an unmatched report says why the same way) and **once** per incident,
+  since VSS re-reports the same one on every poll. Such an
   incident must **not be analyzable**, because a branch would run with no crash in it: add an
   optional `IncidentLocation.match` block (method, distance, confidence, notes, `mirrored`) and
   make `ScenarioService._resolve_incidents` (you own only this guard) return the existing 409 for
   an incident that is not mirrored when its provider is not the simulation.
 - **Ops log:** `INC-0001 mirrored in the twin as C-ab12cd on Forbes Ave EB (matched by geometry,
-  12 m; lane assumed)`. An unmatched report says why.
+  12 m; lane assumed)`.
 - **Demo scripts and the real provider do not mix** (decision D6). A script injects crashes the
   provider never reports. `POST /api/demo/start` returns 409 with a clear message when
   `simulation_is_source` is false, and `build_smart_city_provider` refuses `DEMO_SCRIPT` with the

@@ -55,6 +55,7 @@ IncidentListener = Callable[[SmartCityEvent], Awaitable[None]]
 ResetListener = Callable[[], Awaitable[None]]
 T = TypeVar("T")
 
+MIRROR_MOVE_TOLERANCE_M = 5.0  # a mirrored crash is re-placed only when the report moves further than this
 TREND_SAMPLE_S = 5.0  # simulated seconds between trend samples
 TREND_SAMPLES = 180  # 15 simulated minutes
 
@@ -113,6 +114,7 @@ class CityService:
         self.latest_scenario: ScenarioRun | None = None
         self.latest_episode: Episode | None = None
         self._mirrored_disruptions: dict[str, str] = {}
+        self._unmirrorable: set[str] = set()  # reports already warned about, so the warning is logged once
         # Hooks for the learning services: called after an incident is logged, and before the simulation reboots.
         self.incident_listeners: list[IncidentListener] = []
         self.reset_listeners: list[ResetListener] = []
@@ -398,18 +400,7 @@ class CityService:
         elif event.kind is SmartCityEventKind.INCIDENT_CLEARED:
             self.events.add(EventLevel.INFO, f"{incident.id} closed", self._sim_time(), incident.id)
         if not self.smart_city.simulation_is_source:
-            match = incident.location.match
-            if incident.type is not IncidentType.COLLISION and incident.status is IncidentStatus.ACTIVE:
-                self.events.add(
-                    EventLevel.WARNING,
-                    f"{incident.id} {incident.type.value.replace('_', ' ')} reported; not mirrored "
-                    "(only collisions can be staged)",
-                    incident.sim_time,
-                    incident.id,
-                )
-            elif incident.status is IncidentStatus.ACTIVE and (not match or not incident.location.segment_id):
-                reason = match.reason if match and match.reason else "no road segment matched"
-                self.events.add(EventLevel.WARNING, f"{incident.id} not mirrored: {reason}", incident.sim_time, incident.id)
+            self._warn_unmirrorable(incident)
             async with self.live_change_lock:
                 await self._reconcile_external_incidents()
             refreshed = await self.smart_city.get_incident(incident.id)
@@ -420,6 +411,23 @@ class CityService:
                 await listener(event)
             except Exception:  # noqa: BLE001 - keep the frame pipeline going
                 log.exception("incident listener failed")
+
+    def _warn_unmirrorable(self, incident: Incident) -> None:
+        """Warn once when a report cannot be staged; VSS re-reports the same incident on every poll."""
+        match = incident.location.match
+        reason: str | None = None
+        if incident.status is IncidentStatus.ACTIVE:
+            if incident.type is not IncidentType.COLLISION:
+                reason = f"{incident.type.value.replace('_', ' ')} reported; only collisions can be staged"
+            elif not match or not incident.location.segment_id:
+                reason = match.reason if match and match.reason else "no road segment matched"
+        if reason is None:
+            self._unmirrorable.discard(incident.id)
+            return
+        if incident.id in self._unmirrorable:
+            return
+        self._unmirrorable.add(incident.id)
+        self.events.add(EventLevel.WARNING, f"{incident.id} not mirrored: {reason}", self._sim_time(), incident.id)
 
     async def _reconcile_external_incidents(self, after_reset: bool = False) -> None:
         """Make externally reported, matched collisions and live disruptions agree exactly."""
@@ -447,7 +455,10 @@ class CityService:
                     continue
                 lanes = incident.affected_lanes or [0]
                 position = incident.location.position_m
-                if disruption.segment_id != incident.location.segment_id or disruption.lanes != lanes or position is None:
+                # Re-matching every poll jitters the position slightly, so only a real move re-places the
+                # crash; re-injecting on jitter would restage the scene and reset its queue each time.
+                moved = position is None or abs(disruption.position_m - position) > MIRROR_MOVE_TOLERANCE_M
+                if disruption.segment_id != incident.location.segment_id or disruption.lanes != lanes or moved:
                     sim.clear_disruption(disruption_id)
                     self._mirrored_disruptions.pop(incident_id, None)
 
@@ -493,7 +504,7 @@ class CityService:
                 self._sim_time(),
                 incident_id,
             )
-        for incident_id, incident in active.items():
+        for incident_id in active:
             if incident_id not in self._mirrored_disruptions:
                 self.smart_city.set_mirrored(incident_id, False)
 

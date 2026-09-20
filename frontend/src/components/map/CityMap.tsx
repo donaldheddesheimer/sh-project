@@ -87,6 +87,7 @@ export function CityMap({ network, state, cameras, selection, planOverlay, onSel
   const incidentMarkers = useRef(new Map<string, Marker>())
   const emsMarkers = useRef(new Map<string, Marker>())
   const corridorMarkers = useRef(new Map<string, Marker>())
+  const cameraMarkers = useRef(new Map<string, Marker>())
   const onSelectRef = useRef(onSelect)
   useEffect(() => {
     onSelectRef.current = onSelect
@@ -107,6 +108,7 @@ export function CityMap({ network, state, cameras, selection, planOverlay, onSel
     const incidents = incidentMarkers.current
     const responders = emsMarkers.current
     const corridors = corridorMarkers.current
+    const camerasOnMap = cameraMarkers.current
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
     map.touchZoomRotate.disableRotation()
 
@@ -147,12 +149,6 @@ export function CityMap({ network, state, cameras, selection, planOverlay, onSel
           .setLngLat([station.lon, station.lat])
           .addTo(map)
       }
-      for (const camera of cameras) {
-        if (!camera.location) continue
-        const marker = markerElement('camera-marker', '')
-        marker.title = `${camera.id} · ${camera.name}`
-        new Marker({ element: marker }).setLngLat([camera.location.lon, camera.location.lat]).addTo(map)
-      }
       ready.current = true
     })
 
@@ -179,10 +175,26 @@ export function CityMap({ network, state, cameras, selection, planOverlay, onSel
       incidents.clear()
       responders.clear()
       corridors.clear()
+      camerasOnMap.clear()
       map.remove()
       mapRef.current = null
     }
-  }, [network, cameras])
+    // Cameras arrive asynchronously and are synced by their own effect below; rebuilding the
+    // whole map for them would tear down every marker and the operator's pan and zoom.
+  }, [network])
+
+  // ---- cameras ------------------------------------------------------------------------------
+  // Their own effect, because the list is fetched after the first render and can be retried.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const apply = () => syncCameraMarkers(map, cameraMarkers.current, cameras)
+    if (ready.current) apply()
+    else map.once('load', apply)
+    return () => {
+      map.off('load', apply)
+    }
+  }, [cameras])
 
   // ---- live state -------------------------------------------------------------------------
   useEffect(() => {
@@ -287,6 +299,22 @@ export function CityMap({ network, state, cameras, selection, planOverlay, onSel
   }, [planOverlay, network])
 
   return <div ref={container} className="map-canvas" />
+}
+
+function syncCameraMarkers(map: MapLibreMap, markers: Map<string, Marker>, cameras: Camera[]) {
+  const active = new Set(cameras.filter((camera) => camera.location).map((camera) => camera.id))
+  for (const camera of cameras) {
+    if (!camera.location || markers.has(camera.id)) continue
+    const el = markerElement('camera-marker', '')
+    el.title = `${camera.id} · ${camera.name}`
+    markers.set(camera.id, new Marker({ element: el }).setLngLat([camera.location.lon, camera.location.lat]).addTo(map))
+  }
+  for (const [id, marker] of markers) {
+    if (!active.has(id)) {
+      marker.remove()
+      markers.delete(id)
+    }
+  }
 }
 
 function syncIncidentMarkers(map: MapLibreMap, markers: Map<string, Marker>, incidents: Incident[]) {

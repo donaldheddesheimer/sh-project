@@ -9,7 +9,8 @@
       "info": { "verdict": "confirmed", "confidence": 0.97 },
       "description": "VLM-confirmed collision on Forbes Avenue eastbound.",
       "replay": { "release_at_sim_s": 320 },
-      "_note": "Midpoint of oakland.osm nodes 105013320 (40.4419581,-79.9564358) and 105013345 (40.4431909,-79.9535474) on 714429624#0."
+      "_note": "Midpoint of oakland.osm nodes 105013320 (40.4419581,-79.9564358) and 105013345 (40.4431909,-79.9535474) on 714429624#0. True bearing of 714429624#0 between the two nodes above is 61 degrees.",
+      "heading": 61
     },
     {
       "id": "OAK-VSS-002",
@@ -20,7 +21,8 @@
       "info": { "verdict": "confirmed", "confidence": 0.93 },
       "description": "A second confirmed collision on Fifth Avenue westbound.",
       "replay": { "release_at_sim_s": 420 },
-      "_note": "Midpoint of oakland.osm nodes 105097664 (40.4470707,-79.9472806) and 105097632 (40.4469408,-79.9489816) on -625851681#3."
+      "_note": "Midpoint of oakland.osm nodes 105097664 (40.4470707,-79.9472806) and 105097632 (40.4469408,-79.9489816) on -625851681#3. True bearing of -625851681#3 between the two nodes above is 264 degrees.",
+      "heading": 264
     },
     {
       "id": "OAK-VSS-003",
@@ -53,7 +55,8 @@
       "info": { "verdict": "confirmed", "confidence": 0.95 },
       "description": "Confirmed Fifth Avenue collision that later clears.",
       "replay": { "release_at_sim_s": 620, "clear_at_sim_s": 740 },
-      "_note": "Uses the direct OSM-node midpoint documented on OAK-VSS-002; clear_at_sim_s synthesizes end in replay."
+      "_note": "Uses the direct OSM-node midpoint documented on OAK-VSS-002; clear_at_sim_s synthesizes end in replay. Same Fifth Avenue carriageway and bearing as OAK-VSS-002.",
+      "heading": 264
     }
   ]
 }
